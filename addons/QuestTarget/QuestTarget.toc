@@ -1,0 +1,7 @@
+## Interface: 16001
+## Title: QuestTarget
+## Notes: Marks the nameplates of enemies you still need for a quest.
+## Author: Pietjan
+## Version: 1.0
+
+QuestTarget.lua
