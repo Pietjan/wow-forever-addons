@@ -952,7 +952,9 @@ local PAUSE_SIZE = ICON
 local PAUSE_CHOICES = { 0, 5, 10, 30 } -- minutes; 0: until resumed
 local pauseButton = CreateFrame("Button", "BuffNagPauseButton", bar)
 StyleIcon(pauseButton)
-pauseButton:SetPoint("RIGHT", bar, "RIGHT", 0, 0)
+-- Hung off the bar's edge rather than inside it, so the bar's width, and
+-- with it the centring, is the icons alone.
+pauseButton:SetPoint("LEFT", bar, "RIGHT", GAP, 0)
 pauseButton.Icon:SetColorTexture(0.12, 0.12, 0.14)
 for i = -1, 1, 2 do
 	local barTexture = pauseButton:CreateTexture(nil, "ARTWORK", nil, 1)
@@ -1209,7 +1211,7 @@ function Refresh()
 	for i = count + 1, #icons do
 		icons[i]:Hide()
 	end
-	bar:SetWidth(math.max(ICON, count * (ICON + GAP)) + PAUSE_SIZE)
+	bar:SetWidth(math.max(ICON, count * (ICON + GAP) - GAP))
 	RefreshPauseButton()
 	pauseButton:SetShown(count > 0)
 	bar:SetShown(count > 0)
