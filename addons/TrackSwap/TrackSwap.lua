@@ -80,15 +80,17 @@ local function RestoreSound()
 		SetCVar("Sound_EnableSFX", "1")
 	end
 	if db.mutedFile then
-		UnmuteSoundFile(db.mutedFile)
+		local file = db.mutedFile
 		db.mutedFile = nil
+		pcall(UnmuteSoundFile, file)
 	end
 end
 
 -- Keep the click quiet while the tracking changes. Sound effects started
 -- while they are muted never play. A saved flag survives a reload or logout
 -- that lands inside that moment, so the next login can put the sound back.
-local function Quiet()
+local Quiet
+function Quiet()
 	if db.mute == "all" then
 		if GetCVar("Sound_EnableSFX") == "1" then
 			db.soundOff = true
@@ -96,7 +98,15 @@ local function Quiet()
 		end
 	elseif db.mute == "file" and db.muteFile then
 		db.mutedFile = db.muteFile
-		MuteSoundFile(db.muteFile)
+		local ok, err = pcall(MuteSoundFile, db.muteFile)
+		if not ok then
+			-- No such function on this client, or it is not allowed: fall
+			-- back to switching all effects off for the moment.
+			db.mutedFile = nil
+			db.mute = "all"
+			Print("cannot mute a single sound file (%s); muting all effects during swaps instead", tostring(err))
+			return Quiet()
+		end
 	end
 	C_Timer.After(0.2, RestoreSound)
 end
