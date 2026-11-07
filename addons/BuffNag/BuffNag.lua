@@ -521,6 +521,12 @@ local function UnitHas(unit, names, soon)
 		return false, false
 	end
 	local found, present = false, false
+	local bestEnd, bestDuration -- of the matching buff with the most time left
+	local function Note(left, expirationTime, duration)
+		if left ~= math.huge and (not bestEnd or expirationTime > bestEnd) then
+			bestEnd, bestDuration = expirationTime, duration
+		end
+	end
 	local ok = pcall(function()
 		local now = GetTime()
 		if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
@@ -532,6 +538,7 @@ local function UnitHas(unit, names, soon)
 				if names[aura.name] then
 					present = true
 					local left = aura.expirationTime and aura.expirationTime > 0 and (aura.expirationTime - now) or math.huge
+					Note(left, aura.expirationTime, aura.duration)
 					local margin = (soon and soon ~= 0) and SoonFor(aura.duration) or 0
 					if left > margin then
 						found = true
@@ -548,6 +555,7 @@ local function UnitHas(unit, names, soon)
 				if names[name] then
 					present = true
 					local left = expirationTime and expirationTime > 0 and (expirationTime - now) or math.huge
+					Note(left, expirationTime, duration)
 					local margin = (soon and soon ~= 0) and SoonFor(duration) or 0
 					if left > margin then
 						found = true
@@ -560,7 +568,7 @@ local function UnitHas(unit, names, soon)
 	if not ok then
 		return nil
 	end
-	return found, present
+	return found, present, bestEnd, bestDuration
 end
 
 local function UnitUsable(unit)
@@ -656,7 +664,7 @@ local function WeaponMissing(slot)
 		return true, false
 	end
 	local low = expires ~= nil and expires > 0 and expires / 1000 <= db.soonMax
-	return low, low -- missing, and running out rather than absent
+	return low, low, low and (GetTime() + expires / 1000) or nil -- missing; running out rather than absent; when it ends
 end
 
 local function ItemLook(itemID)
@@ -722,10 +730,18 @@ local function WeaponCandidates(slot)
 end
 
 -- Well Fed missing, not eating, and food that gives it in the bags.
+-- Remember when an entry's running-out buff ends, for the countdown.
+local function NoteEnd(entry, endTime, duration)
+	if endTime and (not entry.endsAt or endTime < entry.endsAt) then
+		entry.endsAt, entry.endDuration = endTime, duration
+	end
+end
+
 local function FoodCandidates(entry)
 	local list = {}
-	local enough, present = UnitHas("player", entry.auraNames, true)
+	local enough, present, endTime, duration = UnitHas("player", entry.auraNames, true)
 	entry.expiring = present and not enough
+	NoteEnd(entry, endTime, duration)
 	if enough ~= false or UnitHas("player", entry.unlessNames, 0) ~= false then
 		return list
 	end
@@ -743,8 +759,9 @@ end
 -- No flask up (or nearly out) and one in the bags: the fix to drink.
 local function FlaskCandidates(entry)
 	local list = {}
-	local enough, present = UnitHas("player", FLASK_NAMES, true)
+	local enough, present, endTime, duration = UnitHas("player", FLASK_NAMES, true)
 	entry.expiring = present and not enough
+	NoteEnd(entry, endTime, duration)
 	if enough ~= false then
 		return list
 	end
@@ -768,9 +785,12 @@ local function ElixirCandidates(entry)
 		local elixir = ELIXIRS[itemID]
 		if elixir and not families[elixir[2]] then
 			local names = ELIXIR_FAMILY_NAMES[elixir[2]]
-			local enough, present = UnitHas("player", names or {}, true)
+			local enough, present, endTime, duration = UnitHas("player", names or {}, true)
 			if names and enough == false then
 				allExpiring = allExpiring and present
+				if present then
+					NoteEnd(entry, endTime, duration)
+				end
 				families[elixir[2]] = true
 				local icon, name = ItemLook(itemID)
 				list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name }
@@ -1076,6 +1096,25 @@ local function BarIcon(i)
 	end
 	local button = CreateFrame("Button", "BuffNagIcon" .. i, bar, "SecureActionButtonTemplate")
 	StyleIcon(button)
+	-- The countdown for a buff that is running out, as the Cooldown Manager
+	-- draws its own: a reverse sweep with the remaining time on it.
+	local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+	cooldown:SetAllPoints()
+	cooldown:SetReverse(true)
+	cooldown:SetDrawEdge(false)
+	cooldown:SetDrawBling(false)
+	cooldown:SetHideCountdownNumbers(false)
+	pcall(cooldown.SetSwipeTexture, cooldown, "Interface\\HUD\\UI-HUD-CoolDownManager-Icon-Swipe")
+	pcall(cooldown.SetSwipeColor, cooldown, 0, 0, 0, 0.7)
+	cooldown:SetFrameLevel(button:GetFrameLevel() + 1)
+	cooldown:Hide()
+	button.Cooldown = cooldown
+	-- Texts above the sweep.
+	local texts = CreateFrame("Frame", nil, button)
+	texts:SetAllPoints()
+	texts:SetFrameLevel(button:GetFrameLevel() + 3)
+	button.Count:SetParent(texts)
+	button.Count:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
 	button:SetPoint("LEFT", bar, "LEFT", (i - 1) * (ICON + GAP), 0)
 	button:RegisterForClicks("AnyDown", "AnyUp")
 	-- The right button does nothing secure; it picks the next candidate.
@@ -1109,6 +1148,7 @@ end
 -- The units lacking an entry's buff.
 local function Missing(entry, choice)
 	local missing = {}
+	entry.endsAt, entry.endDuration = nil, nil
 	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "food" or entry.kind == "weapon" or entry.kind == "offhand" then
 		local list
 		if entry.kind == "flask" then
@@ -1119,8 +1159,9 @@ local function Missing(entry, choice)
 			list = FoodCandidates(entry)
 		else
 			local slot = entry.kind == "weapon" and MAIN_HAND or OFF_HAND
-			local missingEnchant, expiring = WeaponMissing(slot)
+			local missingEnchant, expiring, endTime = WeaponMissing(slot)
 			entry.expiring = expiring
+			NoteEnd(entry, endTime, endTime and db.soonMax)
 			list = missingEnchant and WeaponCandidates(slot) or {}
 		end
 		entry.fix, entry.fixIndex = Pick(entry, list)
@@ -1153,10 +1194,13 @@ local function Missing(entry, choice)
 	local allExpiring = true
 	for _, unit in ipairs(units) do
 		if UnitUsable(unit) and (not entry.mana or UnitHasMana(unit)) then
-			local has, present = UnitHas(unit, entry.auraNames, true)
+			local has, present, endTime, duration = UnitHas(unit, entry.auraNames, true)
 			if has == false and not UnitHas(unit, entry.unlessNames, 0) then
 				missing[#missing + 1] = unit
 				allExpiring = allExpiring and present
+				if present then
+					NoteEnd(entry, endTime, duration)
+				end
 			end
 		end
 	end
@@ -1197,6 +1241,14 @@ function Refresh()
 				button.Count:SetText(shown > 1 and tostring(shown) or "")
 				button.Party:SetShown(choice.party and true or false)
 				ShowGlow(button, (previewing or not entry.expiring) and "missing" or "expiring")
+				if entry.expiring and entry.endsAt and not previewing then
+					local duration = (entry.endDuration and entry.endDuration > 0) and entry.endDuration or db.soonMax
+					button.Cooldown:SetCooldown(entry.endsAt - duration, duration)
+					button.Cooldown:Show()
+				else
+					button.Cooldown:Clear()
+					button.Cooldown:Hide()
+				end
 				local names = {}
 				local castUnit = missing[1]
 				local castSpell = entry.fix and entry.fix.kind == "cast" and entry.fix.value or nil
