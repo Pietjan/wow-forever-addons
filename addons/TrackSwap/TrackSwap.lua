@@ -4,7 +4,8 @@
 --
 -- It only swaps while one of the two (or nothing) is being tracked: pick
 -- any other tracking, such as Find Fish, and it stays out of the way until
--- you come back to herbs or minerals. It also waits out combat and death.
+-- you come back to herbs or minerals. It also waits out combat, death and
+-- any cast or channel, since the swap itself would interrupt those.
 
 local ADDON_NAME = ...
 
@@ -117,8 +118,19 @@ function Quiet()
 	C_Timer.After(0.5, RestoreSound)
 end
 
+-- Switching tracking is a spell cast of its own, and it interrupts whatever
+-- the player is casting or channelling, such as a fishing line. The values
+-- these calls return may be secret while something is going on, so an error
+-- reading them also counts as busy; a skipped swap costs nothing.
+local function Busy()
+	local ok, busy = pcall(function()
+		return UnitCastingInfo("player") ~= nil or UnitChannelInfo("player") ~= nil
+	end)
+	return not ok or busy
+end
+
 local function Swap()
-	if not db.enabled or InCombatLockdown() or UnitIsDeadOrGhost("player") then
+	if not db.enabled or InCombatLockdown() or UnitIsDeadOrGhost("player") or Busy() then
 		return
 	end
 	local herbs, herbsActive = Find(FIND_HERBS)
