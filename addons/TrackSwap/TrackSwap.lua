@@ -68,6 +68,14 @@ local function AnyOtherTrackingActive(herbs, minerals)
 	return false
 end
 
+-- Put sound effects back if a swap turned them off.
+local function RestoreSound()
+	if db.soundOff then
+		db.soundOff = nil
+		SetCVar("Sound_EnableSFX", "1")
+	end
+end
+
 local function Swap()
 	if not db.enabled or InCombatLockdown() or UnitIsDeadOrGhost("player") then
 		return
@@ -89,16 +97,16 @@ local function Swap()
 	end
 	-- Changing tracking plays a click. Sound effects started while they are
 	-- switched off never play, so turn them off around the swap and put them
-	-- back a moment later.
+	-- back a moment later. The saved flag survives a reload or logout that
+	-- lands inside that moment, so the next login can put the sound back.
 	local sfx = GetCVar("Sound_EnableSFX")
 	if sfx == "1" then
+		db.soundOff = true
 		SetCVar("Sound_EnableSFX", "0")
 	end
 	local ok, err = pcall(C_Minimap.SetTracking, next, true)
 	if sfx == "1" then
-		C_Timer.After(0.2, function()
-			SetCVar("Sound_EnableSFX", "1")
-		end)
+		C_Timer.After(0.2, RestoreSound)
 	end
 	if not ok then
 		Print("could not switch tracking: %s", tostring(err))
@@ -144,6 +152,7 @@ end
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
 loader:RegisterEvent("PLAYER_LOGIN")
+loader:RegisterEvent("PLAYER_LEAVING_WORLD")
 loader:SetScript("OnEvent", function(self, event, name)
 	if event == "ADDON_LOADED" then
 		if name ~= ADDON_NAME then
@@ -156,7 +165,11 @@ loader:SetScript("OnEvent", function(self, event, name)
 				db[key] = value
 			end
 		end
+		RestoreSound()
 	elseif event == "PLAYER_LOGIN" then
 		Start()
+	elseif event == "PLAYER_LEAVING_WORLD" then
+		-- A reload or logout: do not leave the sound off.
+		RestoreSound()
 	end
 end)
