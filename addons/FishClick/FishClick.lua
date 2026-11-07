@@ -6,6 +6,10 @@
 -- double-click goes down, it binds that mouse button to its own secure
 -- button for the rest of the press: the release then lands on the button,
 -- which casts. The binding is removed again as soon as the button comes up.
+--
+-- When the pole has no lure and there is one in the bags, the double-click
+-- attaches it instead (a 5 second cast in the game's data), and the next
+-- double-click casts the line.
 
 local ADDON_NAME = ...
 
@@ -13,13 +17,33 @@ local DEFAULTS = {
 	enabled = true,
 	delay = 0.4, -- seconds between the two clicks, at most
 	button = "left", -- "left", "right" or "both"
+	lure = true, -- attach a lure first when the pole has none
+	lurePick = "best", -- "best" or "cheap": which lure to take from the bags
 }
+
+-- Fishing lures in the game's data: items whose use puts a temporary
+-- "Fishing Lure" enchant on the pole, with the skill bonus it gives.
+local LURES = {
+	{ 6533, 100 }, -- Aquadynamic Fish Attractor
+	{ 6532, 75 }, -- Bright Baubles
+	{ 7307, 75 }, -- Flesh Eating Worm
+	{ 6530, 50 }, -- Nightcrawlers
+	{ 6811, 50 }, -- Aquadynamic Fish Lens
+	{ 6529, 25 }, -- Shiny Bauble
+	{ 268880, 25 }, -- "Secret" Bait
+}
+local LURE_BONUS = {}
+for _, lure in ipairs(LURES) do
+	LURE_BONUS[lure[1]] = lure[2]
+end
 
 local FISHING = 7620 -- Fishing, rank 1: used for the spell's name only
 local MAIN_HAND = INVSLOT_MAINHAND or 16
 local WEAPON = (Enum.ItemClass and Enum.ItemClass.Weapon) or 2
 local FISHING_POLE = (Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Fishingpole) or 20
 local CAST_BUTTON = "FishClickCast"
+local LURE_BUTTON = "FishClickLure"
+local NUM_BAGS = NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4
 local KEYS = { LeftButton = "BUTTON1", RightButton = "BUTTON2" }
 
 local IsSecret = issecretvalue or function() return false end
@@ -72,6 +96,13 @@ local function Disarm()
 end
 
 cast:SetScript("PostClick", Disarm)
+
+-- Uses a lure and then "uses" the main hand slot, which applies it there.
+local lureButton = CreateFrame("Button", LURE_BUTTON, UIParent, "SecureActionButtonTemplate")
+lureButton:RegisterForClicks("AnyUp")
+lureButton:SetAttribute("type", "macro")
+lureButton:SetAttribute("useOnKeyDown", false)
+lureButton:SetScript("PostClick", Disarm)
 
 ------------------------------------------------------------------------------
 -- Which Fishing spell to cast
@@ -147,6 +178,61 @@ local function UpdateSpell()
 end
 
 ------------------------------------------------------------------------------
+-- Lures
+------------------------------------------------------------------------------
+
+-- Whether the main hand carries a temporary enchant: with a pole, a lure.
+local function PoleHasLure()
+	local ok, has = pcall(function()
+		local hasMainHand = GetWeaponEnchantInfo()
+		return hasMainHand and true or false
+	end)
+	return not ok or has -- unreadable counts as present, so nothing is wasted
+end
+
+-- The lure to use from the bags: the strongest, or the weakest if the
+-- player would rather use the cheap ones up first.
+local function FindLure()
+	local numSlots = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
+	local itemAt = (C_Container and C_Container.GetContainerItemID) or GetContainerItemID
+	if not (numSlots and itemAt) then
+		return nil
+	end
+	local best, bestBonus
+	for bag = 0, NUM_BAGS do
+		for slot = 1, numSlots(bag) or 0 do
+			local itemID = itemAt(bag, slot)
+			local bonus = itemID and not IsSecret(itemID) and LURE_BONUS[itemID]
+			if bonus and (not bestBonus
+				or (db.lurePick == "cheap" and bonus < bestBonus)
+				or (db.lurePick ~= "cheap" and bonus > bestBonus)) then
+				best, bestBonus = itemID, bonus
+			end
+		end
+	end
+	return best, bestBonus
+end
+
+local function ItemName(itemID)
+	local name = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(itemID) or GetItemInfo and GetItemInfo(itemID)
+	return name or ("item " .. itemID)
+end
+
+-- The button a double-click should go to right now: the lure button when
+-- a lure is wanted and available, otherwise the cast button.
+local function ChooseButton()
+	if db.lure and not PoleHasLure() then
+		local itemID, bonus = FindLure()
+		if itemID then
+			lureButton:SetAttribute("macrotext", ("/use item:%d\n/use %d"):format(itemID, MAIN_HAND))
+			Print("attaching %s (+%d); double-click again to cast", ItemName(itemID), bonus)
+			return LURE_BUTTON
+		end
+	end
+	return CAST_BUTTON
+end
+
+------------------------------------------------------------------------------
 -- The pole and the clicks
 ------------------------------------------------------------------------------
 
@@ -202,7 +288,7 @@ local function OnMouseDown(button)
 	if lastButton == button and now - lastDown <= db.delay then
 		lastDown = 0
 		armed = true
-		SetOverrideBindingClick(owner, true, KEYS[button], CAST_BUTTON, "LeftButton")
+		SetOverrideBindingClick(owner, true, KEYS[button], ChooseButton(), "LeftButton")
 	else
 		lastDown, lastButton = now, button
 	end
@@ -221,17 +307,34 @@ end
 
 local function Status()
 	local spell = cast:GetAttribute("spell")
-	Print("%s, %s double-click within %.2f s%s, casting %s", db.enabled and "on" or "off", db.button, db.delay,
+	local lure = "no lures"
+	if db.lure then
+		local itemID, bonus = FindLure()
+		lure = (db.lurePick == "cheap" and "cheapest" or "best") .. " lure first"
+			.. (itemID and (" (%s, +%d in bags)"):format(ItemName(itemID), bonus) or " (none in bags)")
+			.. (PoleHasLure() and ", pole has one" or "")
+	end
+	Print("%s, %s double-click within %.2f s%s, casting %s, %s", db.enabled and "on" or "off", db.button, db.delay,
 		poleEquipped and "" or " (no fishing pole equipped)",
-		type(spell) == "number" and ("spell " .. spell) or tostring(spell))
+		type(spell) == "number" and ("spell " .. spell) or tostring(spell), lure)
 end
 
 SLASH_FISHCLICK1 = "/fish"
 SLASH_FISHCLICK2 = "/fishclick"
 SlashCmdList.FISHCLICK = function(msg)
-	local word = msg:lower():match("^%s*(%S*)")
+	local word, rest = msg:lower():match("^%s*(%S*)%s*(%S*)")
 	local seconds = tonumber(word)
-	if word == "" then
+	if word == "lure" then
+		if rest == "on" or rest == "off" then
+			db.lure = rest == "on"
+		elseif rest == "best" or rest == "cheap" then
+			db.lure = true
+			db.lurePick = rest
+		else
+			Print("/fish lure on|off  attach a lure first when the pole has none; /fish lure best|cheap  which one")
+			return
+		end
+	elseif word == "" then
 		db.enabled = not db.enabled
 	elseif word == "on" or word == "off" then
 		db.enabled = word == "on"
@@ -240,7 +343,7 @@ SlashCmdList.FISHCLICK = function(msg)
 	elseif seconds then
 		db.delay = math.max(0.15, math.min(1, seconds))
 	elseif word ~= "status" then
-		Print("/fish toggles; /fish on|off; /fish left|right|both picks the mouse button; /fish <seconds> sets the double-click time")
+		Print("/fish toggles; /fish on|off; /fish left|right|both picks the mouse button; /fish <seconds> sets the double-click time; /fish lure on|off|best|cheap")
 		return
 	end
 	Status()
