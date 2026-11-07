@@ -27,7 +27,9 @@ local DEFAULTS = { -- account wide: the bar and the sound
 	pingGap = 0.4, -- seconds between pings
 	scale = 1,
 	locked = false,
-	glow = true, -- pulsing glow around the bar's icons
+	glow = "flash", -- "flash", "ants" or "off": the Cooldown Manager's alert effect on a missing buff
+	glowColor = "gold", -- gold, cyan, red, green or blue
+	expiringGlow = true, -- the Cooldown Manager's pandemic border on a buff that is running out
 	point = { "CENTER", 0, 200 },
 }
 
@@ -510,12 +512,13 @@ end
 
 -- Whether a unit has one of the named buffs with enough time left; nil when
 -- the game would not let us look. "soon" true applies the running-out
--- margin; false or 0 accepts any time left.
+-- margin; false or 0 accepts any time left. The second value says whether
+-- the buff is there at all, so a running-out buff can be told from none.
 local function UnitHas(unit, names, soon)
 	if not next(names) then
-		return false
+		return false, false
 	end
-	local found = false
+	local found, present = false, false
 	local ok = pcall(function()
 		local now = GetTime()
 		if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
@@ -525,6 +528,7 @@ local function UnitHas(unit, names, soon)
 					break
 				end
 				if names[aura.name] then
+					present = true
 					local left = aura.expirationTime and aura.expirationTime > 0 and (aura.expirationTime - now) or math.huge
 					local margin = (soon and soon ~= 0) and SoonFor(aura.duration) or 0
 					if left > margin then
@@ -540,6 +544,7 @@ local function UnitHas(unit, names, soon)
 					break
 				end
 				if names[name] then
+					present = true
 					local left = expirationTime and expirationTime > 0 and (expirationTime - now) or math.huge
 					local margin = (soon and soon ~= 0) and SoonFor(duration) or 0
 					if left > margin then
@@ -553,7 +558,7 @@ local function UnitHas(unit, names, soon)
 	if not ok then
 		return nil
 	end
-	return found
+	return found, present
 end
 
 local function UnitUsable(unit)
@@ -620,9 +625,10 @@ local function WeaponMissing(slot)
 		return false
 	end
 	if not has then
-		return true
+		return true, false
 	end
-	return expires ~= nil and expires > 0 and expires / 1000 <= db.soonMax
+	local low = expires ~= nil and expires > 0 and expires / 1000 <= db.soonMax
+	return low, low -- missing, and running out rather than absent
 end
 
 local function ItemLook(itemID)
@@ -690,7 +696,9 @@ end
 -- Well Fed missing, not eating, and food that gives it in the bags.
 local function FoodCandidates(entry)
 	local list = {}
-	if UnitHas("player", entry.auraNames, true) ~= false or UnitHas("player", entry.unlessNames, 0) ~= false then
+	local enough, present = UnitHas("player", entry.auraNames, true)
+	entry.expiring = present and not enough
+	if enough ~= false or UnitHas("player", entry.unlessNames, 0) ~= false then
 		return list
 	end
 	local seen = {}
@@ -705,9 +713,11 @@ local function FoodCandidates(entry)
 end
 
 -- No flask up (or nearly out) and one in the bags: the fix to drink.
-local function FlaskCandidates()
+local function FlaskCandidates(entry)
 	local list = {}
-	if UnitHas("player", FLASK_NAMES, true) ~= false then
+	local enough, present = UnitHas("player", FLASK_NAMES, true)
+	entry.expiring = present and not enough
+	if enough ~= false then
 		return list
 	end
 	local seen = {}
@@ -723,19 +733,23 @@ end
 
 -- Elixir families in the bags whose buff is not up: the first to drink,
 -- and how many there are.
-local function ElixirCandidates()
+local function ElixirCandidates(entry)
 	local list, families = {}, {}
+	local allExpiring = true
 	EachBagItem(function(itemID)
 		local elixir = ELIXIRS[itemID]
 		if elixir and not families[elixir[2]] then
 			local names = ELIXIR_FAMILY_NAMES[elixir[2]]
-			if names and UnitHas("player", names, true) == false then
+			local enough, present = UnitHas("player", names or {}, true)
+			if names and enough == false then
+				allExpiring = allExpiring and present
 				families[elixir[2]] = true
 				local icon, name = ItemLook(itemID)
 				list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name }
 			end
 		end
 	end)
+	entry.expiring = #list > 0 and allExpiring
 	return list
 end
 
@@ -809,15 +823,13 @@ local function HasAtlas(name)
 	return ok and info ~= nil
 end
 
--- Icon art differs: some icons carry a dark frame of their own, others
--- none. Every icon is cropped the same way and gets the same border: the
--- Cooldown Manager's mask and overlay where the client has them, a plain
--- dark edge otherwise.
+-- The Cooldown Manager's own icon dressing: its rounded mask and border
+-- overlay, uncropped, as in CooldownViewerBuffIconItemTemplate. A plain
+-- dark edge stands in on a client without those atlases.
 local function StyleIcon(button)
 	button:SetSize(ICON, ICON)
 	local icon = button:CreateTexture(nil, "ARTWORK")
 	icon:SetAllPoints()
-	icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 	button.Icon = icon
 	if HasAtlas("UI-HUD-CoolDownManager-Mask") and HasAtlas("UI-HUD-CoolDownManager-IconOverlay") then
 		local mask = button:CreateMaskTexture()
@@ -848,35 +860,67 @@ local function StyleIcon(button)
 end
 
 -- A soft pulsing glow around a bar icon, to catch the eye.
-local function AddGlow(button)
-	local glow = button:CreateTexture(nil, "OVERLAY", nil, -1)
-	glow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-	glow:SetBlendMode("ADD")
-	glow:SetVertexColor(1, 0.85, 0.3, 1)
-	glow:SetPoint("CENTER")
-	glow:SetSize(ICON * 1.75, ICON * 1.75)
-	glow:Hide()
-	local pulse = glow:CreateAnimationGroup()
-	pulse:SetLooping("BOUNCE")
-	local fade = pulse:CreateAnimation("Alpha")
-	fade:SetFromAlpha(1)
-	fade:SetToAlpha(0.25)
-	fade:SetDuration(0.8)
-	fade:SetSmoothing("IN_OUT")
-	button.Glow, button.GlowPulse = glow, pulse
+
+-- The Cooldown Manager's own effects, made from its templates: the
+-- "visual alert" flash or marching ants (in the game's five colours) for
+-- a missing buff, and its pandemic border for one that is running out.
+local GLOW_TEMPLATES = {
+	flash = { gold = "VisualAlertFlashBaseTemplate", cyan = "VisualAlertFlashCyanTemplate", red = "VisualAlertFlashRedTemplate",
+		green = "VisualAlertFlashGreenTemplate", blue = "VisualAlertFlashBlueTemplate" },
+	ants = { gold = "VisualAlertMarchingAntsBaseTemplate", cyan = "VisualAlertMarchingAntsCyanTemplate", red = "VisualAlertMarchingAntsRedTemplate",
+		green = "VisualAlertMarchingAntsGreenTemplate", blue = "VisualAlertMarchingAntsBlueTemplate" },
+}
+local PANDEMIC_TEMPLATE = "CooldownPandemicFXTemplate"
+
+local function GlowFrame(button, template)
+	button.glows = button.glows or {}
+	local frame = button.glows[template]
+	if frame == nil then
+		local ok, made = pcall(CreateFrame, "Frame", nil, button, template)
+		if ok and made then
+			frame = made
+			if template == PANDEMIC_TEMPLATE then
+				frame:SetPoint("TOPLEFT", button, "TOPLEFT", -6, 6)
+				frame:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 6, -6)
+			else
+				-- Alerts normally live for two seconds and hand themselves
+				-- back to the game's manager; ours stay as long as shown.
+				if frame.SetManualRelease then
+					frame:SetManualRelease(true)
+				end
+				frame:SetScript("OnUpdate", nil)
+				frame:SetPoint("TOPLEFT", button, "TOPLEFT", -8, 8)
+				frame:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 9, -9)
+			end
+			frame:SetFrameLevel(button:GetFrameLevel() + 2)
+			frame:Hide()
+		else
+			frame = false
+		end
+		button.glows[template] = frame
+	end
+	return frame or nil
 end
 
-local function ShowGlow(button, shown)
-	if not button.Glow then
-		return
+-- state: "missing", "expiring" or nil.
+local function ShowGlow(button, state)
+	local want
+	if state == "expiring" and db.expiringGlow then
+		want = PANDEMIC_TEMPLATE
+	elseif state and db.glow ~= "off" then
+		local styles = GLOW_TEMPLATES[db.glow] or GLOW_TEMPLATES.flash
+		want = styles[db.glowColor] or styles.gold
 	end
-	button.Glow:SetShown(shown)
-	if shown then
-		if not button.GlowPulse:IsPlaying() then
-			button.GlowPulse:Play()
+	for template, frame in pairs(button.glows or {}) do
+		if frame and template ~= want then
+			frame:Hide()
 		end
-	else
-		button.GlowPulse:Stop()
+	end
+	if want then
+		local frame = GlowFrame(button, want)
+		if frame then
+			frame:Show()
+		end
 	end
 end
 
@@ -943,7 +987,6 @@ local function BarIcon(i)
 	end
 	local button = CreateFrame("Button", "BuffNagIcon" .. i, bar, "SecureActionButtonTemplate")
 	StyleIcon(button)
-	AddGlow(button)
 	button:SetPoint("LEFT", bar, "LEFT", (i - 1) * (ICON + GAP), 0)
 	button:RegisterForClicks("AnyDown", "AnyUp")
 	-- The right button does nothing secure; it picks the next candidate.
@@ -980,14 +1023,16 @@ local function Missing(entry, choice)
 	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "food" or entry.kind == "weapon" or entry.kind == "offhand" then
 		local list
 		if entry.kind == "flask" then
-			list = FlaskCandidates()
+			list = FlaskCandidates(entry)
 		elseif entry.kind == "elixir" then
-			list = ElixirCandidates()
+			list = ElixirCandidates(entry)
 		elseif entry.kind == "food" then
 			list = FoodCandidates(entry)
 		else
 			local slot = entry.kind == "weapon" and MAIN_HAND or OFF_HAND
-			list = WeaponMissing(slot) and WeaponCandidates(slot) or {}
+			local missingEnchant, expiring = WeaponMissing(slot)
+			entry.expiring = expiring
+			list = missingEnchant and WeaponCandidates(slot) or {}
 		end
 		entry.fix, entry.fixIndex = Pick(entry, list)
 		if entry.fix then
@@ -1016,14 +1061,17 @@ local function Missing(entry, choice)
 	entry.fix, entry.fixIndex = Pick(entry, list)
 	local inRaid = IsInRaid and IsInRaid()
 	local units = (choice.party and db.party and not inRaid) and PARTY_UNITS or { "player" }
+	local allExpiring = true
 	for _, unit in ipairs(units) do
 		if UnitUsable(unit) and (not entry.mana or UnitHasMana(unit)) then
-			local has = UnitHas(unit, entry.auraNames, true)
+			local has, present = UnitHas(unit, entry.auraNames, true)
 			if has == false and not UnitHas(unit, entry.unlessNames, 0) then
 				missing[#missing + 1] = unit
+				allExpiring = allExpiring and present
 			end
 		end
 	end
+	entry.expiring = #missing > 0 and allExpiring
 	return missing
 end
 
@@ -1051,7 +1099,7 @@ function Refresh()
 				local shown = (entry.fix and entry.fix.count) or #missing
 				button.Count:SetText(shown > 1 and tostring(shown) or "")
 				button.Party:SetShown(choice.party and true or false)
-				ShowGlow(button, db.glow)
+				ShowGlow(button, (previewing or not entry.expiring) and "missing" or "expiring")
 				local names = {}
 				for i, unit in ipairs(missing) do
 					names[i] = ShortName(unit)
@@ -1187,7 +1235,7 @@ local function BuildPanel(settings)
 	Checkbox("Sound", 0, function() return db.sound end, function(v) db.sound = v end)
 	Checkbox("Party", 80, function() return db.party end, function(v) db.party = v end)
 	Checkbox("Lock bar", 160, function() return db.locked end, function(v) db.locked = v end)
-	Checkbox("Glow", 250, function() return db.glow end, function(v) db.glow = v end)
+	Checkbox("Glow", 250, function() return db.glow ~= "off" end, function(v) db.glow = v and "flash" or "off" end)
 	local test = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 	test:SetSize(70, 22)
 	test:SetPoint("TOPRIGHT", 0, -1)
@@ -1433,7 +1481,23 @@ SlashCmdList.BUFFNAG = function(msg)
 	elseif word == "party" then
 		db.party = rest ~= "off"
 	elseif word == "glow" then
-		db.glow = rest ~= "off"
+		if rest == "flash" or rest == "ants" or rest == "off" then
+			db.glow = rest
+		elseif rest == "on" then
+			db.glow = "flash"
+		else
+			Print("/bn glow flash|ants|off; /bn glowcolor gold|cyan|red|green|blue; /bn expiring on|off")
+			return
+		end
+	elseif word == "glowcolor" then
+		if GLOW_TEMPLATES.flash[rest] then
+			db.glowColor = rest
+		else
+			Print("/bn glowcolor gold|cyan|red|green|blue")
+			return
+		end
+	elseif word == "expiring" then
+		db.expiringGlow = rest ~= "off"
 	elseif word == "sound" then
 		db.sound = rest ~= "off"
 		if not db.sound then
@@ -1464,7 +1528,7 @@ SlashCmdList.BUFFNAG = function(msg)
 		end
 		return
 	else
-		Print("/bn opens the settings; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn glow on|off; /bn gap <seconds>; /bn soon <max seconds>; /bn soonmin <seconds>; /bn soonshare <percent>; /bn scale <n>; /bn test; /bn reset")
+		Print("/bn opens the settings; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn glow flash|ants|off; /bn glowcolor <colour>; /bn expiring on|off; /bn gap <seconds>; /bn soon <max seconds>; /bn soonmin <seconds>; /bn soonshare <percent>; /bn scale <n>; /bn test; /bn reset")
 		return
 	end
 	if InCombatLockdown() then
@@ -1518,6 +1582,11 @@ loader:SetScript("OnEvent", function(self, event, arg)
 				db.sound = db.sound > 0
 			end
 			db.soon = nil -- replaced by soonShare/soonMax/soonMin
+			if db.glow == true then
+				db.glow = "flash"
+			elseif db.glow == false then
+				db.glow = "off"
+			end
 			for key, value in pairs(DEFAULTS) do
 				if db[key] == nil then
 					db[key] = type(value) == "table" and CopyTable(value) or value
