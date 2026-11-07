@@ -1,8 +1,9 @@
 ## Interface: 16001
 ## Title: BuffNag
-## Notes: Lists the buffs you and your party are missing: your class buffs, food, weapon enchants. Click a line to cast. /bn
+## Notes: Shows an icon, and pings, while a buff you chose is missing on you or your party. Configured from a tab in the Cooldown Manager's settings. /bn
 ## Author: Pietjan
-## Version: 1.0
+## Version: 2.0
 ## SavedVariables: BuffNagDB
+## SavedVariablesPerCharacter: BuffNagCharDB
 
 BuffNag.lua

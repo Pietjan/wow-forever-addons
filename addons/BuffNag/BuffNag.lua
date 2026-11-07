@@ -1,84 +1,77 @@
--- BuffNag: a small list of what is missing: the buffs your class hands out
--- (on you and on your party), your self buffs, a food buff and a weapon
--- enchant. Each line is a button: click it to cast that buff on the first
--- person who lacks it. A sound nags now and then while the list is not
--- empty. Everything is out of combat only; the list hides in combat
--- and keeps quiet while resting, mounted or on a flight path.
+-- BuffNag: the Cooldown Manager shows a buff's icon while the buff is up.
+-- This does the reverse: a bar of icons for the buffs you chose that are
+-- missing, on you or on your party, with the minimap ping on a loop until
+-- they are back. Click an icon to cast the buff on the first one lacking it.
 --
--- Buffs are matched by spell name, so any rank counts, and a buff is only
--- asked for when your spellbook holds a spell that provides it.
---
--- Party buffs follow the default UI: the Cooldown Manager's settings have
--- a "Group Buffs" tab with the buffs your class gives, split into shown
--- and hidden. A buff hidden there is left alone here, and a group buff the
--- game lists that this file does not know is watched all the same.
+-- It is configured from its own tab in the Cooldown Manager's settings
+-- window (Escape > Options > Cooldown Manager, or /bn): the buffs on offer
+-- are the ones the game lists for your class there, the group buffs it
+-- knows, a food buff and weapon enchants. Buffs are matched by name, so
+-- any rank counts. The bar hides in combat, while resting, mounted, on a
+-- flight path or dead.
 
 local ADDON_NAME = ...
 
 local IsSecret = issecretvalue or function() return false end
 
-local DEFAULTS = {
-	party = true, -- also look at party members
+local DEFAULTS = { -- account wide: the bar and the sound
+	party = true, -- also look at party members, for buffs marked for the party
 	soon = 30, -- seconds left at which a buff counts as missing
 	sound = true, -- ping while something is missing
 	pingGap = 0.4, -- seconds between pings
 	scale = 1,
 	locked = false,
-	off = {}, -- buff keys the player turned off
 	point = { "CENTER", 0, 200 },
 }
 
--- What to watch. "auras" are spells whose name on a unit satisfies the
--- buff (any rank, single or group version). "know" are spells one of which
--- has to be in the spellbook for the buff to be asked for at all; without
--- it the buff is for everyone (food). "cast" is tried in order on a click:
--- the first one the player knows. "mana" skips units without mana.
--- "unless" are auras that excuse a unit (eating excuses missing food).
-local BUFFS = {
+-- Class buffs used to seed a new character's choices, and to fill in what
+-- the game's own lists leave out. "auras" are spells whose name on a unit
+-- satisfies the buff; "know" spells, one of which has to be in the
+-- spellbook; "cast" is tried in order on a click. "mana" skips units
+-- without mana, "unless" excuses a unit (eating excuses missing food).
+local SEEDS = {
 	-- priest
-	{ key = "fortitude", scope = "party", auras = { 1243, 21562 }, know = { 1243 }, cast = { 1243 } },
-	{ key = "spirit", scope = "party", auras = { 14752, 27681 }, know = { 14752 }, cast = { 14752 }, mana = true },
-	{ key = "shadowprot", scope = "party", auras = { 976, 27683 }, know = { 976 }, cast = { 976 }, default = false },
-	{ key = "innerfire", scope = "self", auras = { 588 }, know = { 588 }, cast = { 588 } },
+	{ scope = "party", auras = { 1243, 21562 }, know = { 1243 }, cast = { 1243 } },
+	{ scope = "party", auras = { 14752, 27681 }, know = { 14752 }, cast = { 14752 }, mana = true },
+	{ scope = "party", auras = { 976, 27683 }, know = { 976 }, cast = { 976 }, default = false },
+	{ scope = "self", auras = { 588 }, know = { 588 }, cast = { 588 } },
 	-- mage
-	{ key = "intellect", scope = "party", auras = { 1459, 23028 }, know = { 1459 }, cast = { 1459 }, mana = true },
-	{ key = "magearmor", scope = "self", label = "Armor", auras = { 168, 7302, 6117 }, know = { 168, 7302, 6117 }, cast = { 6117, 7302, 168 } },
+	{ scope = "party", auras = { 1459, 23028 }, know = { 1459 }, cast = { 1459 }, mana = true },
+	{ scope = "self", label = "Armor", auras = { 168, 7302, 6117 }, know = { 168, 7302, 6117 }, cast = { 6117, 7302, 168 } },
 	-- druid
-	{ key = "wild", scope = "party", auras = { 1126, 21849 }, know = { 1126 }, cast = { 1126 } },
-	{ key = "thorns", scope = "self", auras = { 467 }, know = { 467 }, cast = { 467 }, default = false },
-	{ key = "omen", scope = "self", auras = { 16864 }, know = { 16864 }, cast = { 16864 } },
+	{ scope = "party", auras = { 1126, 21849 }, know = { 1126 }, cast = { 1126 } },
+	{ scope = "self", auras = { 467 }, know = { 467 }, cast = { 467 }, default = false },
+	{ scope = "self", auras = { 16864 }, know = { 16864 }, cast = { 16864 } },
 	-- paladin
-	{ key = "blessing", scope = "party", label = "Blessing", auras = { 19740, 19742, 20217, 25782, 25894, 25898 },
-		know = { 19740, 19742, 20217 }, cast = { 20217, 19742, 19740 } },
-	{ key = "aura", scope = "self", label = "Aura", auras = { 465, 7294, 19746, 19876, 19888, 19891, 20218 },
-		know = { 465, 7294 }, cast = { 465 } },
-	{ key = "righteousfury", scope = "self", auras = { 25780 }, know = { 25780 }, cast = { 25780 }, default = false },
+	{ scope = "party", label = "Blessing", auras = { 19740, 19742, 20217, 25782, 25894, 25898 }, know = { 19740, 19742, 20217 }, cast = { 20217, 19742, 19740 } },
+	{ scope = "self", label = "Aura", auras = { 465, 7294, 19746, 19876, 19888, 19891, 20218 }, know = { 465, 7294 }, cast = { 465 } },
+	{ scope = "self", auras = { 25780 }, know = { 25780 }, cast = { 25780 }, default = false },
 	-- shaman
-	{ key = "lightningshield", scope = "self", auras = { 324 }, know = { 324 }, cast = { 324 } },
+	{ scope = "self", auras = { 324 }, know = { 324 }, cast = { 324 } },
 	-- warlock
-	{ key = "demonarmor", scope = "self", label = "Demon Armor", auras = { 687, 706 }, know = { 687, 706 }, cast = { 706, 687 } },
+	{ scope = "self", label = "Demon Armor", auras = { 687, 706 }, know = { 687, 706 }, cast = { 706, 687 } },
 	-- warrior
-	{ key = "battleshout", scope = "party", auras = { 6673 }, know = { 6673 }, cast = { 6673 }, default = false },
+	{ scope = "party", auras = { 6673 }, know = { 6673 }, cast = { 6673 }, default = false },
 	-- hunter
-	{ key = "aspect", scope = "self", label = "Aspect", auras = { 13165, 13163, 5118, 13159, 13161, 20043, 469145, 34074 },
-		know = { 13165, 13163, 5118 }, cast = { 13165, 13163 } },
-	{ key = "trueshot", scope = "self", auras = { 19506 }, know = { 19506 }, cast = { 19506 } },
-	-- everyone
-	{ key = "food", scope = "self", auras = { 19705 }, unless = { 433 } },
-	{ key = "weapon", scope = "self", label = "Weapon enchant", weapon = "main" },
-	{ key = "offhand", scope = "self", label = "Off-hand enchant", weapon = "off" },
+	{ scope = "self", label = "Aspect", auras = { 13165, 13163, 5118, 13159, 13161, 20043, 469145, 34074 }, know = { 13165, 13163, 5118 }, cast = { 13165, 13163 } },
+	{ scope = "self", auras = { 19506 }, know = { 19506 }, cast = { 19506 } },
 }
 
+local WELL_FED, FOOD = 19705, 433
 local PARTY_UNITS = { "player", "party1", "party2", "party3", "party4" }
 local MAIN_HAND, OFF_HAND = INVSLOT_MAINHAND or 16, INVSLOT_OFFHAND or 17
 local WEAPON = (Enum.ItemClass and Enum.ItemClass.Weapon) or 2
 local FISHING_POLE = (Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Fishingpole) or 20
-local MAX_LINES = 12
+local ICON, GAP = 40, 6
+local MAX_ICONS = 16
+local QUESTION_MARK = 134400
 
-local db
-local knownSpells = {} -- localized spell name -> true, from the spellbook
+local db, cdb -- account settings, this character's choices
+local knownSpells = {} -- spell name -> true, from the spellbook
+local catalog, catalogOrder = {}, {} -- key -> entry, in display order
 local nagging = false
 local refreshPending = false
+local previewing = false
 
 local function Print(msg, ...)
 	if select("#", ...) > 0 then
@@ -99,56 +92,21 @@ local function SpellName(spellID)
 	end
 end
 
-local function Enabled(buff)
-	if buff.gameHidden and not buff.gameShown then
-		return false -- hidden in the Cooldown Manager's Group Buffs tab
-	end
-	if db.off[buff.key] ~= nil then
-		return not db.off[buff.key]
-	end
-	return buff.default ~= false
+local function SpellIcon(spellID)
+	local ok, icon = pcall(function()
+		if C_Spell and C_Spell.GetSpellTexture then
+			return C_Spell.GetSpellTexture(spellID)
+		elseif GetSpellTexture then
+			return GetSpellTexture(spellID)
+		end
+	end)
+	return ok and icon or QUESTION_MARK
 end
 
 ------------------------------------------------------------------------------
--- Names: resolved once the client has the spell data
+-- The spellbook
 ------------------------------------------------------------------------------
 
-local function ResolveNames()
-	for _, buff in ipairs(BUFFS) do
-		buff.auraNames = {}
-		for _, id in ipairs(buff.auras or {}) do
-			local name = SpellName(id)
-			if name then
-				buff.auraNames[name] = true
-			end
-		end
-		buff.unlessNames = {}
-		for _, id in ipairs(buff.unless or {}) do
-			local name = SpellName(id)
-			if name then
-				buff.unlessNames[name] = true
-			end
-		end
-		buff.knowNames = {}
-		for _, id in ipairs(buff.know or {}) do
-			local name = SpellName(id)
-			if name then
-				buff.knowNames[#buff.knowNames + 1] = name
-			end
-		end
-		buff.castNames = {}
-		for _, id in ipairs(buff.cast or {}) do
-			local name = SpellName(id)
-			if name then
-				buff.castNames[#buff.castNames + 1] = name
-			end
-		end
-		buff.text = buff.label or (buff.auras and SpellName(buff.auras[1])) or buff.key
-	end
-end
-
--- Every spell name in the spellbook, so a buff is only asked for when the
--- player can give it, whatever its rank.
 local function ScanSpellbook()
 	wipe(knownSpells)
 	if C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines and C_SpellBook.GetSpellBookItemInfo then
@@ -178,91 +136,199 @@ local function ScanSpellbook()
 	end
 end
 
-local function CanProvide(buff)
-	if buff.gameShown or not buff.know then
-		return true
-	end
-	for _, name in ipairs(buff.knowNames) do
-		if knownSpells[name] then
-			return true
+------------------------------------------------------------------------------
+-- The catalogue: everything that can be nagged about
+------------------------------------------------------------------------------
+
+-- An entry: key, name, icon, auraNames (set), castNames (list, in order of
+-- preference), party (default for a new choice), kind ("aura", "food",
+-- "weapon", "offhand"), mana, unlessNames.
+
+local function AddEntry(entry)
+	local existing = catalog[entry.key]
+	if existing then
+		-- Same buff from another source: pool what they know.
+		for name in pairs(entry.auraNames) do
+			existing.auraNames[name] = true
 		end
+		for _, name in ipairs(entry.castNames) do
+			if not tContains(existing.castNames, name) then
+				existing.castNames[#existing.castNames + 1] = name
+			end
+		end
+		existing.party = existing.party or entry.party
+		existing.mana = existing.mana or entry.mana
+		return existing
 	end
-	return false
+	catalog[entry.key] = entry
+	catalogOrder[#catalogOrder + 1] = entry.key
+	return entry
 end
 
-local function CastName(buff)
-	for _, name in ipairs(buff.castNames) do
+local function SpellEntry(spellID, party, source)
+	local name = SpellName(spellID)
+	if not name then
+		return nil
+	end
+	return AddEntry({
+		key = "spell:" .. name, name = name, icon = SpellIcon(spellID), kind = "aura", source = source,
+		auraNames = { [name] = true }, castNames = { name }, party = party, unlessNames = {},
+	})
+end
+
+local function BuildCatalog()
+	wipe(catalog)
+	wipe(catalogOrder)
+
+	-- Group buffs the game lists for the class (the Cooldown Manager's
+	-- Group Buffs tab): buffs for the party.
+	if C_CooldownViewer and C_CooldownViewer.GetGroupBuffItems then
+		local ok, items = pcall(C_CooldownViewer.GetGroupBuffItems)
+		if ok and type(items) == "table" then
+			for _, item in ipairs(items) do
+				if item.isKnown and item.displaySpellID then
+					local entry = SpellEntry(item.displaySpellID, true, "group")
+					if entry and item.iconID then
+						entry.icon = item.iconID
+					end
+				end
+			end
+		end
+	end
+
+	-- Buffs the Cooldown Manager can track for the class: buffs on you.
+	if C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet and Enum.CooldownViewerCategory then
+		local categories = Enum.CooldownViewerCategory
+		for _, category in ipairs({ categories.TrackedBuff, categories.TrackedBar, categories.SpecAgnosticTracked, categories.EquipSlotTracked }) do
+			if category then
+				local ok, ids = pcall(C_CooldownViewer.GetCooldownViewerCategorySet, category, true)
+				if ok and type(ids) == "table" then
+					for _, cooldownID in ipairs(ids) do
+						local okInfo, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cooldownID)
+						if okInfo and info and info.isKnown and info.hasAura and not info.isInvisible and info.spellID then
+							local entry = SpellEntry(info.spellID, false, "cdm")
+							if entry then
+								for _, linked in ipairs(info.linkedSpellIDs or {}) do
+									local name = SpellName(linked)
+									if name then
+										entry.auraNames[name] = true
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- The seeds: anything above that they describe gets their extra
+	-- knowledge (other names, mana); anything missing is added when the
+	-- spellbook has the spell.
+	for _, seed in ipairs(SEEDS) do
+		local auraNames, castNames, known = {}, {}, false
+		for _, id in ipairs(seed.auras) do
+			local name = SpellName(id)
+			if name then
+				auraNames[name] = true
+			end
+		end
+		for _, id in ipairs(seed.cast) do
+			local name = SpellName(id)
+			if name and knownSpells[name] then
+				castNames[#castNames + 1] = name
+			end
+		end
+		for _, id in ipairs(seed.know) do
+			local name = SpellName(id)
+			if name and knownSpells[name] then
+				known = true
+			end
+		end
+		local matched
+		for _, key in ipairs(catalogOrder) do
+			local entry = catalog[key]
+			for name in pairs(auraNames) do
+				if entry.auraNames[name] then
+					matched = entry
+					break
+				end
+			end
+			if matched then
+				break
+			end
+		end
+		if matched then
+			for name in pairs(auraNames) do
+				matched.auraNames[name] = true
+			end
+			for _, name in ipairs(castNames) do
+				if not tContains(matched.castNames, name) then
+					matched.castNames[#matched.castNames + 1] = name
+				end
+			end
+			matched.mana = matched.mana or seed.mana
+			matched.seedDefault = seed.default ~= false
+			matched.party = matched.party or seed.scope == "party"
+		elseif known then
+			local firstName = seed.label or SpellName(seed.cast[1]) or SpellName(seed.auras[1])
+			AddEntry({
+				key = "spell:" .. firstName, name = firstName, icon = SpellIcon(seed.cast[1]), kind = "aura", source = "seed",
+				auraNames = auraNames, castNames = castNames, party = seed.scope == "party", mana = seed.mana,
+				unlessNames = {}, seedDefault = seed.default ~= false,
+			})
+		end
+	end
+
+	-- Everyone: a food buff and the weapon enchants.
+	local wellFed = SpellName(WELL_FED) or "Well Fed"
+	local food = SpellName(FOOD) or "Food"
+	AddEntry({
+		key = "food", name = wellFed, icon = SpellIcon(WELL_FED), kind = "food", source = "extra",
+		auraNames = { [wellFed] = true }, castNames = {}, party = false, unlessNames = { [food] = true }, seedDefault = true,
+	})
+	local function WeaponIcon(slot)
+		local ok, icon = pcall(GetInventoryItemTexture, "player", slot)
+		if ok and icon then
+			return icon
+		end
+		local okItem, itemIcon = pcall(function()
+			return C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(2862)
+		end)
+		return okItem and itemIcon or QUESTION_MARK
+	end
+	AddEntry({
+		key = "weapon", name = "Weapon enchant", icon = WeaponIcon(MAIN_HAND), kind = "weapon", source = "extra",
+		auraNames = {}, castNames = {}, party = false, unlessNames = {}, seedDefault = true,
+	})
+	AddEntry({
+		key = "offhand", name = "Off-hand enchant", icon = WeaponIcon(OFF_HAND), kind = "offhand", source = "extra",
+		auraNames = {}, castNames = {}, party = false, unlessNames = {}, seedDefault = true,
+	})
+end
+
+-- A new character starts with the class buffs this file knows, food and
+-- the weapon enchants.
+local function SeedChoices()
+	if cdb.seeded then
+		return
+	end
+	cdb.seeded = true
+	for _, key in ipairs(catalogOrder) do
+		local entry = catalog[key]
+		if entry.seedDefault then
+			cdb.nag[key] = { party = entry.party }
+		end
+	end
+end
+
+local function CastName(entry)
+	for _, name in ipairs(entry.castNames) do
 		if knownSpells[name] then
 			return name
 		end
 	end
-	if buff.game then
-		return buff.castNames[1] -- the game says it is known
-	end
-end
-
-------------------------------------------------------------------------------
--- The default UI's group buffs
-------------------------------------------------------------------------------
-
--- Party buffs the game itself lists for the Cooldown Manager, matched to
--- the entries above by name. Ones with no entry become entries of their
--- own, so nothing the game knows about is missed.
-local gameBuffs = {}
-
-local function SyncGameGroupBuffs()
-	for _, buff in ipairs(BUFFS) do
-		buff.gameShown, buff.gameHidden = nil, nil
-	end
-	wipe(gameBuffs)
-	if not (C_CooldownViewer and C_CooldownViewer.GetGroupBuffItems) then
-		return
-	end
-	local ok, items = pcall(C_CooldownViewer.GetGroupBuffItems)
-	if not ok or type(items) ~= "table" then
-		return
-	end
-	-- What the player hid in the settings; before any setting was made,
-	-- what the game hides by default.
-	local hidden = {}
-	local okHidden, list = pcall(function()
-		return C_UnitAuras.GetHiddenGroupBuffs and C_UnitAuras.GetHiddenGroupBuffs()
-	end)
-	if okHidden and type(list) == "table" and #list > 0 then
-		for _, id in ipairs(list) do
-			hidden[id] = true
-		end
-	else
-		local flag = (Enum.GroupBuffItemFlags and Enum.GroupBuffItemFlags.HideByDefault) or 1
-		for _, item in ipairs(items) do
-			if bit.band(item.flags or 0, flag) ~= 0 then
-				hidden[item.spellID] = true
-			end
-		end
-	end
-	for _, item in ipairs(items) do
-		if item.isKnown and not IsSecret(item.name) then
-			local name = SpellName(item.displaySpellID) or item.name
-			local isHidden = hidden[item.spellID] or hidden[item.displaySpellID] or false
-			local matched = false
-			for _, buff in ipairs(BUFFS) do
-				if buff.scope == "party" and buff.auraNames and buff.auraNames[name] then
-					matched = true
-					if isHidden then
-						buff.gameHidden = true
-					else
-						buff.gameShown = true
-					end
-				end
-			end
-			if not matched and not isHidden then
-				gameBuffs[#gameBuffs + 1] = {
-					key = "cdm" .. item.spellID, scope = "party", text = name, game = true,
-					auraNames = { [name] = true }, unlessNames = {}, knowNames = {}, castNames = { name },
-				}
-			end
-		end
-	end
+	return entry.castNames[1]
 end
 
 ------------------------------------------------------------------------------
@@ -270,8 +336,11 @@ end
 ------------------------------------------------------------------------------
 
 -- Whether a unit has one of the named buffs with enough time left; nil when
--- the game would not let us look (secret values).
+-- the game would not let us look.
 local function UnitHas(unit, names, soon)
+	if not next(names) then
+		return false
+	end
 	local found = false
 	local ok = pcall(function()
 		local now = GetTime()
@@ -353,10 +422,8 @@ local function ShortName(unit)
 	return ok and name or unit
 end
 
--- The weapon enchant check: an item in the slot that is a weapon (not a
--- fishing pole) and has no temporary enchant.
-local function WeaponMissing(which)
-	local slot = which == "main" and MAIN_HAND or OFF_HAND
+-- A weapon (not a fishing pole) in the slot with no temporary enchant.
+local function WeaponMissing(slot)
 	local itemID = GetInventoryItemID("player", slot)
 	if not itemID or IsSecret(itemID) then
 		return false
@@ -368,7 +435,7 @@ local function WeaponMissing(which)
 	end
 	local ok, has, expires = pcall(function()
 		local hasMain, mainExpires, _, _, hasOff, offExpires = GetWeaponEnchantInfo()
-		if which == "main" then
+		if slot == MAIN_HAND then
 			return hasMain, mainExpires
 		end
 		return hasOff, offExpires
@@ -382,72 +449,18 @@ local function WeaponMissing(which)
 	return expires ~= nil and expires > 0 and expires / 1000 <= db.soon
 end
 
+-- Moments when buffs are nobody's concern.
+local function Idle()
+	local ok, idle = pcall(function()
+		return UnitIsDeadOrGhost("player") or (IsResting and IsResting()) or (IsMounted and IsMounted()) or UnitOnTaxi("player")
+	end)
+	return ok and idle
+end
+
 ------------------------------------------------------------------------------
--- The list
+-- The sound
 ------------------------------------------------------------------------------
 
-local frame = CreateFrame("Frame", "BuffNagFrame", UIParent)
-frame:SetSize(200, 20)
-frame:SetMovable(true)
-frame:SetClampedToScreen(true)
-frame:EnableMouse(true)
-frame:RegisterForDrag("LeftButton")
-frame:Hide()
-
-local header = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-header:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
-header:SetText("BuffNag (drag to move, /bn lock)")
-
-local lines = {}
-
-local function SavePosition()
-	local point, _, _, x, y = frame:GetPoint(1)
-	db.point = { point, x, y }
-end
-
-local function OnDragStart()
-	if not db.locked and not InCombatLockdown() then
-		frame:StartMoving()
-	end
-end
-
-local function OnDragStop()
-	frame:StopMovingOrSizing()
-	SavePosition()
-end
-
-frame:SetScript("OnDragStart", OnDragStart)
-frame:SetScript("OnDragStop", OnDragStop)
-
-local function Line(i)
-	if lines[i] then
-		return lines[i]
-	end
-	local button = CreateFrame("Button", "BuffNagLine" .. i, frame, "SecureActionButtonTemplate")
-	button:SetSize(200, 16)
-	button:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(i - 1) * 16)
-	button:RegisterForClicks("AnyDown", "AnyUp")
-	button:RegisterForDrag("LeftButton")
-	button:SetScript("OnDragStart", OnDragStart)
-	button:SetScript("OnDragStop", OnDragStop)
-	button:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
-	local text = button:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-	text:SetPoint("LEFT", 4, 0)
-	text:SetJustifyH("LEFT")
-	button.text = text
-	lines[i] = button
-	return button
-end
-
-local function ApplyLayout()
-	frame:SetScale(db.scale)
-	frame:ClearAllPoints()
-	frame:SetPoint(db.point[1], UIParent, db.point[1], db.point[2], db.point[3])
-	header:SetShown(not db.locked)
-end
-
--- The nag: the minimap ping, over and over with a short gap, for as long
--- as the list is showing.
 local function Ping()
 	if not nagging then
 		return
@@ -468,87 +481,182 @@ local function StopNag()
 	nagging = false
 end
 
-local testing = false
+------------------------------------------------------------------------------
+-- Icons in the Cooldown Manager's style
+------------------------------------------------------------------------------
 
--- Moments when buffs are nobody's concern: resting in an inn or city,
--- mounted, or on a flight path.
-local function Idle()
-	local ok, idle = pcall(function()
-		return (IsResting and IsResting()) or (IsMounted and IsMounted()) or UnitOnTaxi("player")
+local function StyleIcon(button)
+	button:SetSize(ICON, ICON)
+	local icon = button:CreateTexture(nil, "ARTWORK")
+	icon:SetAllPoints()
+	button.Icon = icon
+	pcall(function()
+		local mask = button:CreateMaskTexture()
+		mask:SetAtlas("UI-HUD-CoolDownManager-Mask")
+		mask:SetAllPoints()
+		icon:AddMaskTexture(mask)
+		local overlay = button:CreateTexture(nil, "OVERLAY")
+		overlay:SetAtlas("UI-HUD-CoolDownManager-IconOverlay")
+		overlay:SetPoint("TOPLEFT", -8, 7)
+		overlay:SetPoint("BOTTOMRIGHT", 8, -7)
 	end)
-	return ok and idle
+	local count = button:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+	count:SetPoint("BOTTOMRIGHT", -2, 2)
+	button.Count = count
+	local party = button:CreateTexture(nil, "OVERLAY", nil, 2)
+	party:SetSize(16, 16)
+	party:SetPoint("TOPLEFT", -4, 4)
+	if not pcall(party.SetAtlas, party, "socialqueuing-icon-group") then
+		party:SetTexture("Interface\\FriendsFrame\\UI-Toast-FriendOnlineIcon")
+	end
+	party:Hide()
+	button.Party = party
 end
 
--- Work out the missing buffs and show them. Called out of combat only.
+------------------------------------------------------------------------------
+-- The bar
+------------------------------------------------------------------------------
+
+local bar = CreateFrame("Frame", "BuffNagBar", UIParent)
+bar:SetSize(ICON, ICON)
+bar:SetMovable(true)
+bar:SetClampedToScreen(true)
+bar:EnableMouse(true)
+bar:RegisterForDrag("LeftButton")
+bar:Hide()
+
+local label = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+label:SetPoint("BOTTOM", bar, "TOP", 0, 6)
+label:SetText("BuffNag: drag to move")
+
+local icons = {}
+
+local function SavePosition()
+	local point, _, _, x, y = bar:GetPoint(1)
+	db.point = { point, x, y }
+end
+
+local function OnDragStart()
+	if not db.locked and not InCombatLockdown() then
+		bar:StartMoving()
+	end
+end
+
+local function OnDragStop()
+	bar:StopMovingOrSizing()
+	SavePosition()
+end
+
+bar:SetScript("OnDragStart", OnDragStart)
+bar:SetScript("OnDragStop", OnDragStop)
+
+local function IconTooltip(button)
+	if not button.entry then
+		return
+	end
+	GameTooltip:SetOwner(button, "ANCHOR_BOTTOM")
+	GameTooltip:SetText(button.entry.name)
+	if button.missingText then
+		GameTooltip:AddLine("Missing: " .. button.missingText, 1, 1, 1, true)
+	end
+	if button.castName then
+		GameTooltip:AddLine("Click to cast on the first one.", 0.6, 0.6, 0.6)
+	end
+	GameTooltip:Show()
+end
+
+local function BarIcon(i)
+	if icons[i] then
+		return icons[i]
+	end
+	local button = CreateFrame("Button", "BuffNagIcon" .. i, bar, "SecureActionButtonTemplate")
+	StyleIcon(button)
+	button:SetPoint("LEFT", bar, "LEFT", (i - 1) * (ICON + GAP), 0)
+	button:RegisterForClicks("AnyDown", "AnyUp")
+	button:RegisterForDrag("LeftButton")
+	button:SetScript("OnDragStart", OnDragStart)
+	button:SetScript("OnDragStop", OnDragStop)
+	button:SetScript("OnEnter", IconTooltip)
+	button:SetScript("OnLeave", GameTooltip_Hide)
+	icons[i] = button
+	return button
+end
+
+local function ApplyLayout()
+	bar:SetScale(db.scale)
+	bar:ClearAllPoints()
+	bar:SetPoint(db.point[1], UIParent, db.point[1], db.point[2], db.point[3])
+	label:SetShown(not db.locked)
+end
+
+-- The units lacking an entry's buff.
+local function Missing(entry, choice)
+	local missing = {}
+	if entry.kind == "weapon" or entry.kind == "offhand" then
+		if WeaponMissing(entry.kind == "weapon" and MAIN_HAND or OFF_HAND) then
+			missing[1] = "player"
+		end
+		return missing
+	end
+	local inRaid = IsInRaid and IsInRaid()
+	local units = (choice.party and db.party and not inRaid) and PARTY_UNITS or { "player" }
+	for _, unit in ipairs(units) do
+		if UnitUsable(unit) and (not entry.mana or UnitHasMana(unit)) then
+			local has = UnitHas(unit, entry.auraNames, db.soon)
+			if has == false and not UnitHas(unit, entry.unlessNames, 0) then
+				missing[#missing + 1] = unit
+			end
+		end
+	end
+	return missing
+end
+
 local function Refresh()
 	refreshPending = false
 	if InCombatLockdown() then
 		return
 	end
-	if not testing and (UnitIsDeadOrGhost("player") or Idle()) then
-		frame:Hide()
+	if Idle() and not previewing then
+		bar:Hide()
 		StopNag()
 		return
 	end
-	local inRaid = IsInRaid and IsInRaid()
 	local count = 0
-	local function Consider(buff)
-		if Enabled(buff) and CanProvide(buff) then
-			local missing = {}
-			if buff.weapon then
-				if WeaponMissing(buff.weapon) then
-					missing[1] = "player"
-				end
-			else
-				local units = (buff.scope == "party" and db.party and not inRaid) and PARTY_UNITS or { "player" }
-				for _, unit in ipairs(units) do
-					if UnitUsable(unit) and (not buff.mana or UnitHasMana(unit)) then
-						local has = UnitHas(unit, buff.auraNames, db.soon)
-						if has == false and not UnitHas(unit, buff.unlessNames, 0) then
-							missing[#missing + 1] = unit
-						end
-					end
-				end
-			end
-			if #missing > 0 and count < MAX_LINES then
+	for _, key in ipairs(catalogOrder) do
+		local entry, choice = catalog[key], cdb.nag[key]
+		if choice and count < MAX_ICONS then
+			local missing = previewing and { "player" } or Missing(entry, choice)
+			if #missing > 0 then
 				count = count + 1
-				local line = Line(count)
+				local button = BarIcon(count)
+				button.entry = entry
+				button.Icon:SetTexture(entry.icon or QUESTION_MARK)
+				button.Count:SetText(#missing > 1 and tostring(#missing) or "")
+				button.Party:SetShown(choice.party and true or false)
 				local names = {}
 				for i, unit in ipairs(missing) do
 					names[i] = ShortName(unit)
 				end
-				line.text:SetText(("|cffffd100%s|r  %s"):format(buff.text, table.concat(names, ", ")))
-				local spell = CastName(buff)
+				button.missingText = table.concat(names, ", ")
+				local spell = CastName(entry)
+				button.castName = spell
 				if spell then
-					line:SetAttribute("type", "spell")
-					line:SetAttribute("spell", spell)
-					line:SetAttribute("unit", missing[1])
+					button:SetAttribute("type", "spell")
+					button:SetAttribute("spell", spell)
+					button:SetAttribute("unit", missing[1])
 				else
-					line:SetAttribute("type", nil)
+					button:SetAttribute("type", nil)
 				end
-				line:Show()
+				button:Show()
 			end
 		end
 	end
-	for _, buff in ipairs(BUFFS) do
-		Consider(buff)
+	for i = count + 1, #icons do
+		icons[i]:Hide()
 	end
-	for _, buff in ipairs(gameBuffs) do
-		Consider(buff)
-	end
-	if testing and count == 0 then
-		count = 1
-		local line = Line(1)
-		line.text:SetText("|cffffd100Nothing missing|r  (test)")
-		line:SetAttribute("type", nil)
-		line:Show()
-	end
-	for i = count + 1, #lines do
-		lines[i]:Hide()
-	end
-	frame:SetHeight(math.max(1, count * 16))
-	frame:SetShown(count > 0)
-	if count > 0 and not testing and db.sound then
+	bar:SetWidth(math.max(ICON, count * (ICON + GAP) - GAP))
+	bar:SetShown(count > 0)
+	if count > 0 and not previewing and db.sound then
 		StartNag()
 	else
 		StopNag()
@@ -564,39 +672,285 @@ local function Schedule(delay)
 end
 
 ------------------------------------------------------------------------------
--- Slash command
+-- The tab in the Cooldown Manager's settings
 ------------------------------------------------------------------------------
 
-local function ListBuffs()
-	Print("buffs (|cff00ff00on|r / |cffff0000off|r; /bn <name> toggles):")
-	local function Show(buff)
-		local state = Enabled(buff) and "|cff00ff00on|r" or "|cffff0000off|r"
-		local note = ""
-		if buff.gameHidden and not buff.gameShown then
-			note = " |cff808080(hidden in the Cooldown Manager)|r"
-		elseif buff.game then
-			note = " |cff808080(from the Cooldown Manager)|r"
-		elseif not CanProvide(buff) then
-			note = " |cff808080(not yours)|r"
-		end
-		Print("  %s  %s: %s%s", state, buff.key, buff.text or buff.key, note)
+local panel -- our page inside the settings window
+local settingsTab
+local COLUMNS = 7
+
+local function ShowPanel()
+	local settings = CooldownViewerSettings
+	if not (settings and panel) then
+		return
 	end
-	for _, buff in ipairs(BUFFS) do
-		Show(buff)
+	settings.displayMode = "buffnag"
+	for _, tab in ipairs(settings.TabButtons or {}) do
+		tab:SetChecked(tab.displayMode == "buffnag")
 	end
-	for _, buff in ipairs(gameBuffs) do
-		Show(buff)
+	if settings.CooldownScroll then
+		settings.CooldownScroll:Hide()
 	end
-	Print("party %s, warn %d s before a buff runs out, pings %s (every %.1f s), scale %.2f, %s",
-		db.party and "on" or "off", db.soon, db.sound and "on" or "off", db.pingGap, db.scale, db.locked and "locked" or "unlocked")
+	if settings.GroupBuffFilter then
+		settings.GroupBuffFilter:Hide()
+	end
+	if CooldownViewerSettingsEditAlert then
+		CooldownViewerSettingsEditAlert:Hide()
+	end
+	panel:Show()
 end
+
+local function BuildPanel(settings)
+	panel = CreateFrame("Frame", "BuffNagSettingsPanel", settings)
+	panel:SetPoint("TOPLEFT", 17, -72)
+	panel:SetPoint("BOTTOMRIGHT", -30, 29)
+	panel:Hide()
+
+	-- Options along the top.
+	local function Checkbox(text, x, get, set)
+		local box = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+		box:SetSize(24, 24)
+		box:SetPoint("TOPLEFT", x, 0)
+		local caption = box.Text or box.text
+		if caption then
+			caption:SetText(text)
+			caption:SetFontObject("GameFontHighlightSmall")
+		end
+		box:SetScript("OnShow", function(self)
+			self:SetChecked(get())
+		end)
+		box:SetScript("OnClick", function(self)
+			set(self:GetChecked() and true or false)
+			if not InCombatLockdown() then
+				ApplyLayout()
+				Refresh()
+			end
+		end)
+		return box
+	end
+	Checkbox("Sound", 0, function() return db.sound end, function(v) db.sound = v end)
+	Checkbox("Party", 80, function() return db.party end, function(v) db.party = v end)
+	Checkbox("Lock bar", 160, function() return db.locked end, function(v) db.locked = v end)
+	local test = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+	test:SetSize(70, 22)
+	test:SetPoint("TOPRIGHT", 0, -1)
+	test:SetText("Show bar")
+	test:SetScript("OnClick", function()
+		previewing = not previewing
+		test:SetText(previewing and "Hide bar" or "Show bar")
+		if not InCombatLockdown() then
+			Refresh()
+		end
+	end)
+
+	local help = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	help:SetPoint("TOPLEFT", 4, -28)
+	help:SetPoint("RIGHT", -4, 0)
+	help:SetJustifyH("LEFT")
+	help:SetText("Click a buff to move it between the lists. Right-click a watched buff to also watch your party for it.")
+
+	-- The two lists, in a scroll frame.
+	local scroll
+	local okScroll = pcall(function()
+		scroll = CreateFrame("ScrollFrame", nil, panel, "ScrollFrameTemplate")
+	end)
+	if not okScroll or not scroll then
+		scroll = CreateFrame("ScrollFrame", nil, panel)
+		scroll:EnableMouseWheel(true)
+		scroll:SetScript("OnMouseWheel", function(self, delta)
+			local range = math.max(0, self:GetScrollChild():GetHeight() - self:GetHeight())
+			self:SetVerticalScroll(math.max(0, math.min(range, self:GetVerticalScroll() - delta * 40)))
+		end)
+	end
+	scroll:SetPoint("TOPLEFT", 0, -58)
+	scroll:SetPoint("BOTTOMRIGHT", -16, 0)
+	local content = CreateFrame("Frame", nil, scroll)
+	content:SetSize(300, 1)
+	scroll:SetScrollChild(content)
+	panel.content = content
+
+	local headers = {}
+	for i = 1, 2 do
+		local header = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+		header:SetJustifyH("LEFT")
+		headers[i] = header
+	end
+	headers[1]:SetText("Nag when missing")
+	headers[2]:SetText("Available")
+
+	local buttons = {}
+	local function PanelButton(i)
+		if buttons[i] then
+			return buttons[i]
+		end
+		local button = CreateFrame("Button", nil, content)
+		StyleIcon(button)
+		button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+		button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+		button:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+			GameTooltip:SetText(self.entry.name)
+			local choice = cdb.nag[self.entry.key]
+			if choice then
+				GameTooltip:AddLine(choice.party and "Watched on you and your party." or "Watched on you.", 1, 1, 1)
+				GameTooltip:AddLine("Click to stop watching; right-click to toggle the party.", 0.6, 0.6, 0.6, true)
+			else
+				GameTooltip:AddLine("Click to watch.", 0.6, 0.6, 0.6)
+			end
+			GameTooltip:Show()
+		end)
+		button:SetScript("OnLeave", GameTooltip_Hide)
+		button:SetScript("OnClick", function(self, mouseButton)
+			local key = self.entry.key
+			if mouseButton == "RightButton" then
+				if cdb.nag[key] then
+					cdb.nag[key].party = not cdb.nag[key].party
+				end
+			elseif cdb.nag[key] then
+				cdb.nag[key] = nil
+			else
+				cdb.nag[key] = { party = self.entry.party }
+			end
+			PlaySound(SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or 856)
+			panel:Layout()
+			if not InCombatLockdown() then
+				Refresh()
+			end
+		end)
+		buttons[i] = button
+		return button
+	end
+
+	function panel:Layout()
+		local used = 0
+		local y = 0
+		local step = ICON + 8
+		local function Section(index, keys)
+			headers[index]:ClearAllPoints()
+			headers[index]:SetPoint("TOPLEFT", content, "TOPLEFT", 4, -y)
+			y = y + 22
+			if #keys == 0 then
+				y = y + 8
+			end
+			for n, key in ipairs(keys) do
+				used = used + 1
+				local button = PanelButton(used)
+				button.entry = catalog[key]
+				button.Icon:SetTexture(button.entry.icon or QUESTION_MARK)
+				local choice = cdb.nag[key]
+				button.Party:SetShown(choice and choice.party and true or false)
+				button.Icon:SetDesaturated(index == 2)
+				local column, row = (n - 1) % COLUMNS, math.floor((n - 1) / COLUMNS)
+				button:ClearAllPoints()
+				button:SetPoint("TOPLEFT", content, "TOPLEFT", 8 + column * step, -(y + row * step))
+				button:Show()
+			end
+			y = y + math.ceil(#keys / COLUMNS) * step + 16
+		end
+		local chosen, available = {}, {}
+		for _, key in ipairs(catalogOrder) do
+			if cdb.nag[key] then
+				chosen[#chosen + 1] = key
+			else
+				available[#available + 1] = key
+			end
+		end
+		Section(1, chosen)
+		Section(2, available)
+		for i = used + 1, #buttons do
+			buttons[i]:Hide()
+		end
+		content:SetSize(math.max(300, scroll:GetWidth()), math.max(1, y))
+	end
+
+	panel:SetScript("OnShow", function(self)
+		self:Layout()
+	end)
+	panel:SetScript("OnHide", function()
+		if previewing then
+			previewing = false
+			test:SetText("Show bar")
+			if not InCombatLockdown() then
+				Refresh()
+			end
+		end
+	end)
+end
+
+local function HookSettings()
+	local settings = CooldownViewerSettings
+	if not settings or settingsTab then
+		return
+	end
+	BuildPanel(settings)
+
+	-- The tab: made from the game's own tab template so it joins the
+	-- others; selecting another tab unchecks it.
+	local ok = pcall(function()
+		settingsTab = CreateFrame("Frame", "BuffNagSettingsTab", settings, "CooldownViewerSettingsTabTemplate")
+	end)
+	if not ok or not settingsTab then
+		settingsTab = nil
+		Print("could not add a tab to the Cooldown Manager settings; use /bn to configure")
+		return
+	end
+	settingsTab.displayMode = "buffnag"
+	settingsTab.tooltipText = "BuffNag: buffs to nag about when missing"
+	local anchor = settings.GroupBuffsTab or settings.AurasTab or settings.SpellsTab
+	if anchor then
+		settingsTab:SetPoint("TOP", anchor, "BOTTOM", 0, -3)
+	else
+		settingsTab:SetPoint("TOPLEFT", settings, "TOPRIGHT", 0, -200)
+	end
+	settingsTab.Icon:SetSize(34, 34)
+	settingsTab.Icon:SetTexture(SpellIcon(1243))
+	settingsTab.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+	settingsTab:SetChecked(false)
+	if settingsTab.SetCustomOnMouseUpHandler then
+		settingsTab:SetCustomOnMouseUpHandler(function(_, button, upInside)
+			if button == "LeftButton" and upInside then
+				ShowPanel()
+			end
+		end)
+	end
+	-- Hidden by the game's own tabs; forgotten when the window closes, so
+	-- it reopens on the game's first tab as usual.
+	hooksecurefunc(settings, "SetDisplayMode", function(_, mode)
+		panel:Hide()
+		if mode ~= "buffnag" then
+			settingsTab:SetChecked(false)
+		end
+	end)
+	settings:HookScript("OnHide", function(self)
+		if self.displayMode == "buffnag" then
+			self.displayMode = nil
+			panel:Hide()
+		end
+	end)
+end
+
+local function OpenSettings()
+	if not CooldownViewerSettings then
+		Print("the Cooldown Manager is not available on this client")
+		return
+	end
+	HookSettings()
+	if not CooldownViewerSettings:IsShown() then
+		ShowUIPanel(CooldownViewerSettings)
+	end
+	ShowPanel()
+end
+
+------------------------------------------------------------------------------
+-- Slash command
+------------------------------------------------------------------------------
 
 SLASH_BUFFNAG1 = "/bn"
 SLASH_BUFFNAG2 = "/buffnag"
 SlashCmdList.BUFFNAG = function(msg)
 	local word, rest = msg:lower():match("^%s*(%S*)%s*(%S*)")
-	if word == "" or word == "list" then
-		ListBuffs()
+	if word == "" or word == "config" or word == "options" then
+		OpenSettings()
 		return
 	elseif word == "lock" or word == "unlock" then
 		db.locked = word == "lock"
@@ -616,26 +970,20 @@ SlashCmdList.BUFFNAG = function(msg)
 	elseif word == "reset" then
 		db.point = { DEFAULTS.point[1], DEFAULTS.point[2], DEFAULTS.point[3] }
 	elseif word == "test" then
-		testing = not testing
-		Print("test display %s", testing and "on" or "off")
+		previewing = not previewing
+		Print("bar preview %s", previewing and "on" or "off")
+	elseif word == "list" then
+		Print("watching:")
+		for _, key in ipairs(catalogOrder) do
+			local choice = cdb.nag[key]
+			if choice then
+				Print("  %s%s", catalog[key].name, choice.party and " (and party)" or "")
+			end
+		end
+		return
 	else
-		local found
-		for _, buff in ipairs(BUFFS) do
-			if buff.key == word then
-				found = buff
-			end
-		end
-		for _, buff in ipairs(gameBuffs) do
-			if buff.key == word then
-				found = buff
-			end
-		end
-		if not found then
-			Print("/bn  lists the buffs; /bn <name> toggles one; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn gap <seconds>; /bn soon <seconds>; /bn scale <n>; /bn test; /bn reset")
-			return
-		end
-		db.off[found.key] = Enabled(found) -- toggle
-		Print("%s %s", found.text, Enabled(found) and "on" or "off")
+		Print("/bn opens the settings; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn gap <seconds>; /bn soon <seconds>; /bn scale <n>; /bn test; /bn reset")
+		return
 	end
 	if InCombatLockdown() then
 		Print("changes apply after combat")
@@ -648,6 +996,18 @@ end
 ------------------------------------------------------------------------------
 -- Events
 ------------------------------------------------------------------------------
+
+local function Rebuild()
+	ScanSpellbook()
+	BuildCatalog()
+	SeedChoices()
+	if panel and panel:IsShown() then
+		panel:Layout()
+	end
+	if not InCombatLockdown() then
+		Schedule()
+	end
+end
 
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
@@ -663,40 +1023,32 @@ loader:RegisterEvent("PLAYER_UNGHOST")
 loader:RegisterEvent("PLAYER_UPDATE_RESTING")
 loader:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
 loader:RegisterEvent("PLAYER_CONTROL_GAINED")
--- Changes to the Group Buffs tab of the Cooldown Manager; the names may
--- not exist on every client.
-pcall(loader.RegisterEvent, loader, "HIDDEN_GROUP_BUFFS_CHANGED")
 pcall(loader.RegisterEvent, loader, "COOLDOWN_VIEWER_DATA_LOADED")
 loader:RegisterUnitEvent("UNIT_AURA", "player", "party1", "party2", "party3", "party4")
 loader:SetScript("OnEvent", function(self, event, arg)
 	if event == "ADDON_LOADED" then
-		if arg ~= ADDON_NAME then
-			return
-		end
-		BuffNagDB = BuffNagDB or {}
-		db = BuffNagDB
-		if type(db.sound) == "number" then
-			db.sound = db.sound > 0
-		end
-		db.pings = nil
-		for key, value in pairs(DEFAULTS) do
-			if db[key] == nil then
-				if type(value) == "table" then
-					local copy = {}
-					for k, v in pairs(value) do
-						copy[k] = v
-					end
-					db[key] = copy
-				else
-					db[key] = value
+		if arg == ADDON_NAME then
+			BuffNagDB = BuffNagDB or {}
+			db = BuffNagDB
+			db.off, db.pings = nil, nil -- from earlier versions
+			if type(db.sound) == "number" then
+				db.sound = db.sound > 0
+			end
+			for key, value in pairs(DEFAULTS) do
+				if db[key] == nil then
+					db[key] = type(value) == "table" and CopyTable(value) or value
 				end
 			end
+			BuffNagCharDB = BuffNagCharDB or {}
+			cdb = BuffNagCharDB
+			cdb.nag = cdb.nag or {}
+		elseif arg == "Blizzard_CooldownViewer" and db then
+			HookSettings()
 		end
 	elseif event == "PLAYER_LOGIN" then
-		ResolveNames()
-		ScanSpellbook()
-		SyncGameGroupBuffs()
+		Rebuild()
 		ApplyLayout()
+		HookSettings()
 		-- Temporary weapon enchants and running-out buffs have no event of
 		-- their own: look every few seconds.
 		C_Timer.NewTicker(3, function()
@@ -705,13 +1057,20 @@ loader:SetScript("OnEvent", function(self, event, arg)
 			end
 		end)
 	elseif event == "PLAYER_REGEN_DISABLED" then
-		frame:Hide()
+		bar:Hide()
 		StopNag()
-	elseif event == "SPELLS_CHANGED" or event == "HIDDEN_GROUP_BUFFS_CHANGED" or event == "COOLDOWN_VIEWER_DATA_LOADED" then
-		if event == "SPELLS_CHANGED" then
-			ScanSpellbook()
+	elseif event == "SPELLS_CHANGED" or event == "COOLDOWN_VIEWER_DATA_LOADED" then
+		Rebuild()
+	elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+		if arg == MAIN_HAND or arg == OFF_HAND then
+			local weapon, offhand = catalog.weapon, catalog.offhand
+			if weapon then
+				weapon.icon = GetInventoryItemTexture("player", MAIN_HAND) or weapon.icon
+			end
+			if offhand then
+				offhand.icon = GetInventoryItemTexture("player", OFF_HAND) or offhand.icon
+			end
 		end
-		SyncGameGroupBuffs()
 		if not InCombatLockdown() then
 			Schedule()
 		end
