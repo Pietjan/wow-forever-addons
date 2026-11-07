@@ -150,6 +150,23 @@ local ELIXIRS = {
 	[20004] = { 24361, "Troll's Blood Elixir" },
 }
 local FLASK_NAMES, ELIXIR_FAMILY_NAMES = {}, {} -- resolved from the spells once their names load
+
+-- Foods and drinks whose use leaves a Well Fed buff, from the game's data.
+local FOODS = {
+	[724] = true, [733] = true, [787] = true, [1017] = true, [1082] = true, [2680] = true, [2681] = true, [2682] = true, [2683] = true, [2684] = true,
+	[2685] = true, [2687] = true, [2888] = true, [3220] = true, [3662] = true, [3663] = true, [3664] = true, [3665] = true, [3666] = true, [3726] = true,
+	[3727] = true, [3728] = true, [3729] = true, [4457] = true, [4592] = true, [4593] = true, [4594] = true, [5095] = true, [5472] = true, [5474] = true,
+	[5476] = true, [5477] = true, [5479] = true, [5480] = true, [5527] = true, [6038] = true, [6290] = true, [6316] = true, [6887] = true, [6888] = true,
+	[6890] = true, [7806] = true, [7807] = true, [7808] = true, [8364] = true, [8957] = true, [10841] = true, [11584] = true, [12209] = true, [12210] = true,
+	[12212] = true, [12213] = true, [12214] = true, [12215] = true, [12216] = true, [12218] = true, [12224] = true, [13851] = true, [13927] = true, [13928] = true,
+	[13929] = true, [13930] = true, [13931] = true, [13932] = true, [13933] = true, [13934] = true, [13935] = true, [16971] = true, [17197] = true, [17198] = true,
+	[17222] = true, [18045] = true, [18254] = true, [20074] = true, [20452] = true, [21072] = true, [21217] = true, [206177] = true, [238637] = true, [238638] = true,
+	[238639] = true, [249865] = true, [249866] = true, [249867] = true, [249868] = true, [249869] = true, [249870] = true, [249871] = true, [249872] = true, [249873] = true,
+	[249874] = true, [249875] = true, [249876] = true, [250065] = true, [250066] = true, [250067] = true, [250068] = true, [250069] = true, [250070] = true, [250071] = true,
+	[250072] = true, [250073] = true, [250074] = true, [250075] = true, [250076] = true, [250077] = true, [250078] = true, [250079] = true, [250080] = true, [263509] = true,
+	[263512] = true, [267341] = true, [268912] = true, [268913] = true, [274971] = true, [274976] = true, [286152] = true, [287973] = true, [287974] = true,
+}
+local EATING_SPELLS = { 21149 --[[ Egg Nog ]], 5004 --[[ Food ]], 1249906 --[[ Nutritious Drink ]], 1248377 --[[ Nutritious Food ]] }
 local PARTY_UNITS = { "player", "party1", "party2", "party3", "party4" }
 local MAIN_HAND, OFF_HAND = INVSLOT_MAINHAND or 16, INVSLOT_OFFHAND or 17
 local WEAPON = (Enum.ItemClass and Enum.ItemClass.Weapon) or 2
@@ -402,12 +419,19 @@ local function BuildCatalog()
 		end
 	end
 
-	-- Everyone: a food buff and the weapon enchants.
+	-- Everyone: a food buff and the weapon enchants. Eating or drinking
+	-- right now excuses the missing food buff.
 	local wellFed = SpellName(WELL_FED) or "Well Fed"
-	local food = SpellName(FOOD) or "Food"
+	local eating = { [SpellName(FOOD) or "Food"] = true, [SpellName(430) or "Drink"] = true }
+	for _, spellID in ipairs(EATING_SPELLS) do
+		local name = SpellName(spellID)
+		if name then
+			eating[name] = true
+		end
+	end
 	AddEntry({
 		key = "food", name = wellFed, icon = SpellIcon(WELL_FED), kind = "food", source = "extra",
-		auraNames = { [wellFed] = true }, castNames = {}, party = false, unlessNames = { [food] = true }, seedDefault = true,
+		auraNames = { [wellFed] = true }, castNames = {}, party = false, unlessNames = eating, seedDefault = true,
 	})
 	local function WeaponIcon(slot)
 		local ok, icon = pcall(GetInventoryItemTexture, "player", slot)
@@ -658,6 +682,22 @@ local function WeaponFix(slot)
 	return nil
 end
 
+-- Well Fed missing, not eating, and food that gives it in the bags.
+local function FoodFix(entry)
+	if UnitHas("player", entry.auraNames, db.soon) ~= false or UnitHas("player", entry.unlessNames, 0) ~= false then
+		return nil
+	end
+	local fix
+	EachBagItem(function(itemID)
+		if FOODS[itemID] then
+			local icon, name = ItemLook(itemID)
+			fix = { kind = "item", value = itemID, icon = icon, text = name, count = 1, list = name, eat = true }
+			return true
+		end
+	end)
+	return fix
+end
+
 -- No flask up (or nearly out) and one in the bags: the fix to drink.
 local function FlaskFix()
 	if UnitHas("player", FLASK_NAMES, db.soon) ~= false then
@@ -843,8 +883,8 @@ end
 -- The units lacking an entry's buff.
 local function Missing(entry, choice)
 	local missing = {}
-	if entry.kind == "flask" or entry.kind == "elixir" then
-		entry.fix = entry.kind == "flask" and FlaskFix() or ElixirFix()
+	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "food" then
+		entry.fix = entry.kind == "flask" and FlaskFix() or entry.kind == "elixir" and ElixirFix() or FoodFix(entry)
 		if entry.fix then
 			missing[1] = "player"
 		end
@@ -917,7 +957,7 @@ local function Refresh()
 						button.applyText = "Click to apply " .. entry.fix.text .. "."
 					else
 						button:SetAttribute("macrotext", ("/use item:%d"):format(entry.fix.value))
-						button.applyText = "Click to drink " .. entry.fix.text .. "."
+						button.applyText = (entry.fix.eat and "Click to eat " or "Click to drink ") .. entry.fix.text .. "."
 					end
 				elseif spell then
 					button:SetAttribute("type", "spell")
