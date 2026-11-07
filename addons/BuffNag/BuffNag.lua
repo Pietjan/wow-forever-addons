@@ -884,7 +884,15 @@ end
 local function Missing(entry, choice)
 	local missing = {}
 	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "food" then
-		entry.fix = entry.kind == "flask" and FlaskFix() or entry.kind == "elixir" and ElixirFix() or FoodFix(entry)
+		-- (not "a and f() or g()": a fix function returning nil would fall
+		-- through to the next one)
+		if entry.kind == "flask" then
+			entry.fix = FlaskFix()
+		elseif entry.kind == "elixir" then
+			entry.fix = ElixirFix()
+		else
+			entry.fix = FoodFix(entry)
+		end
 		if entry.fix then
 			missing[1] = "player"
 		end
