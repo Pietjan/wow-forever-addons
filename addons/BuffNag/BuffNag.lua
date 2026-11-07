@@ -943,6 +943,28 @@ label:SetText("BuffNag: drag to move")
 
 local icons = {}
 
+-- A small pause button at the bar's end.
+local PAUSE_SIZE = 20
+local pauseButton = CreateFrame("Button", "BuffNagPauseButton", bar)
+pauseButton:SetSize(PAUSE_SIZE, PAUSE_SIZE)
+pauseButton:SetPoint("RIGHT", bar, "RIGHT", 0, 0)
+pauseButton:SetNormalTexture("Interface\\TimeManager\\PauseButton")
+pauseButton:SetHighlightTexture("Interface\\TimeManager\\PauseButton", "ADD")
+pauseButton:GetNormalTexture():SetVertexColor(0.8, 0.8, 0.8)
+pauseButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+pauseButton:SetScript("OnClick", function(_, mouseButton)
+	if SetPaused then
+		SetPaused(mouseButton == "RightButton" and 10 or nil)
+	end
+end)
+pauseButton:SetScript("OnEnter", function(self)
+	GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+	GameTooltip:SetText("Pause BuffNag")
+	GameTooltip:AddLine("Click: until resumed (/bn resume or the key binding). Right-click: for 10 minutes.", 1, 1, 1, true)
+	GameTooltip:Show()
+end)
+pauseButton:SetScript("OnLeave", GameTooltip_Hide)
+
 local function SavePosition()
 	local point, _, _, x, y = bar:GetPoint(1)
 	db.point = { point, x, y }
@@ -963,6 +985,7 @@ bar:SetScript("OnDragStart", OnDragStart)
 bar:SetScript("OnDragStop", OnDragStop)
 
 local Refresh -- defined below; the icons' right-click needs it
+local SetPaused -- defined below; the bar's pause button needs it
 
 local function IconTooltip(button)
 	if not button.entry then
@@ -1149,7 +1172,8 @@ function Refresh()
 	for i = count + 1, #icons do
 		icons[i]:Hide()
 	end
-	bar:SetWidth(math.max(ICON, count * (ICON + GAP) - GAP))
+	bar:SetWidth(math.max(ICON, count * (ICON + GAP)) + PAUSE_SIZE)
+	pauseButton:SetShown(count > 0)
 	bar:SetShown(count > 0)
 	-- A buff that is only running out shows, but does not sound.
 	if anyMissing and not previewing and db.sound then
@@ -1482,7 +1506,7 @@ end
 
 -- Pause the bar and the sound: for a while, or until resumed. A pause is
 -- for this session only.
-local function SetPaused(minutes)
+function SetPaused(minutes)
 	if minutes == nil then
 		pausedUntil = (pausedUntil == nil) and math.huge or nil -- toggle
 	elseif minutes <= 0 then
