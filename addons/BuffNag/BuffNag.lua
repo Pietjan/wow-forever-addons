@@ -372,6 +372,26 @@ local function ApplyLayout()
 	header:SetShown(not db.locked)
 end
 
+-- The nag: the minimap ping, a few times with a short gap.
+local function Ping()
+	if pingsLeft <= 0 then
+		return
+	end
+	pingsLeft = pingsLeft - 1
+	PlaySound(SOUNDKIT and SOUNDKIT.MAP_PING or 3175)
+	if pingsLeft > 0 then
+		C_Timer.After(db.pingGap, Ping)
+	end
+end
+
+local function Nag()
+	if pingsLeft > 0 then
+		return -- one is already sounding
+	end
+	pingsLeft = db.pings
+	Ping()
+end
+
 local testing = false
 
 -- Work out the missing buffs and show them. Called out of combat only.
@@ -440,26 +460,6 @@ local function Refresh()
 		lastSound = GetTime()
 		Nag()
 	end
-end
-
--- The nag: the minimap ping, a few times with a short gap.
-local function Ping()
-	if pingsLeft <= 0 then
-		return
-	end
-	pingsLeft = pingsLeft - 1
-	PlaySound(SOUNDKIT and SOUNDKIT.MAP_PING or 3175)
-	if pingsLeft > 0 then
-		C_Timer.After(db.pingGap, Ping)
-	end
-end
-
-local function Nag()
-	if pingsLeft > 0 then
-		return -- one is already sounding
-	end
-	pingsLeft = db.pings
-	Ping()
 end
 
 local function Schedule(delay)
