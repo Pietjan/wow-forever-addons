@@ -6,8 +6,8 @@
 -- It is configured from its own tab in the Cooldown Manager's settings
 -- window (Escape > Options > Cooldown Manager, or /bn): the buffs on offer
 -- are the ones the game lists for your class there, the group buffs it
--- knows, a food buff and weapon enchants (shown only when a stone, oil,
--- poison or imbue spell is at hand to put on). Buffs are matched by name,
+-- knows, a food buff, a flask, elixirs and weapon enchants (the last three
+-- only when a fitting item is in the bags). Buffs are matched by name,
 -- so any rank counts. The bar hides in combat, while resting, mounted, on a
 -- flight path or dead.
 
@@ -90,6 +90,66 @@ local WEAPON_ITEMS = {
 	[275067] = 32768, [277488] = 32768, [277498] = 32768, [277489] = 128,
 }
 local NUM_BAGS = NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4
+
+-- Flasks and elixirs, from the game's data: item to the spell of the buff
+-- it gives. Only one flask can be up at a time. Elixirs stack, but tiers
+-- of one elixir replace each other, so each item names its family.
+local FLASKS = {
+	[13510] = 17626, -- Flask of the Titans
+	[13511] = 17627, -- Flask of Distilled Wisdom
+	[13512] = 17628, -- Flask of Supreme Power
+	[13513] = 17629, -- Flask of Chromatic Resistance
+	[274273] = 1293740, -- Flask of Natural Accuracy
+	[274274] = 1293741, -- Flask of Natural Aggression
+	[274275] = 1293742, -- Flask of Natural Precision
+	[274276] = 1293743, -- Flask of Natural Swiftness
+}
+local ELIXIRS = {
+	[9155] = { 11390, "Arcane Elixir" }, [13454] = { 17539, "Arcane Elixir" }, [217398] = { 439959, "Arcane Elixir" },
+	[247754] = { 1245244, "Arcane Elixir" }, [250342] = { 1250971, "Arcane Elixir" },
+	[250330] = { 1250922, "Cleric's Elixir" }, [250331] = { 1250924, "Cleric's Elixir" }, [250332] = { 1250925, "Cleric's Elixir" },
+	[250333] = { 1250926, "Cleric's Elixir" },
+	[2457] = { 2374, "Elixir of Agility" }, [3390] = { 3160, "Elixir of Agility" }, [8949] = { 11328, "Elixir of Agility" },
+	[9187] = { 11334, "Elixir of Agility" },
+	[13453] = { 17537, "Elixir of Brute Force" },
+	[210708] = { 426606, "Elixir of Coalesced Regret" },
+	[250328] = { 1250918, "Elixir of Cunning" },
+	[3389] = { 3220, "Elixir of Defense" }, [5997] = { 673, "Elixir of Defense" }, [8951] = { 11349, "Elixir of Defense" },
+	[13445] = { 11348, "Elixir of Defense" },
+	[22192] = { 27653, "Elixir of Dodging" },
+	[289334] = { 1328127, "Elixir of Endless Experience" }, [289084] = { 1327738, "Elixir of Endless Healing" },
+	[289082] = { 1327736, "Elixir of Endless Intellect" }, [289321] = { 1328032, "Elixir of Endless Mana" },
+	[289087] = { 1327753, "Elixir of Endless Opportunity" }, [289083] = { 1327737, "Elixir of Endless Power" },
+	[289086] = { 1327751, "Elixir of Endless Rapidity" },
+	[250350] = { 1250985, "Elixir of Ferocity" },
+	[6373] = { 7844, "Elixir of Fire Power" },
+	[247755] = { 1245249, "Elixir of Force" },
+	[2458] = { 2378, "Elixir of Fortitude" }, [3825] = { 3593, "Elixir of Fortitude" }, [250334] = { 1250928, "Elixir of Fortitude" },
+	[250335] = { 1250931, "Elixir of Fortitude" },
+	[17708] = { 21920, "Elixir of Frost Power" },
+	[21546] = { 1310077, "Elixir of Holy Power" },
+	[9179] = { 11396, "Elixir of Intellect" }, [250353] = { 1250988, "Elixir of Intellect" }, [250354] = { 1250989, "Elixir of Intellect" },
+	[250343] = { 1250972, "Elixir of Nature Power" },
+	[3391] = { 3164, "Elixir of Ogre Strength" },
+	[22193] = { 27652, "Elixir of Resistance" },
+	[250338] = { 1250941, "Elixir of the Sages" }, [13447] = { 17535, "Elixir of the Sages" },
+	[9264] = { 11474, "Elixir of Shadow Power" },
+	[250344] = { 1250974, "Elixir of Spirit" }, [250345] = { 1250976, "Elixir of Spirit" }, [250346] = { 1250978, "Elixir of Spirit" },
+	[250347] = { 1250979, "Elixir of Spirit" },
+	[2454] = { 2367, "Elixir of Strength" }, [9206] = { 11405, "Elixir of Strength" }, [250349] = { 1250984, "Elixir of Strength" },
+	[250336] = { 1250932, "Elixir of Wicked Regeneration" },
+	[3383] = { 3166, "Elixir of Wisdom" },
+	[250351] = { 1250986, "Elixir of the Grizzly" },
+	[13452] = { 17538, "Elixir of the Mongoose" },
+	[250337] = { 1250940, "Elixir of the Owl" },
+	[250329] = { 1250920, "Elixir of the Phalanx" },
+	[250348] = { 1250981, "Elixir of the Whale" },
+	[20007] = { 24363, "Mageblood Elixir" }, [250339] = { 1250942, "Mageblood Elixir" }, [250340] = { 1250944, "Mageblood Elixir" },
+	[250341] = { 1250948, "Mageblood Elixir" },
+	[3382] = { 3219, "Troll's Blood Elixir" }, [3388] = { 3222, "Troll's Blood Elixir" }, [3826] = { 3223, "Troll's Blood Elixir" },
+	[20004] = { 24361, "Troll's Blood Elixir" },
+}
+local FLASK_NAMES, ELIXIR_FAMILY_NAMES = {}, {} -- resolved from the spells once their names load
 local PARTY_UNITS = { "player", "party1", "party2", "party3", "party4" }
 local MAIN_HAND, OFF_HAND = INVSLOT_MAINHAND or 16, INVSLOT_OFFHAND or 17
 local WEAPON = (Enum.ItemClass and Enum.ItemClass.Weapon) or 2
@@ -325,6 +385,23 @@ local function BuildCatalog()
 		end
 	end
 
+	-- Flask and elixir buff names, by family.
+	wipe(FLASK_NAMES)
+	for _, spellID in pairs(FLASKS) do
+		local name = SpellName(spellID)
+		if name then
+			FLASK_NAMES[name] = true
+		end
+	end
+	wipe(ELIXIR_FAMILY_NAMES)
+	for _, elixir in pairs(ELIXIRS) do
+		local name = SpellName(elixir[1])
+		if name then
+			ELIXIR_FAMILY_NAMES[elixir[2]] = ELIXIR_FAMILY_NAMES[elixir[2]] or {}
+			ELIXIR_FAMILY_NAMES[elixir[2]][name] = true
+		end
+	end
+
 	-- Everyone: a food buff and the weapon enchants.
 	local wellFed = SpellName(WELL_FED) or "Well Fed"
 	local food = SpellName(FOOD) or "Food"
@@ -342,6 +419,14 @@ local function BuildCatalog()
 		end)
 		return okItem and itemIcon or QUESTION_MARK
 	end
+	AddEntry({
+		key = "flask", name = "Flask", icon = SpellIcon(17626), kind = "flask", source = "extra",
+		auraNames = {}, castNames = {}, party = false, unlessNames = {}, seedDefault = true,
+	})
+	AddEntry({
+		key = "elixir", name = "Elixirs", icon = SpellIcon(17538), kind = "elixir", source = "extra",
+		auraNames = {}, castNames = {}, party = false, unlessNames = {}, seedDefault = true,
+	})
 	AddEntry({
 		key = "weapon", name = "Weapon enchant", icon = WeaponIcon(MAIN_HAND), kind = "weapon", source = "extra",
 		auraNames = {}, castNames = {}, party = false, unlessNames = {}, seedDefault = true,
@@ -494,6 +579,33 @@ local function WeaponMissing(slot)
 	return expires ~= nil and expires > 0 and expires / 1000 <= db.soon
 end
 
+local function ItemLook(itemID)
+	local okIcon, icon = pcall(function()
+		return C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemID)
+	end)
+	local okName, name = pcall(function()
+		return C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(itemID) or GetItemInfo and GetItemInfo(itemID)
+	end)
+	return okIcon and icon or nil, okName and name or ("item " .. itemID)
+end
+
+-- Calls fn(itemID) for every item in the bags, until it returns true.
+local function EachBagItem(fn)
+	local numSlots = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
+	local itemAt = (C_Container and C_Container.GetContainerItemID) or GetContainerItemID
+	if not (numSlots and itemAt) then
+		return
+	end
+	for bag = 0, NUM_BAGS do
+		for bagSlot = 1, numSlots(bag) or 0 do
+			local itemID = itemAt(bag, bagSlot)
+			if itemID and not IsSecret(itemID) and fn(itemID) then
+				return
+			end
+		end
+	end
+end
+
 -- What could go on the weapon in a slot: a known imbue spell (main hand
 -- only), or an item in the bags that fits the weapon's type. Nothing to
 -- apply means nothing to nag about.
@@ -526,17 +638,54 @@ local function WeaponFix(slot)
 			local bagItem = itemAt(bag, bagSlot)
 			local mask = bagItem and not IsSecret(bagItem) and WEAPON_ITEMS[bagItem]
 			if mask and (mask == 0 or bit.band(mask, bitOf) ~= 0) then
-				local okIcon, icon = pcall(function()
-					return C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(bagItem)
-				end)
-				local okName, name = pcall(function()
-					return C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(bagItem) or GetItemInfo and GetItemInfo(bagItem)
-				end)
-				return "item", bagItem, okIcon and icon or nil, okName and name or ("item " .. bagItem)
+				local icon, name = ItemLook(bagItem)
+				return "item", bagItem, icon, name
 			end
 		end
 	end
 	return nil
+end
+
+-- No flask up (or nearly out) and one in the bags: the fix to drink.
+local function FlaskFix()
+	if UnitHas("player", FLASK_NAMES, db.soon) ~= false then
+		return nil
+	end
+	local fix
+	EachBagItem(function(itemID)
+		if FLASKS[itemID] then
+			local icon, name = ItemLook(itemID)
+			fix = { kind = "item", value = itemID, icon = icon, text = name, count = 1, list = name }
+			return true
+		end
+	end)
+	return fix
+end
+
+-- Elixir families in the bags whose buff is not up: the first to drink,
+-- and how many there are.
+local function ElixirFix()
+	local families, order = {}, {}
+	EachBagItem(function(itemID)
+		local elixir = ELIXIRS[itemID]
+		if elixir and not families[elixir[2]] then
+			local names = ELIXIR_FAMILY_NAMES[elixir[2]]
+			if names and UnitHas("player", names, db.soon) == false then
+				families[elixir[2]] = itemID
+				order[#order + 1] = elixir[2]
+			end
+		end
+	end)
+	if #order == 0 then
+		return nil
+	end
+	local labels = {}
+	for i, family in ipairs(order) do
+		local _, name = ItemLook(families[family])
+		labels[i] = name
+	end
+	local icon, name = ItemLook(families[order[1]])
+	return { kind = "item", value = families[order[1]], icon = icon, text = name, count = #order, list = table.concat(labels, ", ") }
 end
 
 -- Moments when buffs are nobody's concern.
@@ -682,6 +831,13 @@ end
 -- The units lacking an entry's buff.
 local function Missing(entry, choice)
 	local missing = {}
+	if entry.kind == "flask" or entry.kind == "elixir" then
+		entry.fix = entry.kind == "flask" and FlaskFix() or ElixirFix()
+		if entry.fix then
+			missing[1] = "player"
+		end
+		return missing
+	end
 	if entry.kind == "weapon" or entry.kind == "offhand" then
 		local slot = entry.kind == "weapon" and MAIN_HAND or OFF_HAND
 		entry.fix = nil
@@ -727,13 +883,14 @@ local function Refresh()
 				local button = BarIcon(count)
 				button.entry = entry
 				button.Icon:SetTexture((entry.fix and entry.fix.icon) or entry.icon or QUESTION_MARK)
-				button.Count:SetText(#missing > 1 and tostring(#missing) or "")
+				local shown = (entry.fix and entry.fix.count) or #missing
+				button.Count:SetText(shown > 1 and tostring(shown) or "")
 				button.Party:SetShown(choice.party and true or false)
 				local names = {}
 				for i, unit in ipairs(missing) do
 					names[i] = ShortName(unit)
 				end
-				button.missingText = table.concat(names, ", ")
+				button.missingText = (entry.fix and entry.fix.list) or table.concat(names, ", ")
 				local spell = CastName(entry)
 				button.applyText = nil
 				if entry.fix and entry.fix.kind == "spell" then
@@ -743,8 +900,13 @@ local function Refresh()
 					button.applyText = "Click to cast " .. entry.fix.text .. "."
 				elseif entry.fix and entry.fix.kind == "item" then
 					button:SetAttribute("type", "macro")
-					button:SetAttribute("macrotext", ("/use item:%d\n/use %d"):format(entry.fix.value, entry.fix.slot))
-					button.applyText = "Click to apply " .. entry.fix.text .. "."
+					if entry.fix.slot then
+						button:SetAttribute("macrotext", ("/use item:%d\n/use %d"):format(entry.fix.value, entry.fix.slot))
+						button.applyText = "Click to apply " .. entry.fix.text .. "."
+					else
+						button:SetAttribute("macrotext", ("/use item:%d"):format(entry.fix.value))
+						button.applyText = "Click to drink " .. entry.fix.text .. "."
+					end
 				elseif spell then
 					button:SetAttribute("type", "spell")
 					button:SetAttribute("spell", spell)
