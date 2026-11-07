@@ -211,6 +211,9 @@ local function Status()
 		(herbs and minerals) and "" or " (needs both Find Herbs and Find Minerals)")
 end
 
+BINDING_HEADER_TRACKSWAP = "TrackSwap"
+BINDING_NAME_TRACKSWAP_TOGGLE = "Toggle herb/mineral swapping"
+
 SLASH_TRACKSWAP1 = "/ts"
 SLASH_TRACKSWAP2 = "/trackswap"
 SlashCmdList.TRACKSWAP = function(msg)
@@ -233,7 +236,7 @@ SlashCmdList.TRACKSWAP = function(msg)
 			Print("/ts mute file | all | off | <sound file id>")
 			return
 		end
-	elseif word == "" then
+	elseif word == "" or word == "toggle" then
 		db.enabled = not db.enabled
 	elseif word == "on" then
 		db.enabled = true
@@ -243,10 +246,18 @@ SlashCmdList.TRACKSWAP = function(msg)
 		db.interval = math.max(0.5, math.min(30, seconds))
 		Start()
 	elseif word ~= "status" then
-		Print("/ts  toggles the swapping; /ts on, /ts off; /ts <seconds> sets the pace; /ts mute file|all|off; /ts hold <seconds>; /ts fishing <seconds>")
+		Print("/ts or /ts toggle  toggles the swapping (also bindable under Key Bindings > AddOns); /ts on, /ts off; /ts <seconds> sets the pace; /ts mute file|all|off; /ts hold <seconds>; /ts fishing <seconds>")
 		return
 	end
 	Status()
+end
+
+-- For the key binding (Bindings.xml).
+function TrackSwap_Toggle()
+	if db then
+		db.enabled = not db.enabled
+		Status()
+	end
 end
 
 local loader = CreateFrame("Frame")
