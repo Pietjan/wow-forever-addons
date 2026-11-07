@@ -785,14 +785,32 @@ local panel -- our page inside the settings window
 local settingsTab
 local COLUMNS = 7
 
+-- Taint: nothing here may write into the game's own tables (the settings
+-- window's fields, its tab list), or the game's code reading them later
+-- runs tainted and its protected tables refuse it. The tab lives on a
+-- frame of ours, the window's own state is only read, and the window's
+-- pages are shown or hidden from hooks that run after its own code.
+
+local function ShowGamePages(settings)
+	local mode = settings.displayMode
+	if settings.CooldownScroll then
+		settings.CooldownScroll:SetShown(mode ~= "groupBuffs")
+	end
+	if settings.GroupBuffFilter then
+		settings.GroupBuffFilter:SetShown(mode == "groupBuffs")
+	end
+end
+
 local function ShowPanel()
 	local settings = CooldownViewerSettings
 	if not (settings and panel) then
 		return
 	end
-	settings.displayMode = "buffnag"
 	for _, tab in ipairs(settings.TabButtons or {}) do
-		tab:SetChecked(tab.displayMode == "buffnag")
+		tab:SetChecked(false)
+	end
+	if settingsTab then
+		settingsTab:SetChecked(true)
 	end
 	if settings.CooldownScroll then
 		settings.CooldownScroll:Hide()
@@ -990,17 +1008,20 @@ local function HookSettings()
 	end
 	BuildPanel(settings)
 
-	-- The tab: made from the game's own tab template so it joins the
-	-- others; selecting another tab unchecks it.
+	-- The tab: made from the game's own tab template for the look, but
+	-- parented to a frame of ours so the template does not add it to the
+	-- window's tab list.
+	local holder = CreateFrame("Frame", "BuffNagSettingsTabHolder", settings)
+	holder:SetSize(1, 1)
+	holder:SetPoint("TOPLEFT")
 	local ok = pcall(function()
-		settingsTab = CreateFrame("Frame", "BuffNagSettingsTab", settings, "CooldownViewerSettingsTabTemplate")
+		settingsTab = CreateFrame("Frame", "BuffNagSettingsTab", holder, "CooldownViewerSettingsTabTemplate")
 	end)
 	if not ok or not settingsTab then
 		settingsTab = nil
 		Print("could not add a tab to the Cooldown Manager settings; use /bn to configure")
 		return
 	end
-	settingsTab.displayMode = "buffnag"
 	settingsTab.tooltipText = "BuffNag: buffs to nag about when missing"
 	local anchor = settings.GroupBuffsTab or settings.AurasTab or settings.SpellsTab
 	if anchor then
@@ -1019,18 +1040,25 @@ local function HookSettings()
 			end
 		end)
 	end
-	-- Hidden by the game's own tabs; forgotten when the window closes, so
-	-- it reopens on the game's first tab as usual.
-	hooksecurefunc(settings, "SetDisplayMode", function(_, mode)
-		panel:Hide()
-		if mode ~= "buffnag" then
+	-- A click on one of the game's tabs runs SetDisplayMode, even when it
+	-- is the tab that was already current and the game returns early: put
+	-- its page back and ours away. Closing the window does the same, so it
+	-- reopens on the game's page as usual.
+	hooksecurefunc(settings, "SetDisplayMode", function(self)
+		if panel:IsShown() then
+			panel:Hide()
 			settingsTab:SetChecked(false)
+			ShowGamePages(self)
+			for _, tab in ipairs(self.TabButtons or {}) do
+				tab:SetChecked(tab.displayMode == self.displayMode)
+			end
 		end
 	end)
 	settings:HookScript("OnHide", function(self)
-		if self.displayMode == "buffnag" then
-			self.displayMode = nil
+		if panel:IsShown() then
 			panel:Hide()
+			settingsTab:SetChecked(false)
+			ShowGamePages(self)
 		end
 	end)
 end
