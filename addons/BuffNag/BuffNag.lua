@@ -27,6 +27,7 @@ local DEFAULTS = { -- account wide: the bar and the sound
 	pingGap = 0.4, -- seconds between pings
 	scale = 1,
 	locked = false,
+	pauseMinutes = 0, -- the bar's pause button: minutes, 0 for until resumed
 	glow = "flash", -- "flash", "ants" or "off": the Cooldown Manager's alert effect on a missing buff
 	glowColor = "gold", -- gold, cyan, red, green or blue
 	expiringGlow = true, -- the Cooldown Manager's pandemic border on a buff that is running out
@@ -943,26 +944,61 @@ label:SetText("BuffNag: drag to move")
 
 local icons = {}
 
--- A small pause button at the bar's end.
-local PAUSE_SIZE = 20
+-- A pause button at the bar's end, dressed like the icons: a drawn pause
+-- glyph, with the pause length on it. Right-click cycles the length.
+local PAUSE_SIZE = ICON
+local PAUSE_CHOICES = { 0, 5, 10, 30 } -- minutes; 0: until resumed
 local pauseButton = CreateFrame("Button", "BuffNagPauseButton", bar)
-pauseButton:SetSize(PAUSE_SIZE, PAUSE_SIZE)
+StyleIcon(pauseButton)
 pauseButton:SetPoint("RIGHT", bar, "RIGHT", 0, 0)
-pauseButton:SetNormalTexture("Interface\\TimeManager\\PauseButton")
-pauseButton:SetHighlightTexture("Interface\\TimeManager\\PauseButton", "ADD")
-pauseButton:GetNormalTexture():SetVertexColor(0.8, 0.8, 0.8)
+pauseButton.Icon:SetColorTexture(0.12, 0.12, 0.14)
+for i = -1, 1, 2 do
+	local barTexture = pauseButton:CreateTexture(nil, "ARTWORK", nil, 1)
+	barTexture:SetColorTexture(0.9, 0.9, 0.9)
+	barTexture:SetSize(ICON * 0.15, ICON * 0.45)
+	barTexture:SetPoint("CENTER", pauseButton, "CENTER", i * ICON * 0.13, 0)
+end
+pauseButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 pauseButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-pauseButton:SetScript("OnClick", function(_, mouseButton)
-	if SetPaused then
-		SetPaused(mouseButton == "RightButton" and 10 or nil)
-	end
-end)
-pauseButton:SetScript("OnEnter", function(self)
+
+local function PauseLengthText()
+	local minutes = db.pauseMinutes or 0
+	return minutes > 0 and (minutes .. " min") or "until resumed"
+end
+
+local function RefreshPauseButton()
+	local minutes = db.pauseMinutes or 0
+	pauseButton.Count:SetText(minutes > 0 and (minutes .. "m") or "")
+end
+
+local function PauseTooltip(self)
 	GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
 	GameTooltip:SetText("Pause BuffNag")
-	GameTooltip:AddLine("Click: until resumed (/bn resume or the key binding). Right-click: for 10 minutes.", 1, 1, 1, true)
+	GameTooltip:AddLine(("Click: pause %s. Right-click: change the length."):format(PauseLengthText()), 1, 1, 1, true)
 	GameTooltip:Show()
+end
+
+pauseButton:SetScript("OnClick", function(self, mouseButton)
+	if mouseButton == "RightButton" then
+		local current = db.pauseMinutes or 0
+		local index = 1
+		for i, minutes in ipairs(PAUSE_CHOICES) do
+			if minutes == current then
+				index = i
+			end
+		end
+		db.pauseMinutes = PAUSE_CHOICES[index % #PAUSE_CHOICES + 1]
+		RefreshPauseButton()
+		PlaySound(SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or 856)
+		if GameTooltip:GetOwner() == self then
+			PauseTooltip(self)
+		end
+	elseif SetPaused then
+		local minutes = db.pauseMinutes or 0
+		SetPaused(minutes > 0 and minutes or nil)
+	end
 end)
+pauseButton:SetScript("OnEnter", PauseTooltip)
 pauseButton:SetScript("OnLeave", GameTooltip_Hide)
 
 local function SavePosition()
@@ -1173,6 +1209,7 @@ function Refresh()
 		icons[i]:Hide()
 	end
 	bar:SetWidth(math.max(ICON, count * (ICON + GAP)) + PAUSE_SIZE)
+	RefreshPauseButton()
 	pauseButton:SetShown(count > 0)
 	bar:SetShown(count > 0)
 	-- A buff that is only running out shows, but does not sound.
