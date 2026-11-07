@@ -87,7 +87,19 @@ local function Swap()
 	else
 		return -- the player is tracking something else
 	end
+	-- Changing tracking plays a click. Sound effects started while they are
+	-- switched off never play, so turn them off around the swap and put them
+	-- back a moment later.
+	local sfx = GetCVar("Sound_EnableSFX")
+	if sfx == "1" then
+		SetCVar("Sound_EnableSFX", "0")
+	end
 	local ok, err = pcall(C_Minimap.SetTracking, next, true)
+	if sfx == "1" then
+		C_Timer.After(0.2, function()
+			SetCVar("Sound_EnableSFX", "1")
+		end)
+	end
 	if not ok then
 		Print("could not switch tracking: %s", tostring(err))
 		db.enabled = false
