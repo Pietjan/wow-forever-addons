@@ -43,10 +43,10 @@ end
 local function TrackingInfo(index)
 	local info = C_Minimap.GetTrackingInfo(index)
 	if type(info) == "table" then
-		return info.name, info.active, info.spellID
+		return info.name, info.active, info.spellID, info.type
 	end
-	local name, _, active, _, _, spellID = C_Minimap.GetTrackingInfo(index)
-	return name, active, spellID
+	local name, _, active, category, _, spellID = C_Minimap.GetTrackingInfo(index)
+	return name, active, spellID, category
 end
 
 -- The tracking index of a tracking spell, and whether it is active.
@@ -61,11 +61,14 @@ local function Find(spellID)
 	return nil
 end
 
+-- Whether another tracking *spell* is on (Find Fish, a hunter's tracking).
+-- The list also holds the minimap's filters for vendors, trainers and so
+-- on, which are ticked by default and are not tracking in this sense.
 local function AnyOtherTrackingActive(herbs, minerals)
 	for i = 1, C_Minimap.GetNumTrackingTypes() do
 		if i ~= herbs and i ~= minerals then
-			local _, active = TrackingInfo(i)
-			if active then
+			local _, active, _, kind = TrackingInfo(i)
+			if active and kind == "spell" then
 				return true
 			end
 		end
