@@ -568,18 +568,25 @@ local function UnitUsable(unit)
 		return true
 	end
 	local ok, usable = pcall(function()
-		if not UnitExists(unit) or not UnitIsPlayer(unit) or not UnitIsConnected(unit) or UnitIsDeadOrGhost(unit) then
-			return false
-		end
-		if UnitInRange then
-			local inRange, checked = UnitInRange(unit)
-			if checked and not inRange then
-				return false
-			end
-		end
-		return true
+		return UnitExists(unit) and UnitIsPlayer(unit) and UnitIsConnected(unit) and not UnitIsDeadOrGhost(unit)
 	end)
 	return ok and usable
+end
+
+-- Whether a party member is close enough to be buffed. Far ones are still
+-- listed as missing, but a click goes to someone in range.
+local function UnitNear(unit)
+	if unit == "player" then
+		return true
+	end
+	local ok, near = pcall(function()
+		if not UnitInRange then
+			return true
+		end
+		local inRange, checked = UnitInRange(unit)
+		return not checked or inRange
+	end)
+	return ok and near
 end
 
 local function UnitHasMana(unit)
@@ -1172,8 +1179,16 @@ function Refresh()
 				button.Party:SetShown(choice.party and true or false)
 				ShowGlow(button, (previewing or not entry.expiring) and "missing" or "expiring")
 				local names = {}
+				local castUnit = missing[1]
 				for i, unit in ipairs(missing) do
-					names[i] = ShortName(unit)
+					if UnitNear(unit) then
+						names[i] = ShortName(unit)
+						if castUnit == missing[1] and not UnitNear(castUnit) then
+							castUnit = unit
+						end
+					else
+						names[i] = ShortName(unit) .. " |cff808080(far)|r"
+					end
 				end
 				button.missingText = (entry.fix and entry.fix.list) or table.concat(names, ", ")
 				button.applyText = nil
@@ -1199,8 +1214,8 @@ function Refresh()
 				elseif entry.fix and entry.fix.kind == "cast" then
 					button:SetAttribute("type", "spell")
 					button:SetAttribute("spell", entry.fix.value)
-					button:SetAttribute("unit", missing[1])
-					button.applyText = ("Click to cast %s on the first one."):format(entry.fix.text)
+					button:SetAttribute("unit", castUnit)
+					button.applyText = ("Click to cast %s on %s."):format(entry.fix.text, ShortName(castUnit))
 				else
 					button:SetAttribute("type", nil)
 				end
@@ -1622,6 +1637,34 @@ SlashCmdList.BUFFNAG = function(msg)
 		db.scale = math.max(0.5, math.min(3, tonumber(rest) or 1))
 	elseif word == "reset" then
 		db.point = { DEFAULTS.point[1], DEFAULTS.point[2], DEFAULTS.point[3] }
+	elseif word == "debug" then
+		Print("party %s, in raid: %s", db.party and "on" or "off", tostring(IsInRaid and IsInRaid() or false))
+		for _, unit in ipairs(PARTY_UNITS) do
+			if UnitExists(unit) then
+				local okAura, auraCount = pcall(function()
+					local n = 0
+					for i = 1, 80 do
+						local aura = C_UnitAuras.GetAuraDataByIndex(unit, i, "HELPFUL")
+						if not aura then
+							break
+						end
+						local _ = aura.name .. "" -- errors if the name is secret
+						n = n + 1
+					end
+					return n
+				end)
+				Print("  %s (%s): usable %s, near %s, buffs readable %s (%s)", unit, ShortName(unit), tostring(UnitUsable(unit)),
+					tostring(UnitNear(unit)), tostring(okAura), okAura and tostring(auraCount) or tostring(auraCount))
+				for _, key in ipairs(catalogOrder) do
+					local entry, choice = catalog[key], cdb.nag[key]
+					if choice and choice.party and entry.kind == "aura" then
+						local has, present = UnitHas(unit, entry.auraNames, true)
+						Print("    %s: %s", entry.name, has == nil and "unreadable" or has and "ok" or present and "running out" or "missing")
+					end
+				end
+			end
+		end
+		return
 	elseif word == "pause" then
 		SetPaused(tonumber(rest))
 		return
