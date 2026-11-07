@@ -2,7 +2,8 @@
 -- (on you and on your party), your self buffs, a food buff and a weapon
 -- enchant. Each line is a button: click it to cast that buff on the first
 -- person who lacks it. A sound nags now and then while the list is not
--- empty. Everything is out of combat only; the list hides in combat.
+-- empty. Everything is out of combat only; the list hides in combat
+-- and keeps quiet while resting, mounted or on a flight path.
 --
 -- Buffs are matched by spell name, so any rank counts, and a buff is only
 -- asked for when your spellbook holds a spell that provides it.
@@ -394,13 +395,22 @@ end
 
 local testing = false
 
+-- Moments when buffs are nobody's concern: resting in an inn or city,
+-- mounted, or on a flight path.
+local function Idle()
+	local ok, idle = pcall(function()
+		return (IsResting and IsResting()) or (IsMounted and IsMounted()) or UnitOnTaxi("player")
+	end)
+	return ok and idle
+end
+
 -- Work out the missing buffs and show them. Called out of combat only.
 local function Refresh()
 	refreshPending = false
 	if InCombatLockdown() then
 		return
 	end
-	if UnitIsDeadOrGhost("player") and not testing then
+	if not testing and (UnitIsDeadOrGhost("player") or Idle()) then
 		frame:Hide()
 		StopNag()
 		return
@@ -551,6 +561,9 @@ loader:RegisterEvent("SPELLS_CHANGED")
 loader:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 loader:RegisterEvent("PLAYER_ALIVE")
 loader:RegisterEvent("PLAYER_UNGHOST")
+loader:RegisterEvent("PLAYER_UPDATE_RESTING")
+loader:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
+loader:RegisterEvent("PLAYER_CONTROL_GAINED")
 loader:RegisterUnitEvent("UNIT_AURA", "player", "party1", "party2", "party3", "party4")
 loader:SetScript("OnEvent", function(self, event, arg)
 	if event == "ADDON_LOADED" then
