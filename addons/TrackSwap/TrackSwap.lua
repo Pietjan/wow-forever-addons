@@ -19,7 +19,14 @@ local DEFAULTS = {
 	-- every sound effect off for a moment instead, "off" mutes nothing.
 	mute = "file",
 	muteFile = 567407,
+	-- Seconds to keep still after the player casts or channels anything,
+	-- and after a Fishing cast in particular: the line is out for a while
+	-- after the cast itself ends, and a swap would reel it in.
+	hold = 3,
+	fishingHold = 30,
 }
+
+local FISHING = 7620 -- for the spell's name
 
 local db
 local ticker
@@ -122,11 +129,43 @@ end
 -- the player is casting or channelling, such as a fishing line. The values
 -- these calls return may be secret while something is going on, so an error
 -- reading them also counts as busy; a skipped swap costs nothing.
+local holdUntil = 0
+
+local function Hold(seconds)
+	holdUntil = math.max(holdUntil, GetTime() + seconds)
+end
+
 local function Busy()
 	local ok, busy = pcall(function()
 		return UnitCastingInfo("player") ~= nil or UnitChannelInfo("player") ~= nil
 	end)
-	return not ok or busy
+	if not ok or busy then
+		Hold(db.hold) -- and a moment longer once the cast ends
+		return true
+	end
+	return GetTime() < holdUntil
+end
+
+-- A spell the player cast: the tracking spells themselves do not count,
+-- Fishing holds longer, anything else holds for a moment.
+local function SpellCast(spellID)
+	local ok, kind = pcall(function()
+		if spellID == FIND_HERBS or spellID == FIND_MINERALS then
+			return "tracking"
+		end
+		local name = SpellName(spellID)
+		if name == SpellName(FIND_HERBS) or name == SpellName(FIND_MINERALS) then
+			return "tracking"
+		elseif name == SpellName(FISHING) then
+			return "fishing"
+		end
+		return "other"
+	end)
+	if not ok or kind == "other" then
+		Hold(db.hold)
+	elseif kind == "fishing" then
+		Hold(db.fishingHold)
+	end
 end
 
 local function Swap()
@@ -167,7 +206,8 @@ local function Status()
 	local herbs = Find(FIND_HERBS)
 	local minerals = Find(FIND_MINERALS)
 	local mute = db.mute == "all" and "all sound effects" or db.mute == "file" and ("sound file " .. db.muteFile) or "nothing"
-	Print("%s, every %g s, muting %s during the swap%s", db.enabled and "on" or "off", db.interval, mute,
+	Print("%s, every %g s, muting %s during the swap, holding %g s after a cast and %g s after fishing%s",
+		db.enabled and "on" or "off", db.interval, mute, db.hold, db.fishingHold,
 		(herbs and minerals) and "" or " (needs both Find Herbs and Find Minerals)")
 end
 
@@ -176,7 +216,14 @@ SLASH_TRACKSWAP2 = "/trackswap"
 SlashCmdList.TRACKSWAP = function(msg)
 	local word, rest = msg:lower():match("^%s*(%S*)%s*(%S*)")
 	local seconds = tonumber(word)
-	if word == "mute" then
+	if word == "hold" or word == "fishing" then
+		local value = tonumber(rest)
+		if not value then
+			Print("/ts hold <seconds>  pause after any cast; /ts fishing <seconds>  pause after a Fishing cast")
+			return
+		end
+		db[word == "hold" and "hold" or "fishingHold"] = math.max(0, math.min(120, value))
+	elseif word == "mute" then
 		if rest == "all" or rest == "off" then
 			db.mute = rest
 		elseif rest == "file" or tonumber(rest) then
@@ -196,7 +243,7 @@ SlashCmdList.TRACKSWAP = function(msg)
 		db.interval = math.max(0.5, math.min(30, seconds))
 		Start()
 	elseif word ~= "status" then
-		Print("/ts  toggles the swapping; /ts on, /ts off; /ts <seconds> sets the pace; /ts mute file|all|off")
+		Print("/ts  toggles the swapping; /ts on, /ts off; /ts <seconds> sets the pace; /ts mute file|all|off; /ts hold <seconds>; /ts fishing <seconds>")
 		return
 	end
 	Status()
@@ -207,8 +254,16 @@ loader:RegisterEvent("ADDON_LOADED")
 loader:RegisterEvent("PLAYER_LOGIN")
 loader:RegisterEvent("PLAYER_LEAVING_WORLD")
 loader:RegisterEvent("MINIMAP_UPDATE_TRACKING")
-loader:SetScript("OnEvent", function(self, event, name)
-	if event == "ADDON_LOADED" then
+for _, event in ipairs({ "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_SUCCEEDED",
+	"UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_CHANNEL_STOP" }) do
+	loader:RegisterUnitEvent(event, "player")
+end
+loader:SetScript("OnEvent", function(self, event, name, _, spellID)
+	if event:sub(1, 15) == "UNIT_SPELLCAST_" then
+		if db then
+			SpellCast(spellID)
+		end
+	elseif event == "ADDON_LOADED" then
 		if name ~= ADDON_NAME then
 			return
 		end
