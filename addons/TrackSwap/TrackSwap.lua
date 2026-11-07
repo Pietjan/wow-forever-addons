@@ -111,7 +111,10 @@ function Quiet()
 			return Quiet()
 		end
 	end
-	C_Timer.After(0.2, RestoreSound)
+	-- The game confirms the change with MINIMAP_UPDATE_TRACKING, and the
+	-- click plays then; the sound comes back right after that, or after a
+	-- moment if the event never comes.
+	C_Timer.After(0.5, RestoreSound)
 end
 
 local function Swap()
@@ -191,6 +194,7 @@ local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
 loader:RegisterEvent("PLAYER_LOGIN")
 loader:RegisterEvent("PLAYER_LEAVING_WORLD")
+loader:RegisterEvent("MINIMAP_UPDATE_TRACKING")
 loader:SetScript("OnEvent", function(self, event, name)
 	if event == "ADDON_LOADED" then
 		if name ~= ADDON_NAME then
@@ -209,5 +213,9 @@ loader:SetScript("OnEvent", function(self, event, name)
 	elseif event == "PLAYER_LEAVING_WORLD" then
 		-- A reload or logout: do not leave the sound off.
 		RestoreSound()
+	elseif event == "MINIMAP_UPDATE_TRACKING" then
+		if db and (db.soundOff or db.mutedFile) then
+			C_Timer.After(0, RestoreSound)
+		end
 	end
 end)
