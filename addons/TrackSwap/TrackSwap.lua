@@ -13,6 +13,11 @@ local FIND_HERBS, FIND_MINERALS = 2383, 2580 -- the tracking spells
 local DEFAULTS = {
 	enabled = true,
 	interval = 2, -- seconds between swaps
+	-- Changing tracking plays the interface's click, sound file 567407 in the
+	-- game's data. "file" mutes just that file around each swap, "all" turns
+	-- every sound effect off for a moment instead, "off" mutes nothing.
+	mute = "file",
+	muteFile = 567407,
 }
 
 local db
@@ -74,6 +79,26 @@ local function RestoreSound()
 		db.soundOff = nil
 		SetCVar("Sound_EnableSFX", "1")
 	end
+	if db.mutedFile then
+		UnmuteSoundFile(db.mutedFile)
+		db.mutedFile = nil
+	end
+end
+
+-- Keep the click quiet while the tracking changes. Sound effects started
+-- while they are muted never play. A saved flag survives a reload or logout
+-- that lands inside that moment, so the next login can put the sound back.
+local function Quiet()
+	if db.mute == "all" then
+		if GetCVar("Sound_EnableSFX") == "1" then
+			db.soundOff = true
+			SetCVar("Sound_EnableSFX", "0")
+		end
+	elseif db.mute == "file" and db.muteFile then
+		db.mutedFile = db.muteFile
+		MuteSoundFile(db.muteFile)
+	end
+	C_Timer.After(0.2, RestoreSound)
 end
 
 local function Swap()
@@ -95,19 +120,8 @@ local function Swap()
 	else
 		return -- the player is tracking something else
 	end
-	-- Changing tracking plays a click. Sound effects started while they are
-	-- switched off never play, so turn them off around the swap and put them
-	-- back a moment later. The saved flag survives a reload or logout that
-	-- lands inside that moment, so the next login can put the sound back.
-	local sfx = GetCVar("Sound_EnableSFX")
-	if sfx == "1" then
-		db.soundOff = true
-		SetCVar("Sound_EnableSFX", "0")
-	end
+	Quiet()
 	local ok, err = pcall(C_Minimap.SetTracking, next, true)
-	if sfx == "1" then
-		C_Timer.After(0.2, RestoreSound)
-	end
 	if not ok then
 		Print("could not switch tracking: %s", tostring(err))
 		db.enabled = false
@@ -124,16 +138,27 @@ end
 local function Status()
 	local herbs = Find(FIND_HERBS)
 	local minerals = Find(FIND_MINERALS)
-	Print("%s, every %g s%s", db.enabled and "on" or "off", db.interval,
+	local mute = db.mute == "all" and "all sound effects" or db.mute == "file" and ("sound file " .. db.muteFile) or "nothing"
+	Print("%s, every %g s, muting %s during the swap%s", db.enabled and "on" or "off", db.interval, mute,
 		(herbs and minerals) and "" or " (needs both Find Herbs and Find Minerals)")
 end
 
 SLASH_TRACKSWAP1 = "/ts"
 SLASH_TRACKSWAP2 = "/trackswap"
 SlashCmdList.TRACKSWAP = function(msg)
-	local word = msg:lower():match("^%s*(%S*)")
+	local word, rest = msg:lower():match("^%s*(%S*)%s*(%S*)")
 	local seconds = tonumber(word)
-	if word == "" then
+	if word == "mute" then
+		if rest == "all" or rest == "off" then
+			db.mute = rest
+		elseif rest == "file" or tonumber(rest) then
+			db.mute = "file"
+			db.muteFile = tonumber(rest) or db.muteFile
+		else
+			Print("/ts mute file | all | off | <sound file id>")
+			return
+		end
+	elseif word == "" then
 		db.enabled = not db.enabled
 	elseif word == "on" then
 		db.enabled = true
@@ -143,7 +168,7 @@ SlashCmdList.TRACKSWAP = function(msg)
 		db.interval = math.max(0.5, math.min(30, seconds))
 		Start()
 	elseif word ~= "status" then
-		Print("/ts  toggles the swapping; /ts on, /ts off; /ts <seconds> sets the pace")
+		Print("/ts  toggles the swapping; /ts on, /ts off; /ts <seconds> sets the pace; /ts mute file|all|off")
 		return
 	end
 	Status()
