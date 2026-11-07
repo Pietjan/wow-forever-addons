@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: SimpleRaidTargetIcons
+## Notes: Modifier-click or double-click a unit to pick its raid target icon from a radial menu around the cursor.
+## Author: Pietjan
+## X-Credits: Rewrite of SimpleRaidTargetIcons by MrFIXlT and Zimzarina, concept by Qzot
+## Version: 3.0
+## SavedVariables: SimpleRaidTargetIconsDB
+
+SimpleRaidTargetIcons.lua
