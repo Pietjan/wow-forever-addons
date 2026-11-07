@@ -944,6 +944,8 @@ label:SetText("BuffNag: drag to move")
 
 local icons = {}
 
+local SetPaused -- defined below; the bar's pause button needs it
+
 -- A pause button at the bar's end, dressed like the icons: a drawn pause
 -- glyph, with the pause length on it. Right-click cycles the length.
 local PAUSE_SIZE = ICON
@@ -993,7 +995,7 @@ pauseButton:SetScript("OnClick", function(self, mouseButton)
 		if GameTooltip:GetOwner() == self then
 			PauseTooltip(self)
 		end
-	elseif SetPaused then
+	else
 		local minutes = db.pauseMinutes or 0
 		SetPaused(minutes > 0 and minutes or nil)
 	end
@@ -1021,7 +1023,6 @@ bar:SetScript("OnDragStart", OnDragStart)
 bar:SetScript("OnDragStop", OnDragStop)
 
 local Refresh -- defined below; the icons' right-click needs it
-local SetPaused -- defined below; the bar's pause button needs it
 
 local function IconTooltip(button)
 	if not button.entry then
