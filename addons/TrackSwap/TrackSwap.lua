@@ -202,6 +202,45 @@ local function Start()
 	ticker = C_Timer.NewTicker(db.interval, Swap)
 end
 
+------------------------------------------------------------------------------
+-- The minimap's tracking button: right-click toggles the swapping, and
+-- the game's marching-ants alert runs around it while swapping is on.
+------------------------------------------------------------------------------
+
+local glow
+
+local function TrackingButton()
+	return MinimapCluster and MinimapCluster.Tracking and MinimapCluster.Tracking.Button
+		or MiniMapTrackingButton or MiniMapTracking
+end
+
+local function UpdateGlow()
+	local button = TrackingButton()
+	if not button then
+		return
+	end
+	if glow == nil then
+		-- The alert template from Blizzard_VisualAlerts, kept shown for as
+		-- long as we like instead of handing itself back after two seconds.
+		local ok, frame = pcall(CreateFrame, "Frame", nil, button, "VisualAlertMarchingAntsBaseTemplate")
+		if ok and frame then
+			if frame.SetManualRelease then
+				frame:SetManualRelease(true)
+			end
+			frame:SetScript("OnUpdate", nil)
+			frame:SetPoint("TOPLEFT", button, "TOPLEFT", -6, 6)
+			frame:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 7, -7)
+			frame:SetFrameLevel(button:GetFrameLevel() + 2)
+			glow = frame
+		else
+			glow = false
+		end
+	end
+	if glow then
+		glow:SetShown(db.enabled and true or false)
+	end
+end
+
 local function Status()
 	local herbs = Find(FIND_HERBS)
 	local minerals = Find(FIND_MINERALS)
@@ -209,6 +248,7 @@ local function Status()
 	Print("%s, every %g s, muting %s during the swap, holding %g s after a cast and %g s after fishing%s",
 		db.enabled and "on" or "off", db.interval, mute, db.hold, db.fishingHold,
 		(herbs and minerals) and "" or " (needs both Find Herbs and Find Minerals)")
+	UpdateGlow()
 end
 
 BINDING_HEADER_TRACKSWAP = "TrackSwap"
@@ -288,6 +328,39 @@ loader:SetScript("OnEvent", function(self, event, name, _, spellID)
 		RestoreSound()
 	elseif event == "PLAYER_LOGIN" then
 		Start()
+		UpdateGlow()
+		local button = TrackingButton()
+		if button then
+			-- The button only listens for the left mouse button, so a
+			-- right-click on it reaches nobody; catch it from the global
+			-- mouse event when the cursor is over the button.
+			self:RegisterEvent("GLOBAL_MOUSE_UP")
+			button:HookScript("OnEnter", function(self)
+				if GameTooltip:IsShown() and GameTooltip:GetOwner() == self then
+					GameTooltip:AddLine("Right-click: toggle TrackSwap", 0.6, 0.6, 0.6)
+					GameTooltip:Show()
+				end
+			end)
+		end
+	elseif event == "GLOBAL_MOUSE_UP" then
+		if name == "RightButton" and db then
+			local button = TrackingButton()
+			local over = false
+			if button and GetMouseFoci then
+				for _, frame in ipairs(GetMouseFoci()) do
+					if frame == button or frame == button:GetParent() then
+						over = true
+					end
+				end
+			elseif button and GetMouseFocus then
+				local focus = GetMouseFocus()
+				over = focus == button or focus == button:GetParent()
+			end
+			if over then
+				db.enabled = not db.enabled
+				Status()
+			end
+		end
 	elseif event == "PLAYER_LEAVING_WORLD" then
 		-- A reload or logout: do not leave the sound off.
 		RestoreSound()
