@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: SimpleRaidTargetIcons
-## Notes: Modifier-click or double-click a unit to pick its raid target icon from a radial menu around the cursor.
+## Notes: Modifier-click or double-click a unit to pick its raid target icon from a radial menu around the cursor. Out of combat only; key bindings work in combat.
 ## Author: Pietjan
 ## X-Credits: Rewrite of SimpleRaidTargetIcons by MrFIXlT and Zimzarina, concept by Qzot
 ## Version: 3.0

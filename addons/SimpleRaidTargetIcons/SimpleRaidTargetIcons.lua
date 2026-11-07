@@ -1,40 +1,33 @@
 -- SimpleRaidTargetIcons: a radial menu of the eight raid target icons that
 -- opens around the cursor when you modifier-click or double-click a unit.
--- Move the mouse towards an icon and click to set it, right-click to clear.
+-- Click the icon you want, right-click to clear, move away to cancel.
 --
 -- A rewrite of the 2.x addon by MrFIXlT and Zimzarina (concept by Qzot) for
--- WoW Forever's engine, with the same key binding names so existing binds
--- keep working.
+-- WoW Forever. Since patch 12.0 SetRaidTarget() is a protected function, so
+-- an icon can only be set by a secure button that the player clicks or
+-- presses a key bound to. The menu's icons are such buttons, which also
+-- means the menu cannot be opened in combat: protected frames cannot be
+-- shown or moved by addon code while fighting. The key bindings work in
+-- combat.
 
 local ADDON_NAME = ...
 
 local ICON_TEXTURE = "Interface\\TargetingFrame\\UI-RaidTargetingIcons"
 local ICON_NAMES = { "Star", "Circle", "Diamond", "Triangle", "Moon", "Square", "Cross", "Skull" }
-local ICON_COLORS = { "ffff00", "ff8000", "ff00ff", "7cfc00", "c7c7cf", "00bfff", "ff4500", "ffffff" }
-local ICON_WORDS = { -- what /srti accepts
-	none = 0, clear = 0, remove = 0, off = 0,
-	star = 1, yellow = 1, circle = 2, orange = 2, diamond = 3, purple = 3,
-	triangle = 4, green = 4, moon = 5, silver = 5, square = 6, blue = 6,
-	cross = 7, x = 7, red = 7, skull = 8, white = 8,
-}
 
 local DEFAULTS = {
-	ctrl = true,         -- which modifiers + left click open the menu
+	ctrl = true,        -- which modifiers + left click open the menu
 	alt = false,
 	shift = false,
-	double = true,       -- double left click opens the menu
-	doubleSpeed = 0.25,  -- seconds between the two clicks
-	hoverSelect = false, -- pick an icon by resting the cursor on it
-	hoverTime = 0.2,     -- seconds of rest before it is picked
+	double = true,      -- double left click opens the menu
+	doubleSpeed = 0.25, -- seconds between the two clicks
 	scale = 1.0,
 	sounds = true,
 }
 
--- Menu geometry, in the menu's own (scaled) pixels, measured from its centre.
-local RADIUS, ICON_SIZE = 36, 18
-local DEAD_ZONE = 18     -- closer than this: nothing selected
-local SELECT_RADIUS = 50 -- up to here: the icon in that direction is selected
-local LINGER_RADIUS = 60 -- beyond this the menu closes after LINGER_TIME
+-- Menu geometry in the menu's own (scaled) pixels, measured from its centre.
+local RADIUS, ICON_SIZE, HIT_SIZE = 36, 18, 34
+local LINGER_RADIUS = 60  -- beyond this the menu closes after LINGER_TIME
 local CANCEL_RADIUS = 200 -- beyond this it closes at once
 local LINGER_TIME = 0.75
 local FADE_TIME = 0.1
@@ -52,21 +45,17 @@ local function Print(msg, ...)
 	DEFAULT_CHAT_FRAME:AddMessage("|cff9999ffSRTI|r " .. msg)
 end
 
-local function IconName(index)
-	if index == 0 then
-		return "no icon"
-	end
-	return ("|cff%s%s|r"):format(ICON_COLORS[index], ICON_NAMES[index])
-end
-
 local function Sound(kit)
 	if db.sounds then
 		PlaySound(kit, "SFX")
 	end
 end
 
--- Unit helpers. Values can be secret on this engine; treat those as unknown.
+local function Exists(unit)
+	return unit and UnitExists(unit)
+end
 
+-- Values can be secret on this engine; treat those as unknown.
 local function GUID(unit)
 	local guid = UnitGUID(unit)
 	if guid and not IsSecret(guid) then
@@ -82,78 +71,28 @@ local function MarkOf(unit)
 	return index or 0
 end
 
-local function Exists(unit)
-	return unit and UnitExists(unit)
-end
+------------------------------------------------------------------------------
+-- Secure buttons: the only way left to set an icon
+------------------------------------------------------------------------------
 
-local FIXED_UNITS = { "target", "mouseover", "focus", "softenemy", "softfriend", "softinteract" }
-
--- A unit token that currently refers to the unit with this GUID, or nil.
-local function UnitByGUID(guid)
-	if not guid then
-		return nil
+-- A button whose left click toggles the given icon on a unit and whose right
+-- click removes whatever icon the unit has. With no marker it only clears.
+-- The unit is "target" unless a state driver is attached (see the binding
+-- buttons below).
+local function NewMarkButton(name, parent, marker, template)
+	local button = CreateFrame("Button", name, parent, template or "SecureActionButtonTemplate")
+	-- Mouse clicks act on release; key presses act on press or release
+	-- according to the game's own setting, so register for both.
+	button:RegisterForClicks("AnyDown", "AnyUp")
+	button:SetAttribute("unit", "target")
+	if marker then
+		button:SetAttribute("type1", "raidtarget")
+		button:SetAttribute("marker", marker)
+		button:SetAttribute("action1", "toggle")
 	end
-	for _, unit in ipairs(FIXED_UNITS) do
-		if Exists(unit) and GUID(unit) == guid then
-			return unit
-		end
-	end
-	for i = 1, 40 do
-		local unit = "nameplate" .. i
-		if Exists(unit) and GUID(unit) == guid then
-			return unit
-		end
-	end
-	local prefix = IsInRaid() and "raid" or "party"
-	for i = 1, GetNumGroupMembers() do
-		for _, unit in ipairs({ prefix .. i, prefix .. i .. "target" }) do
-			if Exists(unit) and GUID(unit) == guid then
-				return unit
-			end
-		end
-	end
-	return nil
-end
-
-local function CanMark()
-	if IsInRaid() and not (UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")) then
-		Print("only the raid leader and assistants can set icons")
-		return false
-	end
-	return true
-end
-
--- Set (or with index 0 remove) the icon of the unit that was clicked. The unit
--- is found again by GUID because the token it had when the menu opened
--- ("mouseover" mostly) may point elsewhere by now.
-function SRTI.SetMark(index, guid, fallbackUnit)
-	local unit = UnitByGUID(guid) or (Exists(fallbackUnit) and fallbackUnit)
-	if not unit then
-		Print("that unit is no longer in view")
-		return false
-	end
-	if not CanMark() then
-		return false
-	end
-	local ok, err = pcall(SetRaidTarget, unit, index)
-	if not ok then
-		Print("could not set the icon: %s", tostring(err))
-		return false
-	end
-	return true
-end
-
--- Mark the unit under the cursor, else the target. Used by the key bindings
--- and the slash command.
-function SRTI.MarkFromBinding(index)
-	local unit = Exists("mouseover") and "mouseover" or Exists("target") and "target"
-	if not unit then
-		return
-	end
-	if index ~= 0 and MarkOf(unit) == index then
-		index = 0 -- same icon again removes it, like the game's own menu
-	end
-	SRTI.SetMark(index, GUID(unit), unit)
+	button:SetAttribute("type2", "raidtarget")
+	button:SetAttribute("action2", "clear")
+	return button
 end
 
 ------------------------------------------------------------------------------
@@ -161,7 +100,7 @@ end
 ------------------------------------------------------------------------------
 
 local menu = CreateFrame("Button", "SRTIRadialMenu", UIParent)
-menu:SetSize(2 * (RADIUS + ICON_SIZE), 2 * (RADIUS + ICON_SIZE))
+menu:SetSize(2 * (RADIUS + HIT_SIZE / 2), 2 * (RADIUS + HIT_SIZE / 2))
 menu:SetFrameStrata("DIALOG")
 menu:SetClampedToScreen(true)
 menu:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -173,11 +112,14 @@ menu.backdrop:SetVertexColor(0, 0, 0, 0.7)
 menu.backdrop:SetSize(56, 56)
 menu.backdrop:SetPoint("CENTER")
 
-menu.portrait = menu:CreateTexture(nil, "BORDER")
-menu.portrait:SetSize(40, 40)
-menu.portrait:SetPoint("CENTER")
+-- The centre shows the unit; right-clicking it removes the icon.
+menu.center = NewMarkButton("SRTIRadialMenuCenter", menu, nil)
+menu.center:SetSize(40, 40)
+menu.center:SetPoint("CENTER")
+menu.portrait = menu.center:CreateTexture(nil, "ARTWORK")
+menu.portrait:SetAllPoints()
 do
-	local mask = menu:CreateMaskTexture()
+	local mask = menu.center:CreateMaskTexture()
 	mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
 	mask:SetAllPoints(menu.portrait)
 	menu.portrait:AddMaskTexture(mask)
@@ -188,60 +130,26 @@ local function IconAngle(index)
 	return math.rad(90 - (index - 1) * 45)
 end
 
-menu.icons = {}
+menu.buttons = {}
 for i = 1, 8 do
-	local icon = menu:CreateTexture(nil, "ARTWORK")
-	icon:SetTexture(ICON_TEXTURE)
-	SetRaidTargetIconTexture(icon, i)
-	icon:SetSize(ICON_SIZE, ICON_SIZE)
-	menu.icons[i] = icon
+	local button = NewMarkButton("SRTIRadialMenuIcon" .. i, menu, i)
+	button:SetSize(HIT_SIZE, HIT_SIZE)
+	local angle = IconAngle(i)
+	button:SetPoint("CENTER", menu, "CENTER", RADIUS * math.cos(angle), RADIUS * math.sin(angle))
+	button.icon = button:CreateTexture(nil, "ARTWORK")
+	button.icon:SetTexture(ICON_TEXTURE)
+	SetRaidTargetIconTexture(button.icon, i)
+	button.icon:SetPoint("CENTER")
+	menu.buttons[i] = button
 end
 
 -- A cross over the icon the unit already has: picking it removes the icon.
 menu.remove = menu:CreateTexture(nil, "OVERLAY")
 menu.remove:SetTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
-menu.remove:SetSize(ICON_SIZE, ICON_SIZE)
 menu.remove:Hide()
 
--- Lay the icons out at a fraction (0..1) of their final distance and size.
-local function Layout(progress)
-	local radius = RADIUS * (0.45 + 0.55 * progress)
-	local size = ICON_SIZE * (0.5 + 0.5 * progress)
-	for i, icon in ipairs(menu.icons) do
-		local angle = IconAngle(i)
-		local scale = (i == menu.selected) and 1.4 or 1
-		icon:SetPoint("CENTER", menu, "CENTER", radius * math.cos(angle), radius * math.sin(angle))
-		icon:SetSize(size * scale, size * scale)
-		if i == menu.selected then
-			icon:SetAlpha(1)
-		else
-			icon:SetAlpha(0.6)
-		end
-	end
-	if menu.current and menu.current > 0 then
-		local icon = menu.icons[menu.current]
-		menu.remove:SetPoint("CENTER", icon)
-		menu.remove:SetSize(icon:GetSize())
-		menu.remove:Show()
-	else
-		menu.remove:Hide()
-	end
-end
-
-local function CursorOffset()
-	local x, y = GetCursorPosition()
-	local scale = menu:GetEffectiveScale()
-	local cx, cy = menu:GetCenter()
-	return x / scale - cx, y / scale - cy
-end
-
-local function IndexAt(dx, dy)
-	local degrees = math.deg(math.atan2(dy, dx))
-	return math.floor((90 - degrees) / 45 + 0.5) % 8 + 1
-end
-
 local function Close(sound)
-	if menu.state == "hiding" then
+	if not menu:IsShown() or menu.state == "hiding" then
 		return
 	end
 	menu.state = "hiding"
@@ -251,26 +159,72 @@ local function Close(sound)
 	end
 end
 
-function SRTI.Open(unit, hoverSelect)
-	if not Exists(unit) then
-		return
+-- Draw the icons at a fraction (0..1) of their final distance and size. Only
+-- the textures move; the buttons under them stay where they are.
+local function Layout(progress)
+	local radius = RADIUS * (0.45 + 0.55 * progress)
+	local size = ICON_SIZE * (0.5 + 0.5 * progress)
+	for i, button in ipairs(menu.buttons) do
+		local angle = IconAngle(i)
+		local scale = (i == menu.selected) and 1.4 or 1
+		button.icon:SetPoint("CENTER", menu, "CENTER", radius * math.cos(angle), radius * math.sin(angle))
+		button.icon:SetSize(size * scale, size * scale)
+		button.icon:SetAlpha(i == menu.selected and 1 or 0.6)
+	end
+	if menu.current and menu.current > 0 then
+		local icon = menu.buttons[menu.current].icon
+		menu.remove:SetPoint("CENTER", icon)
+		menu.remove:SetSize(icon:GetSize())
+		menu.remove:Show()
+	else
+		menu.remove:Hide()
+	end
+end
+
+local function CursorDistance()
+	local x, y = GetCursorPosition()
+	local scale = menu:GetEffectiveScale()
+	local cx, cy = menu:GetCenter()
+	local dx, dy = x / scale - cx, y / scale - cy
+	return math.sqrt(dx * dx + dy * dy)
+end
+
+local function SelectedIcon()
+	for i, button in ipairs(menu.buttons) do
+		if button:IsMouseOver() then
+			return i
+		end
+	end
+	return nil
+end
+
+-- Open the menu for the target (the click that opens it also targets the
+-- unit). Returns false when it cannot open.
+function SRTI.Open()
+	if menu:IsShown() then
+		return false
+	end
+	if not Exists("target") then
+		return false
 	end
 	if IsInRaid() and not (UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")) then
-		return
+		return false
 	end
-	menu.guid = GUID(unit)
-	-- The click that opened the menu also targeted the unit, so "target" is
-	-- the safer fallback than "mouseover", which follows the cursor.
-	menu.fallbackUnit = (unit == "mouseover") and "target" or unit
-	menu.current = MarkOf(unit)
+	if InCombatLockdown() then
+		if not SRTI.warnedCombat then
+			Print("the menu cannot open during combat; the key bindings still work")
+			SRTI.warnedCombat = true
+		end
+		return false
+	end
+
+	menu.guid = GUID("target")
+	menu.current = MarkOf("target")
 	menu.selected = nil
-	menu.selectedSince = nil
-	menu.linger = nil
-	menu.hoverSelect = hoverSelect
 	menu.state = "showing"
 	menu.stateSince = GetTime()
 
-	SetPortraitTexture(menu.portrait, unit)
+	SetPortraitTexture(menu.portrait, "target")
 	menu:SetScale(db.scale)
 	local x, y = GetCursorPosition()
 	local scale = menu:GetEffectiveScale()
@@ -280,9 +234,10 @@ function SRTI.Open(unit, hoverSelect)
 	Layout(0)
 	menu:Show()
 	Sound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+	return true
 end
 
-menu:SetScript("OnUpdate", function(self, elapsed)
+menu:SetScript("OnUpdate", function(self)
 	local now = GetTime()
 	local progress = math.min((now - self.stateSince) / FADE_TIME, 1)
 
@@ -302,15 +257,13 @@ menu:SetScript("OnUpdate", function(self, elapsed)
 		end
 	end
 
-	-- The unit went away (died and despawned, left the group...).
-	if not (UnitByGUID(self.guid) or Exists(self.fallbackUnit)) then
+	-- The target changed or went away.
+	if not Exists("target") or (self.guid and GUID("target") ~= self.guid) then
 		Close(true)
 		return
 	end
 
-	local dx, dy = CursorOffset()
-	local dist = math.sqrt(dx * dx + dy * dy)
-	local selected = self.selected
+	local dist = CursorDistance()
 	if dist > CANCEL_RADIUS then
 		Close(true)
 		return
@@ -322,52 +275,38 @@ menu:SetScript("OnUpdate", function(self, elapsed)
 		end
 	else
 		self.linger = nil
-		if dist <= DEAD_ZONE then
-			selected = nil
-		elseif dist < SELECT_RADIUS then
-			selected = IndexAt(dx, dy)
-		end
 	end
 
-	if selected ~= self.selected then
-		self.selected = selected
-		self.selectedSince = now
-	end
+	self.selected = SelectedIcon()
+	self.current = MarkOf("target")
 	Layout(self.state == "open" and 1 or progress)
-
-	if self.hoverSelect and self.selected and now - self.selectedSince > db.hoverTime then
-		self:Click("LeftButton")
-	end
 end)
 
-menu:SetScript("OnClick", function(self, button)
-	if self.state == "hiding" then
-		return
-	end
-	local index
+-- A click on the menu that lands on no icon just closes it.
+menu:SetScript("OnClick", function()
+	Close(true)
+end)
+
+-- The secure part of a click has run by now; the sound and the closing are
+-- ours.
+local function AfterClick(self, button)
 	if button == "RightButton" then
-		index = 0
-	elseif self.selected then
-		index = (self.selected == self.current) and 0 or self.selected
+		Sound(SOUNDKIT.IG_MINIMAP_ZOOM_OUT)
+	elseif self.marker then
+		Sound(SOUNDKIT.IG_MINIMAP_ZOOM_IN)
 	end
-	if index then
-		if index == 0 and self.current == 0 then
-			Close(true)
-			return
-		end
-		if SRTI.SetMark(index, self.guid, self.fallbackUnit) then
-			Sound(index == 0 and SOUNDKIT.IG_MINIMAP_ZOOM_OUT or SOUNDKIT.IG_MINIMAP_ZOOM_IN)
-		end
-		Close(false)
-	else
-		Close(true)
-	end
-end)
+	Close(false)
+end
+menu.center:SetScript("PostClick", AfterClick)
+for i, button in ipairs(menu.buttons) do
+	button.marker = i
+	button:SetScript("PostClick", AfterClick)
+end
 
 menu:SetScript("OnHide", function(self)
 	self.state = nil
 	self.guid = nil
-	self.fallbackUnit = nil
+	self.linger = nil
 end)
 
 ------------------------------------------------------------------------------
@@ -381,10 +320,44 @@ local function ModifierDown()
 	return (db.ctrl and IsControlKeyDown()) or (db.alt and IsAltKeyDown()) or (db.shift and IsShiftKeyDown()) or false
 end
 
+-- The frames under the cursor, innermost first.
+local function FramesUnderCursor()
+	if GetMouseFoci then
+		return GetMouseFoci() or {}
+	elseif GetMouseFocus then
+		return { GetMouseFocus() }
+	end
+	return {}
+end
+
+-- The unit of the unit frame under the cursor, if the cursor is on one.
+-- Unit frames carry their unit in the "unit" attribute; a click on one of
+-- their children (a health bar, say) is a click on the frame.
+local function UnitUnderCursor()
+	for _, focus in ipairs(FramesUnderCursor()) do
+		local frame = focus
+		while frame and frame ~= UIParent and frame ~= WorldFrame do
+			if frame == menu or (frame.GetParent and frame:GetParent() == menu) then
+				return nil, frame
+			end
+			local unit = frame.GetAttribute and frame:GetAttribute("unit")
+			if unit and not IsSecret(unit) then
+				if SecureButton_GetModifiedUnit then
+					unit = SecureButton_GetModifiedUnit(frame) or unit
+				end
+				return unit, frame
+			end
+			frame = frame:GetParent()
+		end
+	end
+	return nil, FramesUnderCursor()[1]
+end
+
 local lastClick = { time = 0, x = 0, y = 0, guid = nil }
 
--- Called on every left click that lands on a unit: the unit's frame, its
--- model or its nameplate in the world.
+-- Every left click on a unit: its frame, or its model or nameplate in the
+-- world. The click itself targets the unit; the menu opens a moment later,
+-- once that has happened.
 local function UnitClicked(unit)
 	if menu:IsShown() then
 		return
@@ -397,284 +370,76 @@ local function UnitClicked(unit)
 		and (guid == nil or guid == lastClick.guid)
 	lastClick.time, lastClick.x, lastClick.y, lastClick.guid = now, x, y, guid
 
-	if ModifierDown() then
+	if ModifierDown() or double then
 		lastClick.time = 0
-		SRTI.Open(unit, db.hoverSelect)
-	elseif double then
-		lastClick.time = 0
-		SRTI.Open(unit, db.hoverSelect)
+		C_Timer.After(0, SRTI.Open)
 	end
 end
 
--- Clicks in the 3D world: models and nameplates. The unit under the cursor
--- is "mouseover" at that moment; a click on empty ground does nothing.
-WorldFrame:HookScript("OnMouseUp", function(_, button)
-	if button == "LeftButton" and Exists("mouseover") then
-		UnitClicked("mouseover")
+local clicks = CreateFrame("Frame")
+clicks:RegisterEvent("GLOBAL_MOUSE_UP")
+clicks:RegisterEvent("PLAYER_REGEN_DISABLED")
+clicks:RegisterEvent("PLAYER_REGEN_ENABLED")
+clicks:SetScript("OnEvent", function(_, event, button)
+	if event == "PLAYER_REGEN_DISABLED" then
+		-- Hide while that is still allowed; the fade would be too late.
+		menu:Hide()
+		return
+	elseif event == "PLAYER_REGEN_ENABLED" then
+		SRTI.warnedCombat = nil
+		return
+	end
+	if button ~= "LeftButton" then
+		return
+	end
+	local unit, frame = UnitUnderCursor()
+	if not unit and Exists("mouseover") then
+		unit = "mouseover"
+	end
+	if db.debug then
+		local name = frame and frame.GetName and frame:GetName() or tostring(frame)
+		Print("click on %s, unit %s (%s), modifier %s", name, tostring(unit),
+			unit and Exists(unit) and tostring(UnitName(unit)) or "-", tostring(ModifierDown()))
+	end
+	if Exists(unit) then
+		UnitClicked(unit)
 	end
 end)
-
--- Clicks on unit frames: every Blizzard unit frame, and most addon ones,
--- is a secure unit button and routes its clicks through this function.
-if type(SecureUnitButton_OnClick) == "function" then
-	hooksecurefunc("SecureUnitButton_OnClick", function(self, button, down)
-		if button ~= "LeftButton" then
-			return
-		end
-		-- A frame may report the press, the release or both; act on the
-		-- first report of each click.
-		local now = GetTime()
-		if down then
-			self.srtiPressed = now
-		elseif self.srtiPressed and now - self.srtiPressed < 1 then
-			self.srtiPressed = nil
-			return
-		end
-		local unit = SecureButton_GetModifiedUnit and SecureButton_GetModifiedUnit(self) or self:GetAttribute("unit")
-		if Exists(unit) then
-			UnitClicked(unit)
-		end
-	end)
-end
 
 function SRTI.ShowFromBinding()
-	if not menu:IsShown() and Exists("target") then
-		SRTI.Open("target", db.hoverSelect)
-	end
+	SRTI.Open()
 end
 
 ------------------------------------------------------------------------------
--- Swipe marking: hold a key and move the cursor over enemies
+-- Key bindings: one secure button per icon, acting on the unit under the
+-- cursor when there is one, else on the target
 ------------------------------------------------------------------------------
 
--- Which icons each crowd-control class gets, in order of preference.
-local CC_MARKS = {
-	MAGE = { 5, 6, 2, 1 },
-	WARLOCK = { 3, 6 },
-	HUNTER = { 4, 6 },
-	PRIEST = { 1, 2, 3 },
-	DRUID = { 2, 4 },
-	SHAMAN = { 6, 4 },
-}
-
--- Which classes can crowd-control each creature type, best first.
-local CC_CLASSES = {
-	Humanoid = { "MAGE", "HUNTER", "WARLOCK", "PRIEST" },
-	Giant = { "HUNTER", "WARLOCK" },
-	Beast = { "MAGE", "HUNTER", "DRUID" },
-	Dragonkin = { "HUNTER", "DRUID" },
-	Demon = { "WARLOCK", "HUNTER" },
-	Elemental = { "WARLOCK", "HUNTER" },
-	Undead = { "PRIEST", "HUNTER" },
-	Mechanical = { "HUNTER" },
-}
-
-local CC_IMMUNE = {
-	["Gurubashi Champion"] = true, ["Gurubashi Berserker"] = true,
-	["Ancient Core Hound"] = true, ["Firelord"] = true, ["Flameguard"] = true, ["Firewalker"] = true,
-	["Death Talon Captain"] = true, ["Death Talon Wyrmguard"] = true, ["Death Talon Flamescale"] = true,
-	["Death Talon Seether"] = true, ["Death Talon Overseer"] = true, ["Blackwing Spellbinder"] = true,
-	["Blackwing Technician"] = true, ["Blackwing Warlock"] = true,
-	["Surgical Assistant"] = true,
-}
-
--- Kill-priority mobs always get this icon.
-local KILL_MARKS = {
-	["Firewalker"] = 8, ["Flameguard"] = 7, ["Lava Elemental"] = 6, ["Lava Reaver"] = 5,
-	["Gurubashi Berserker"] = 8,
-	["Swarmguard Needler"] = 8, ["Qiraji Warrior"] = 7, ["Qiraji Swarmguard"] = 8,
-	["Qiraji Lasher"] = 5, ["Vekniss Soldier"] = 8, ["Qiraji Brainwasher"] = 8, ["Qiraji Champion"] = 4,
-	["Venom Stalker"] = 8, ["Dread Creeper"] = 7, ["Carrion Spinner"] = 6, ["Living Monstrosity"] = 8,
-	["Mad Scientist"] = 7, ["Frenzied Bat"] = 5, ["Plague Beast"] = 7,
-}
-
--- Packs of the same mob: the first free icon counting down from this one
--- (or, for a negative value, counting up from its absolute value).
-local PACK_MARKS = {
-	["Firesworn"] = 8, ["Core Hound"] = 5,
-	["Flamewaker Healer"] = 4, ["Flamewaker Elite"] = -4, ["Flamewaker Priest"] = -4,
-	["Buru Egg"] = 8, ["Spawn of Fankriss"] = -3,
-	["Vekniss Warrior"] = 3, ["Vekniss Wasp"] = -3, ["Vekniss Guardian"] = -6,
-	["Qiraji Mindslayer"] = -4, ["Qiraji Slayer"] = 3, ["Anubisath Sentinel"] = 4,
-	["Naxxramas Follower"] = -2, ["Naxxramas Worshipper"] = 4, ["Naxxramas Acolyte"] = -4,
-	["Naxxramas Cultist"] = 4, ["Necro Stalker"] = -2,
-}
-
-local swipe = CreateFrame("Frame")
-swipe.used = {}       -- icon -> true while it has been handed out this swipe
-swipe.given = {}      -- class -> number of icons handed to that class
-swipe.summary = {}    -- icon -> class, printed when the swipe ends
-swipe.ccers = {}      -- class -> number of group members of that class
-swipe.lastMark = 0
-
-local function CountCrowdControllers()
-	wipe(swipe.ccers)
-	local prefix = IsInRaid() and "raid" or "party"
-	local function Count(unit)
-		local _, class = UnitClass(unit)
-		if class and CC_MARKS[class] then
-			swipe.ccers[class] = (swipe.ccers[class] or 0) + 1
-		end
-	end
-	if not IsInRaid() then
-		Count("player")
-	end
-	for i = 1, GetNumGroupMembers() do
-		Count(prefix .. i)
-	end
+BINDING_HEADER_SRTI_HEADER = "SimpleRaidTargetIcons"
+BINDING_NAME_SRTI_SHOW = "Open the radial menu for the target"
+for i = 0, 8 do
+	_G["BINDING_NAME_CLICK SRTIMark" .. i .. ":LeftButton"] = i == 0 and "Remove icon" or ("Set " .. ICON_NAMES[i])
 end
 
-local function TakeMark(index)
-	if swipe.used[index] then
-		return false
+for i = 0, 8 do
+	local button = NewMarkButton("SRTIMark" .. i, UIParent, i > 0 and i or nil,
+		"SecureActionButtonTemplate,SecureHandlerStateTemplate")
+	if i == 0 then
+		button:SetAttribute("type1", "raidtarget")
+		button:SetAttribute("action1", "clear")
 	end
-	local now = GetTime()
-	if now - swipe.lastMark < TOOLTIP_UPDATE_TIME then
-		return false
-	end
-	swipe.lastMark = now
-	if SRTI.SetMark(index, GUID("mouseover"), "mouseover") then
-		swipe.used[index] = true
-		return true
-	end
-	return false
-end
-
-local function PackOrder(start)
-	local order = {}
-	if start > 0 then
-		for i = start, 1, -1 do order[#order + 1] = i end
-	else
-		for i = -start, 8 do order[#order + 1] = i end
-	end
-	return order
-end
-
-local function SwipeMarkMouseover()
-	local unit = "mouseover"
-	if not Exists(unit) then
-		return
-	end
-	local current = MarkOf(unit)
-	if current and current > 0 then
-		swipe.used[current] = true -- never take an icon that is already in use
-		return
-	end
-	if not UnitCanAttack("player", unit) or UnitClassification(unit) == "worldboss" or UnitLevel(unit) == -1 then
-		return
-	end
-	local name = UnitName(unit)
-	if not name or IsSecret(name) then
-		return
-	end
-
-	local kill = KILL_MARKS[name]
-	if kill then
-		TakeMark(kill)
-		return
-	end
-	local pack = PACK_MARKS[name]
-	if pack then
-		for _, index in ipairs(PackOrder(pack)) do
-			if TakeMark(index) then
-				return
-			end
-		end
-		return
-	end
-	if CC_IMMUNE[name] then
-		return
-	end
-
-	local creatureType = UnitCreatureType(unit)
-	local classes = creatureType and not IsSecret(creatureType) and CC_CLASSES[creatureType]
-	if not classes then
-		return
-	end
-	for _, class in ipairs(classes) do
-		local available = swipe.ccers[class] or 0
-		if available > (swipe.given[class] or 0) then
-			for _, index in ipairs(CC_MARKS[class]) do
-				if TakeMark(index) then
-					swipe.given[class] = (swipe.given[class] or 0) + 1
-					swipe.summary[index] = class
-					return
-				end
-			end
-		end
-	end
-end
-
-swipe:SetScript("OnEvent", function(self)
-	if self.mode == "mark" then
-		pcall(SwipeMarkMouseover)
-	elseif self.mode == "clear" and Exists("mouseover") then
-		local current = MarkOf("mouseover")
-		if current and current > 0 then
-			SRTI.SetMark(0, GUID("mouseover"), "mouseover")
-		end
-	end
-end)
-
-local function StartSwipe(mode)
-	swipe.mode = mode
-	wipe(swipe.used)
-	wipe(swipe.given)
-	wipe(swipe.summary)
-	if mode == "mark" then
-		CountCrowdControllers()
-	end
-	swipe:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
-end
-
-local function StopSwipe()
-	swipe:UnregisterEvent("UPDATE_MOUSEOVER_UNIT")
-	if swipe.mode == "mark" then
-		for index = 1, 8 do
-			local class = swipe.summary[index]
-			if class then
-				local color = RAID_CLASS_COLORS[class]
-				local className = LOCALIZED_CLASS_NAMES_MALE[class] or class
-				Print("%s: %s", IconName(index), color and color:WrapTextInColorCode(className) or className)
-			end
-		end
-	end
-	swipe.mode = nil
-end
-
-function SRTI.SwipeMark(down)
-	if down then
-		StartSwipe("mark")
-	else
-		StopSwipe()
-	end
-end
-
-function SRTI.SwipeClear(down)
-	if down then
-		StartSwipe("clear")
-	else
-		StopSwipe()
-	end
+	-- Keep it a shown, invisible speck so that a bound key always reaches it.
+	button:SetSize(1, 1)
+	button:SetPoint("BOTTOMLEFT")
+	button:SetAlpha(0)
+	button:EnableMouse(false)
+	button:SetAttribute("_onstate-unit", [[ self:SetAttribute("unit", newstate) ]])
+	RegisterStateDriver(button, "unit", "[@mouseover,exists] mouseover; target")
 end
 
 ------------------------------------------------------------------------------
 -- Settings
 ------------------------------------------------------------------------------
-
-BINDING_HEADER_SRTI_HEADER = "SimpleRaidTargetIcons"
-BINDING_NAME_SRTI_SHOW = "Open the radial menu for the target"
-BINDING_NAME_SRTI_CLEAR = "Remove icon"
-BINDING_NAME_SRTI_STAR = "Set Star"
-BINDING_NAME_SRTI_CIRCLE = "Set Circle"
-BINDING_NAME_SRTI_DIAMOND = "Set Diamond"
-BINDING_NAME_SRTI_TRIANGLE = "Set Triangle"
-BINDING_NAME_SRTI_MOON = "Set Moon"
-BINDING_NAME_SRTI_SQUARE = "Set Square"
-BINDING_NAME_SRTI_CROSS = "Set Cross"
-BINDING_NAME_SRTI_SKULL = "Set Skull"
-BINDING_NAME_SRTI_MOUSEOVER = "Hold: swipe over enemies to assign crowd-control icons"
-BINDING_NAME_SRTI_MOUSEOVER_CLEAR = "Hold: swipe over enemies to remove icons"
 
 local settingsCategory
 
@@ -698,21 +463,15 @@ local function RegisterSettings()
 		options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, format)
 		Settings.CreateSlider(category, setting, options, tooltip)
 	end
-	local function Seconds(value)
-		return ("%.2f s"):format(value)
-	end
-	local function Percent(value)
-		return ("%d%%"):format(value * 100)
-	end
 
 	Checkbox("ctrl", "Ctrl + left click opens the menu")
 	Checkbox("alt", "Alt + left click opens the menu")
 	Checkbox("shift", "Shift + left click opens the menu")
 	Checkbox("double", "Double left click opens the menu")
-	Slider("doubleSpeed", "Double click speed", "Longest pause between the two clicks.", 0.15, 0.5, 0.05, Seconds)
-	Checkbox("hoverSelect", "Select by hovering", "Pick an icon by resting the cursor on it instead of clicking.")
-	Slider("hoverTime", "Hover time", "How long the cursor rests on an icon before it is picked.", 0.05, 0.5, 0.05, Seconds)
-	Slider("scale", "Menu size", nil, 0.5, 2.5, 0.1, Percent)
+	Slider("doubleSpeed", "Double click speed", "Longest pause between the two clicks.", 0.15, 0.5, 0.05,
+		function(value) return ("%.2f s"):format(value) end)
+	Slider("scale", "Menu size", nil, 0.5, 2.5, 0.1,
+		function(value) return ("%d%%"):format(value * 100) end)
 	Checkbox("sounds", "Play sounds")
 
 	Settings.RegisterAddOnCategory(category)
@@ -727,14 +486,6 @@ local function OpenSettings()
 	return false
 end
 
-local function PrintHelp()
-	Print("/srti |cffffcc00<icon>|r  sets the icon of the unit under the cursor, else of the target")
-	Print("  icons: 0-8, or star circle diamond triangle moon square cross skull, clear")
-	Print("/srti |cffffcc00ctrl|r|alt|shift|double|hover|sounds  toggles that option")
-	Print("/srti |cffffcc00speed|r|hovertime|scale <number>  sets that option")
-	Print("/srti |cffffcc00options|r  shows the current settings")
-end
-
 local function PrintOptions()
 	local modifiers = {}
 	for _, key in ipairs({ "ctrl", "alt", "shift" }) do
@@ -742,15 +493,21 @@ local function PrintOptions()
 			modifiers[#modifiers + 1] = key
 		end
 	end
-	Print("opens on %s + left click; double click %s (%.2f s); hover select %s (%.2f s); scale %d%%; sounds %s",
+	Print("opens on %s + left click; double click %s (%.2f s); scale %d%%; sounds %s",
 		#modifiers > 0 and table.concat(modifiers, "/") or "no modifier",
-		db.double and "on" or "off", db.doubleSpeed,
-		db.hoverSelect and "on" or "off", db.hoverTime,
-		db.scale * 100, db.sounds and "on" or "off")
+		db.double and "on" or "off", db.doubleSpeed, db.scale * 100, db.sounds and "on" or "off")
 end
 
-local TOGGLES = { ctrl = "ctrl", alt = "alt", shift = "shift", double = "double", hover = "hoverSelect", sounds = "sounds" }
-local NUMBERS = { speed = { "doubleSpeed", 0.1, 1 }, hovertime = { "hoverTime", 0.05, 1 }, scale = { "scale", 0.5, 3 } }
+local function PrintHelp()
+	Print("/srti  opens the settings")
+	Print("/srti |cffffcc00ctrl|r|alt|shift|double|sounds  toggles that option")
+	Print("/srti |cffffcc00speed|r|scale <number>  sets that option")
+	Print("/srti |cffffcc00debug|r  reports every click in chat")
+	Print("Icons can only be set by clicking the menu or by key: bind keys under Key Bindings > AddOns.")
+end
+
+local TOGGLES = { ctrl = "ctrl", alt = "alt", shift = "shift", double = "double", sounds = "sounds" }
+local NUMBERS = { speed = { "doubleSpeed", 0.1, 1 }, scale = { "scale", 0.5, 3 } }
 
 SLASH_SRTI1 = "/srti"
 SlashCmdList.SRTI = function(msg)
@@ -760,10 +517,11 @@ SlashCmdList.SRTI = function(msg)
 			PrintOptions()
 			PrintHelp()
 		end
-	elseif word == "help" then
-		PrintHelp()
 	elseif word == "options" then
 		PrintOptions()
+	elseif word == "debug" then
+		db.debug = not db.debug or nil
+		Print("debug output %s", db.debug and "on" or "off")
 	elseif TOGGLES[word] then
 		db[TOGGLES[word]] = not db[TOGGLES[word]]
 		PrintOptions()
@@ -775,12 +533,7 @@ SlashCmdList.SRTI = function(msg)
 		end
 		PrintOptions()
 	else
-		local index = tonumber(word) or ICON_WORDS[word]
-		if index and index >= 0 and index <= 8 then
-			SRTI.MarkFromBinding(index)
-		else
-			PrintHelp()
-		end
+		PrintHelp()
 	end
 end
 

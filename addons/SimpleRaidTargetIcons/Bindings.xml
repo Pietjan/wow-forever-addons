@@ -1,14 +1,12 @@
 <Bindings>
 	<Binding name="SRTI_SHOW" header="SRTI_HEADER" category="ADDONS">SRTI.ShowFromBinding()</Binding>
-	<Binding name="SRTI_CLEAR" category="ADDONS">SRTI.MarkFromBinding(0)</Binding>
-	<Binding name="SRTI_STAR" category="ADDONS">SRTI.MarkFromBinding(1)</Binding>
-	<Binding name="SRTI_CIRCLE" category="ADDONS">SRTI.MarkFromBinding(2)</Binding>
-	<Binding name="SRTI_DIAMOND" category="ADDONS">SRTI.MarkFromBinding(3)</Binding>
-	<Binding name="SRTI_TRIANGLE" category="ADDONS">SRTI.MarkFromBinding(4)</Binding>
-	<Binding name="SRTI_MOON" category="ADDONS">SRTI.MarkFromBinding(5)</Binding>
-	<Binding name="SRTI_SQUARE" category="ADDONS">SRTI.MarkFromBinding(6)</Binding>
-	<Binding name="SRTI_CROSS" category="ADDONS">SRTI.MarkFromBinding(7)</Binding>
-	<Binding name="SRTI_SKULL" category="ADDONS">SRTI.MarkFromBinding(8)</Binding>
-	<Binding name="SRTI_MOUSEOVER" runOnUp="true" category="ADDONS">SRTI.SwipeMark(keystate == "down")</Binding>
-	<Binding name="SRTI_MOUSEOVER_CLEAR" runOnUp="true" category="ADDONS">SRTI.SwipeClear(keystate == "down")</Binding>
+	<Binding name="CLICK SRTIMark1:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK SRTIMark2:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK SRTIMark3:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK SRTIMark4:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK SRTIMark5:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK SRTIMark6:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK SRTIMark7:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK SRTIMark8:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK SRTIMark0:LeftButton" category="ADDONS"/>
 </Bindings>
