@@ -14,9 +14,8 @@ local IsSecret = issecretvalue or function() return false end
 local DEFAULTS = {
 	party = true, -- also look at party members
 	soon = 30, -- seconds left at which a buff counts as missing
-	sound = 60, -- seconds between nags, 0 for none
-	pings = 3, -- a nag is this many map pings in a row
-	pingGap = 0.4, -- seconds between them
+	sound = true, -- ping while something is missing
+	pingGap = 0.4, -- seconds between pings
 	scale = 1,
 	locked = false,
 	off = {}, -- buff keys the player turned off
@@ -72,8 +71,7 @@ local MAX_LINES = 12
 
 local db
 local knownSpells = {} -- localized spell name -> true, from the spellbook
-local lastSound = 0
-local pingsLeft = 0
+local nagging = false
 local refreshPending = false
 
 local function Print(msg, ...)
@@ -372,24 +370,26 @@ local function ApplyLayout()
 	header:SetShown(not db.locked)
 end
 
--- The nag: the minimap ping, a few times with a short gap.
+-- The nag: the minimap ping, over and over with a short gap, for as long
+-- as the list is showing.
 local function Ping()
-	if pingsLeft <= 0 then
+	if not nagging then
 		return
 	end
-	pingsLeft = pingsLeft - 1
 	PlaySound(SOUNDKIT and SOUNDKIT.MAP_PING or 3175)
-	if pingsLeft > 0 then
-		C_Timer.After(db.pingGap, Ping)
-	end
+	C_Timer.After(db.pingGap, Ping)
 end
 
-local function Nag()
-	if pingsLeft > 0 then
-		return -- one is already sounding
+local function StartNag()
+	if nagging then
+		return
 	end
-	pingsLeft = db.pings
+	nagging = true
 	Ping()
+end
+
+local function StopNag()
+	nagging = false
 end
 
 local testing = false
@@ -402,6 +402,7 @@ local function Refresh()
 	end
 	if UnitIsDeadOrGhost("player") and not testing then
 		frame:Hide()
+		StopNag()
 		return
 	end
 	local inRaid = IsInRaid and IsInRaid()
@@ -456,9 +457,10 @@ local function Refresh()
 	end
 	frame:SetHeight(math.max(1, count * 16))
 	frame:SetShown(count > 0)
-	if count > 0 and not testing and db.sound > 0 and GetTime() - lastSound >= db.sound then
-		lastSound = GetTime()
-		Nag()
+	if count > 0 and not testing and db.sound then
+		StartNag()
+	else
+		StopNag()
 	end
 end
 
@@ -481,8 +483,8 @@ local function ListBuffs()
 		local can = CanProvide(buff) and "" or " |cff808080(not yours)|r"
 		Print("  %s  %s: %s%s", state, buff.key, buff.text or buff.key, can)
 	end
-	Print("party %s, warn %d s before a buff runs out, %d pings every %d s, scale %.2f, %s",
-		db.party and "on" or "off", db.soon, db.pings, db.sound, db.scale, db.locked and "locked" or "unlocked")
+	Print("party %s, warn %d s before a buff runs out, pings %s (every %.1f s), scale %.2f, %s",
+		db.party and "on" or "off", db.soon, db.sound and "on" or "off", db.pingGap, db.scale, db.locked and "locked" or "unlocked")
 end
 
 SLASH_BUFFNAG1 = "/bn"
@@ -497,13 +499,12 @@ SlashCmdList.BUFFNAG = function(msg)
 	elseif word == "party" then
 		db.party = rest ~= "off"
 	elseif word == "sound" then
-		db.sound = rest == "off" and 0 or math.max(0, math.min(600, tonumber(rest) or 60))
-	elseif word == "pings" then
-		db.pings = math.max(1, math.min(10, tonumber(rest) or 3))
-		Nag()
+		db.sound = rest ~= "off"
+		if not db.sound then
+			StopNag()
+		end
 	elseif word == "gap" then
-		db.pingGap = math.max(0.1, math.min(3, tonumber(rest) or 0.4))
-		Nag()
+		db.pingGap = math.max(0.1, math.min(10, tonumber(rest) or 0.4))
 	elseif word == "soon" then
 		db.soon = math.max(0, math.min(600, tonumber(rest) or 30))
 	elseif word == "scale" then
@@ -521,7 +522,7 @@ SlashCmdList.BUFFNAG = function(msg)
 			end
 		end
 		if not found then
-			Print("/bn  lists the buffs; /bn <name> toggles one; /bn lock|unlock; /bn party on|off; /bn sound <seconds>|off; /bn pings <n>; /bn gap <seconds>; /bn soon <seconds>; /bn scale <n>; /bn test; /bn reset")
+			Print("/bn  lists the buffs; /bn <name> toggles one; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn gap <seconds>; /bn soon <seconds>; /bn scale <n>; /bn test; /bn reset")
 			return
 		end
 		db.off[found.key] = Enabled(found) -- toggle
@@ -558,6 +559,10 @@ loader:SetScript("OnEvent", function(self, event, arg)
 		end
 		BuffNagDB = BuffNagDB or {}
 		db = BuffNagDB
+		if type(db.sound) == "number" then
+			db.sound = db.sound > 0
+		end
+		db.pings = nil
 		for key, value in pairs(DEFAULTS) do
 			if db[key] == nil then
 				if type(value) == "table" then
@@ -584,6 +589,7 @@ loader:SetScript("OnEvent", function(self, event, arg)
 		end)
 	elseif event == "PLAYER_REGEN_DISABLED" then
 		frame:Hide()
+		StopNag()
 	elseif event == "SPELLS_CHANGED" then
 		ScanSpellbook()
 		if not InCombatLockdown() then
