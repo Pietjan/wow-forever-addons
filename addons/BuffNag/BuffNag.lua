@@ -14,7 +14,9 @@ local IsSecret = issecretvalue or function() return false end
 local DEFAULTS = {
 	party = true, -- also look at party members
 	soon = 30, -- seconds left at which a buff counts as missing
-	sound = 60, -- seconds between nag sounds, 0 for none
+	sound = 60, -- seconds between nags, 0 for none
+	pings = 3, -- a nag is this many map pings in a row
+	pingGap = 0.4, -- seconds between them
 	scale = 1,
 	locked = false,
 	off = {}, -- buff keys the player turned off
@@ -71,6 +73,7 @@ local MAX_LINES = 12
 local db
 local knownSpells = {} -- localized spell name -> true, from the spellbook
 local lastSound = 0
+local pingsLeft = 0
 local refreshPending = false
 
 local function Print(msg, ...)
@@ -435,8 +438,28 @@ local function Refresh()
 	frame:SetShown(count > 0)
 	if count > 0 and not testing and db.sound > 0 and GetTime() - lastSound >= db.sound then
 		lastSound = GetTime()
-		PlaySound(SOUNDKIT and SOUNDKIT.READY_CHECK or 8960)
+		Nag()
 	end
+end
+
+-- The nag: the minimap ping, a few times with a short gap.
+local function Ping()
+	if pingsLeft <= 0 then
+		return
+	end
+	pingsLeft = pingsLeft - 1
+	PlaySound(SOUNDKIT and SOUNDKIT.MAP_PING or 3175)
+	if pingsLeft > 0 then
+		C_Timer.After(db.pingGap, Ping)
+	end
+end
+
+local function Nag()
+	if pingsLeft > 0 then
+		return -- one is already sounding
+	end
+	pingsLeft = db.pings
+	Ping()
 end
 
 local function Schedule(delay)
@@ -458,8 +481,8 @@ local function ListBuffs()
 		local can = CanProvide(buff) and "" or " |cff808080(not yours)|r"
 		Print("  %s  %s: %s%s", state, buff.key, buff.text or buff.key, can)
 	end
-	Print("party %s, warn %d s before a buff runs out, sound every %d s, scale %.2f, %s",
-		db.party and "on" or "off", db.soon, db.sound, db.scale, db.locked and "locked" or "unlocked")
+	Print("party %s, warn %d s before a buff runs out, %d pings every %d s, scale %.2f, %s",
+		db.party and "on" or "off", db.soon, db.pings, db.sound, db.scale, db.locked and "locked" or "unlocked")
 end
 
 SLASH_BUFFNAG1 = "/bn"
@@ -475,6 +498,12 @@ SlashCmdList.BUFFNAG = function(msg)
 		db.party = rest ~= "off"
 	elseif word == "sound" then
 		db.sound = rest == "off" and 0 or math.max(0, math.min(600, tonumber(rest) or 60))
+	elseif word == "pings" then
+		db.pings = math.max(1, math.min(10, tonumber(rest) or 3))
+		Nag()
+	elseif word == "gap" then
+		db.pingGap = math.max(0.1, math.min(3, tonumber(rest) or 0.4))
+		Nag()
 	elseif word == "soon" then
 		db.soon = math.max(0, math.min(600, tonumber(rest) or 30))
 	elseif word == "scale" then
@@ -492,7 +521,7 @@ SlashCmdList.BUFFNAG = function(msg)
 			end
 		end
 		if not found then
-			Print("/bn  lists the buffs; /bn <name> toggles one; /bn lock|unlock; /bn party on|off; /bn sound <seconds>|off; /bn soon <seconds>; /bn scale <n>; /bn test; /bn reset")
+			Print("/bn  lists the buffs; /bn <name> toggles one; /bn lock|unlock; /bn party on|off; /bn sound <seconds>|off; /bn pings <n>; /bn gap <seconds>; /bn soon <seconds>; /bn scale <n>; /bn test; /bn reset")
 			return
 		end
 		db.off[found.key] = Enabled(found) -- toggle
