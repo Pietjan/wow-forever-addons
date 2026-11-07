@@ -7,6 +7,11 @@
 --
 -- Buffs are matched by spell name, so any rank counts, and a buff is only
 -- asked for when your spellbook holds a spell that provides it.
+--
+-- Party buffs follow the default UI: the Cooldown Manager's settings have
+-- a "Group Buffs" tab with the buffs your class gives, split into shown
+-- and hidden. A buff hidden there is left alone here, and a group buff the
+-- game lists that this file does not know is watched all the same.
 
 local ADDON_NAME = ...
 
@@ -95,6 +100,9 @@ local function SpellName(spellID)
 end
 
 local function Enabled(buff)
+	if buff.gameHidden and not buff.gameShown then
+		return false -- hidden in the Cooldown Manager's Group Buffs tab
+	end
 	if db.off[buff.key] ~= nil then
 		return not db.off[buff.key]
 	end
@@ -171,7 +179,7 @@ local function ScanSpellbook()
 end
 
 local function CanProvide(buff)
-	if not buff.know then
+	if buff.gameShown or not buff.know then
 		return true
 	end
 	for _, name in ipairs(buff.knowNames) do
@@ -186,6 +194,73 @@ local function CastName(buff)
 	for _, name in ipairs(buff.castNames) do
 		if knownSpells[name] then
 			return name
+		end
+	end
+	if buff.game then
+		return buff.castNames[1] -- the game says it is known
+	end
+end
+
+------------------------------------------------------------------------------
+-- The default UI's group buffs
+------------------------------------------------------------------------------
+
+-- Party buffs the game itself lists for the Cooldown Manager, matched to
+-- the entries above by name. Ones with no entry become entries of their
+-- own, so nothing the game knows about is missed.
+local gameBuffs = {}
+
+local function SyncGameGroupBuffs()
+	for _, buff in ipairs(BUFFS) do
+		buff.gameShown, buff.gameHidden = nil, nil
+	end
+	wipe(gameBuffs)
+	if not (C_CooldownViewer and C_CooldownViewer.GetGroupBuffItems) then
+		return
+	end
+	local ok, items = pcall(C_CooldownViewer.GetGroupBuffItems)
+	if not ok or type(items) ~= "table" then
+		return
+	end
+	-- What the player hid in the settings; before any setting was made,
+	-- what the game hides by default.
+	local hidden = {}
+	local okHidden, list = pcall(function()
+		return C_UnitAuras.GetHiddenGroupBuffs and C_UnitAuras.GetHiddenGroupBuffs()
+	end)
+	if okHidden and type(list) == "table" and #list > 0 then
+		for _, id in ipairs(list) do
+			hidden[id] = true
+		end
+	else
+		local flag = (Enum.GroupBuffItemFlags and Enum.GroupBuffItemFlags.HideByDefault) or 1
+		for _, item in ipairs(items) do
+			if bit.band(item.flags or 0, flag) ~= 0 then
+				hidden[item.spellID] = true
+			end
+		end
+	end
+	for _, item in ipairs(items) do
+		if item.isKnown and not IsSecret(item.name) then
+			local name = SpellName(item.displaySpellID) or item.name
+			local isHidden = hidden[item.spellID] or hidden[item.displaySpellID] or false
+			local matched = false
+			for _, buff in ipairs(BUFFS) do
+				if buff.scope == "party" and buff.auraNames and buff.auraNames[name] then
+					matched = true
+					if isHidden then
+						buff.gameHidden = true
+					else
+						buff.gameShown = true
+					end
+				end
+			end
+			if not matched and not isHidden then
+				gameBuffs[#gameBuffs + 1] = {
+					key = "cdm" .. item.spellID, scope = "party", text = name, game = true,
+					auraNames = { [name] = true }, unlessNames = {}, knowNames = {}, castNames = { name },
+				}
+			end
 		end
 	end
 end
@@ -417,7 +492,7 @@ local function Refresh()
 	end
 	local inRaid = IsInRaid and IsInRaid()
 	local count = 0
-	for _, buff in ipairs(BUFFS) do
+	local function Consider(buff)
 		if Enabled(buff) and CanProvide(buff) then
 			local missing = {}
 			if buff.weapon then
@@ -455,6 +530,12 @@ local function Refresh()
 			end
 		end
 	end
+	for _, buff in ipairs(BUFFS) do
+		Consider(buff)
+	end
+	for _, buff in ipairs(gameBuffs) do
+		Consider(buff)
+	end
 	if testing and count == 0 then
 		count = 1
 		local line = Line(1)
@@ -488,10 +569,23 @@ end
 
 local function ListBuffs()
 	Print("buffs (|cff00ff00on|r / |cffff0000off|r; /bn <name> toggles):")
-	for _, buff in ipairs(BUFFS) do
+	local function Show(buff)
 		local state = Enabled(buff) and "|cff00ff00on|r" or "|cffff0000off|r"
-		local can = CanProvide(buff) and "" or " |cff808080(not yours)|r"
-		Print("  %s  %s: %s%s", state, buff.key, buff.text or buff.key, can)
+		local note = ""
+		if buff.gameHidden and not buff.gameShown then
+			note = " |cff808080(hidden in the Cooldown Manager)|r"
+		elseif buff.game then
+			note = " |cff808080(from the Cooldown Manager)|r"
+		elseif not CanProvide(buff) then
+			note = " |cff808080(not yours)|r"
+		end
+		Print("  %s  %s: %s%s", state, buff.key, buff.text or buff.key, note)
+	end
+	for _, buff in ipairs(BUFFS) do
+		Show(buff)
+	end
+	for _, buff in ipairs(gameBuffs) do
+		Show(buff)
 	end
 	Print("party %s, warn %d s before a buff runs out, pings %s (every %.1f s), scale %.2f, %s",
 		db.party and "on" or "off", db.soon, db.sound and "on" or "off", db.pingGap, db.scale, db.locked and "locked" or "unlocked")
@@ -531,6 +625,11 @@ SlashCmdList.BUFFNAG = function(msg)
 				found = buff
 			end
 		end
+		for _, buff in ipairs(gameBuffs) do
+			if buff.key == word then
+				found = buff
+			end
+		end
 		if not found then
 			Print("/bn  lists the buffs; /bn <name> toggles one; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn gap <seconds>; /bn soon <seconds>; /bn scale <n>; /bn test; /bn reset")
 			return
@@ -564,6 +663,10 @@ loader:RegisterEvent("PLAYER_UNGHOST")
 loader:RegisterEvent("PLAYER_UPDATE_RESTING")
 loader:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
 loader:RegisterEvent("PLAYER_CONTROL_GAINED")
+-- Changes to the Group Buffs tab of the Cooldown Manager; the names may
+-- not exist on every client.
+pcall(loader.RegisterEvent, loader, "HIDDEN_GROUP_BUFFS_CHANGED")
+pcall(loader.RegisterEvent, loader, "COOLDOWN_VIEWER_DATA_LOADED")
 loader:RegisterUnitEvent("UNIT_AURA", "player", "party1", "party2", "party3", "party4")
 loader:SetScript("OnEvent", function(self, event, arg)
 	if event == "ADDON_LOADED" then
@@ -592,6 +695,7 @@ loader:SetScript("OnEvent", function(self, event, arg)
 	elseif event == "PLAYER_LOGIN" then
 		ResolveNames()
 		ScanSpellbook()
+		SyncGameGroupBuffs()
 		ApplyLayout()
 		-- Temporary weapon enchants and running-out buffs have no event of
 		-- their own: look every few seconds.
@@ -603,8 +707,11 @@ loader:SetScript("OnEvent", function(self, event, arg)
 	elseif event == "PLAYER_REGEN_DISABLED" then
 		frame:Hide()
 		StopNag()
-	elseif event == "SPELLS_CHANGED" then
-		ScanSpellbook()
+	elseif event == "SPELLS_CHANGED" or event == "HIDDEN_GROUP_BUFFS_CHANGED" or event == "COOLDOWN_VIEWER_DATA_LOADED" then
+		if event == "SPELLS_CHANGED" then
+			ScanSpellbook()
+		end
+		SyncGameGroupBuffs()
 		if not InCombatLockdown() then
 			Schedule()
 		end
