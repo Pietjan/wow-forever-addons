@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: BuffNag
+## Notes: Lists the buffs you and your party are missing: your class buffs, food, weapon enchants. Click a line to cast. /bn
+## Author: Pietjan
+## Version: 1.0
+## SavedVariables: BuffNagDB
+
+BuffNag.lua
