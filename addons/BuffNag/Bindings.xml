@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="BUFFNAG_TOGGLE_PAUSE" header="BUFFNAG" category="ADDONS">
+		BuffNag_TogglePause()
+	</Binding>
+</Bindings>

@@ -189,6 +189,7 @@ local catalog, catalogOrder = {}, {} -- key -> entry, in display order
 local nagging = false
 local refreshPending = false
 local previewing = false
+local pausedUntil = nil -- GetTime() at which a pause ends; math.huge for "until resumed"
 
 local function Print(msg, ...)
 	if select("#", ...) > 0 then
@@ -1080,7 +1081,11 @@ function Refresh()
 	if InCombatLockdown() then
 		return
 	end
-	if Idle() and not previewing then
+	if pausedUntil and GetTime() >= pausedUntil then
+		pausedUntil = nil
+		Print("resumed")
+	end
+	if (Idle() or pausedUntil) and not previewing then
 		bar:Hide()
 		StopNag()
 		return
@@ -1475,6 +1480,38 @@ end
 -- Slash command
 ------------------------------------------------------------------------------
 
+-- Pause the bar and the sound: for a while, or until resumed. A pause is
+-- for this session only.
+local function SetPaused(minutes)
+	if minutes == nil then
+		pausedUntil = (pausedUntil == nil) and math.huge or nil -- toggle
+	elseif minutes <= 0 then
+		pausedUntil = nil
+	else
+		pausedUntil = GetTime() + minutes * 60
+	end
+	if pausedUntil == math.huge then
+		Print("paused until resumed (/bn pause, or the key binding)")
+	elseif pausedUntil then
+		Print("paused for %g min", minutes)
+	else
+		Print("resumed")
+	end
+	if not InCombatLockdown() then
+		Refresh()
+	end
+end
+
+-- For the key binding (Bindings.xml).
+function BuffNag_TogglePause()
+	if db then
+		SetPaused(nil)
+	end
+end
+
+BINDING_HEADER_BUFFNAG = "BuffNag"
+BINDING_NAME_BUFFNAG_TOGGLE_PAUSE = "Pause or resume the buff nagging"
+
 SLASH_BUFFNAG1 = "/bn"
 SLASH_BUFFNAG2 = "/buffnag"
 SlashCmdList.BUFFNAG = function(msg)
@@ -1521,6 +1558,12 @@ SlashCmdList.BUFFNAG = function(msg)
 		db.scale = math.max(0.5, math.min(3, tonumber(rest) or 1))
 	elseif word == "reset" then
 		db.point = { DEFAULTS.point[1], DEFAULTS.point[2], DEFAULTS.point[3] }
+	elseif word == "pause" then
+		SetPaused(tonumber(rest))
+		return
+	elseif word == "resume" then
+		SetPaused(0)
+		return
 	elseif word == "test" then
 		previewing = not previewing
 		Print("bar preview %s", previewing and "on" or "off")
@@ -1534,7 +1577,7 @@ SlashCmdList.BUFFNAG = function(msg)
 		end
 		return
 	else
-		Print("/bn opens the settings; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn glow flash|ants|off; /bn glowcolor <colour>; /bn expiring on|off; /bn gap <seconds>; /bn soon <max seconds>; /bn soonmin <seconds>; /bn soonshare <percent>; /bn scale <n>; /bn test; /bn reset")
+		Print("/bn opens the settings; /bn pause [minutes], /bn resume; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn glow flash|ants|off; /bn glowcolor <colour>; /bn expiring on|off; /bn gap <seconds>; /bn soon <max seconds>; /bn soonmin <seconds>; /bn soonshare <percent>; /bn scale <n>; /bn test; /bn reset")
 		return
 	end
 	if InCombatLockdown() then
