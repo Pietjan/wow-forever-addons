@@ -439,14 +439,26 @@ end
 
 -- A new character starts with the class buffs this file knows, food and
 -- the weapon enchants.
+-- Each default is offered once per character: added the first time it is
+-- seen, and left alone afterwards, so removing one sticks.
 local function SeedChoices()
-	if cdb.seeded then
-		return
+	if not cdb.offered then
+		cdb.offered = {}
+		if cdb.seeded then
+			-- Seeded by an earlier version: count everything it had as
+			-- offered, except the entries added since.
+			for _, key in ipairs(catalogOrder) do
+				if key ~= "flask" and key ~= "elixir" then
+					cdb.offered[key] = true
+				end
+			end
+		end
 	end
 	cdb.seeded = true
 	for _, key in ipairs(catalogOrder) do
 		local entry = catalog[key]
-		if entry.seedDefault then
+		if entry.seedDefault and not cdb.offered[key] then
+			cdb.offered[key] = true
 			cdb.nag[key] = { party = entry.party }
 		end
 	end
