@@ -24,6 +24,7 @@ local DEFAULTS = { -- account wide: the bar and the sound
 	soonMax = 120,
 	soonMin = 30,
 	sound = true, -- ping while something is missing
+	petNag = "happy", -- "happy": feed the pet whenever it is not Happy; "content": only once Unhappy, Content shows quietly
 	pingGap = 0.4, -- seconds between pings
 	scale = 1,
 	locked = false,
@@ -68,6 +69,7 @@ local SEEDS = {
 }
 
 local WELL_FED, FOOD = 19705, 433
+local FEED_PET, FEED_PET_EFFECT, PET_HAPPY = 6991, 1539, 3 -- happiness: 1 Unhappy, 2 Content, 3 Happy
 
 -- Shaman weapon imbues, in order of preference: a shaman who knows one
 -- needs nothing from the bags for the main hand.
@@ -260,7 +262,7 @@ end
 ------------------------------------------------------------------------------
 
 -- An entry: key, name, icon, auraNames (set), castNames (list, in order of
--- preference), party (default for a new choice), kind ("aura", "food",
+-- preference), party (default for a new choice), kind ("aura", "food", "pet",
 -- "weapon", "offhand"), mana, unlessNames.
 
 local function AddEntry(entry)
@@ -469,6 +471,20 @@ local function BuildCatalog()
 		key = "offhand", name = "Off-hand enchant", icon = WeaponIcon(OFF_HAND), kind = "offhand", source = "extra",
 		auraNames = {}, castNames = {}, party = false, unlessNames = {}, seedDefault = true,
 	})
+	-- A hunter's pet wants feeding: there once Feed Pet is known. The pet
+	-- is left alone while it is still chewing (Feed Pet Effect).
+	local feedPet = SpellName(FEED_PET)
+	if feedPet and knownSpells[feedPet] then
+		local chewing = {}
+		local effect = SpellName(FEED_PET_EFFECT)
+		if effect then
+			chewing[effect] = true
+		end
+		AddEntry({
+			key = "pet", name = feedPet, icon = SpellIcon(FEED_PET), kind = "pet", source = "extra",
+			auraNames = {}, castNames = {}, party = false, unlessNames = chewing, seedDefault = true, feedSpell = feedPet,
+		})
+	end
 end
 
 -- A new character starts with the class buffs this file knows, food and
@@ -482,7 +498,7 @@ local function SeedChoices()
 			-- Seeded by an earlier version: count everything it had as
 			-- offered, except the entries added since.
 			for _, key in ipairs(catalogOrder) do
-				if key ~= "flask" and key ~= "elixir" then
+				if key ~= "flask" and key ~= "elixir" and key ~= "pet" then
 					cdb.offered[key] = true
 				end
 			end
@@ -751,6 +767,50 @@ local function FoodCandidates(entry)
 			seen[itemID] = true
 			local icon, name = ItemLook(itemID)
 			list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name, eat = true }
+		end
+	end)
+	return list
+end
+
+-- A hunter pet that is not as happy as wanted, and food in the bags that
+-- it eats: the fix to feed it. The game says what the pet eats, diet and
+-- level both.
+local function PetCandidates(entry)
+	local list = {}
+	entry.expiring = false
+	local ok, happiness, petName = pcall(function()
+		local hasUI, isHunterPet = HasPetUI()
+		if not (hasUI and isHunterPet) or not UnitExists("pet") or UnitIsDeadOrGhost("pet") then
+			return nil
+		end
+		local level = C_PetInfo and C_PetInfo.GetPetHappiness and C_PetInfo.GetPetHappiness()
+		if IsSecret(level) then
+			return nil
+		end
+		return level, UnitName("pet")
+	end)
+	if not ok or not happiness or happiness >= PET_HAPPY then
+		return list
+	end
+	if UnitHas("pet", entry.unlessNames, 0) ~= false then
+		return list
+	end
+	-- Content, when only Unhappy is worth the sound: shown, but quietly.
+	entry.expiring = db.petNag == "content" and happiness == PET_HAPPY - 1
+	local state = ("%s is %s"):format(petName or "Pet", _G["PET_HAPPINESS" .. happiness] or "hungry")
+	local canEat = C_PetInfo and C_PetInfo.CanPetEatItem
+	if not canEat then
+		return list
+	end
+	local seen = {}
+	EachBagItem(function(itemID)
+		if not seen[itemID] then
+			seen[itemID] = true
+			local okEat, eats = pcall(canEat, itemID)
+			if okEat and eats then
+				local icon, name = ItemLook(itemID)
+				list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name, feed = entry.feedSpell, state = state }
+			end
 		end
 	end)
 	return list
@@ -1079,7 +1139,8 @@ local function IconTooltip(button)
 	GameTooltip:SetOwner(button, "ANCHOR_BOTTOM")
 	GameTooltip:SetText(button.entry.name)
 	if button.missingText then
-		GameTooltip:AddLine("Missing: " .. button.missingText, 1, 1, 1, true)
+		local prefix = button.entry.kind == "pet" and "" or "Missing: "
+		GameTooltip:AddLine(prefix .. button.missingText, 1, 1, 1, true)
 	end
 	if button.applyText then
 		GameTooltip:AddLine(button.applyText, 0.6, 0.6, 0.6)
@@ -1152,7 +1213,7 @@ end
 local function Missing(entry, choice)
 	local missing = {}
 	entry.endsAt, entry.endDuration = nil, nil
-	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "food" or entry.kind == "weapon" or entry.kind == "offhand" then
+	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "food" or entry.kind == "pet" or entry.kind == "weapon" or entry.kind == "offhand" then
 		local list
 		if entry.kind == "flask" then
 			list = FlaskCandidates(entry)
@@ -1160,6 +1221,8 @@ local function Missing(entry, choice)
 			list = ElixirCandidates(entry)
 		elseif entry.kind == "food" then
 			list = FoodCandidates(entry)
+		elseif entry.kind == "pet" then
+			list = PetCandidates(entry)
 		else
 			local slot = entry.kind == "weapon" and MAIN_HAND or OFF_HAND
 			local missingEnchant, expiring, endTime = WeaponMissing(slot)
@@ -1176,6 +1239,8 @@ local function Missing(entry, choice)
 					labels[i] = candidate.text
 				end
 				entry.fix.count, entry.fix.list = #list, table.concat(labels, ", ")
+			elseif entry.kind == "pet" then
+				entry.fix.count, entry.fix.list = 1, entry.fix.state
 			else
 				entry.fix.count, entry.fix.list = 1, entry.fix.text
 			end
@@ -1282,6 +1347,9 @@ function Refresh()
 					if entry.fix.slot then
 						button:SetAttribute("macrotext", ("/use item:%d\n/use %d"):format(entry.fix.value, entry.fix.slot))
 						button.applyText = "Click to apply " .. entry.fix.text .. "."
+					elseif entry.fix.feed then
+						button:SetAttribute("macrotext", ("/cast %s\n/use item:%d"):format(entry.fix.feed, entry.fix.value))
+						button.applyText = "Click to feed it " .. entry.fix.text .. "."
 					else
 						button:SetAttribute("macrotext", ("/use item:%d"):format(entry.fix.value))
 						button.applyText = (entry.fix.eat and "Click to eat " or "Click to drink ") .. entry.fix.text .. "."
@@ -1695,6 +1763,13 @@ SlashCmdList.BUFFNAG = function(msg)
 		end
 	elseif word == "expiring" then
 		db.expiringGlow = rest ~= "off"
+	elseif word == "pet" then
+		if rest == "happy" or rest == "content" then
+			db.petNag = rest
+		else
+			Print("/bn pet happy (feed whenever the pet is not Happy) | content (sound only once Unhappy; Content shows quietly)")
+			return
+		end
 	elseif word == "sound" then
 		db.sound = rest ~= "off"
 		if not db.sound then
@@ -1714,6 +1789,27 @@ SlashCmdList.BUFFNAG = function(msg)
 		db.point = { DEFAULTS.point[1], DEFAULTS.point[2], DEFAULTS.point[3] }
 	elseif word == "debug" then
 		Print("party %s, in raid: %s", db.party and "on" or "off", tostring(IsInRaid and IsInRaid() or false))
+		if catalog.pet then
+			local okPet, happiness, damage = pcall(function()
+				return C_PetInfo.GetPetHappiness()
+			end)
+			local foods = {}
+			local okDiet, diet = pcall(function()
+				return C_PetInfo.GetPetFoodTypes()
+			end)
+			EachBagItem(function(itemID)
+				local okEat, eats = pcall(function()
+					return C_PetInfo.CanPetEatItem(itemID)
+				end)
+				if okEat and eats then
+					local _, name = ItemLook(itemID)
+					foods[#foods + 1] = name
+				end
+			end)
+			Print("  pet %s: happiness %s (%s%% damage), eats %s; in bags: %s", tostring(UnitName("pet")),
+				okPet and tostring(happiness) or "unreadable", okPet and tostring(damage) or "?",
+				okDiet and type(diet) == "table" and table.concat(diet, ", ") or "?", #foods > 0 and table.concat(foods, ", ") or "nothing")
+		end
 		for _, unit in ipairs(PARTY_UNITS) do
 			if UnitExists(unit) then
 				local okAura, auraCount = pcall(function()
@@ -1762,7 +1858,7 @@ SlashCmdList.BUFFNAG = function(msg)
 		end
 		return
 	else
-		Print("/bn opens the settings; /bn pause [minutes], /bn resume; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn glow flash|ants|off; /bn glowcolor <colour>; /bn expiring on|off; /bn gap <seconds>; /bn soon <max seconds>; /bn soonmin <seconds>; /bn soonshare <percent>; /bn scale <n>; /bn test; /bn reset")
+		Print("/bn opens the settings; /bn pause [minutes], /bn resume; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn glow flash|ants|off; /bn glowcolor <colour>; /bn expiring on|off; /bn pet happy|content; /bn gap <seconds>; /bn soon <max seconds>; /bn soonmin <seconds>; /bn soonshare <percent>; /bn scale <n>; /bn test; /bn reset")
 		return
 	end
 	if InCombatLockdown() then
@@ -1805,6 +1901,8 @@ loader:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
 loader:RegisterEvent("PLAYER_CONTROL_GAINED")
 loader:RegisterEvent("BAG_UPDATE_DELAYED")
 pcall(loader.RegisterEvent, loader, "COOLDOWN_VIEWER_DATA_LOADED")
+pcall(loader.RegisterEvent, loader, "UNIT_HAPPINESS") -- hunter pet fed, or getting hungry
+pcall(loader.RegisterUnitEvent, loader, "UNIT_PET", "player")
 loader:RegisterUnitEvent("UNIT_AURA", "player", "party1", "party2", "party3", "party4")
 loader:SetScript("OnEvent", function(self, event, arg)
 	if event == "ADDON_LOADED" then
