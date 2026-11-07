@@ -27,7 +27,7 @@ local DEFAULTS = { -- account wide: the bar and the sound
 	pingGap = 0.4, -- seconds between pings
 	scale = 1,
 	locked = false,
-	pauseMinutes = 0, -- the bar's pause button: minutes, 0 for until resumed
+	pauseMinutes = 5, -- the bar's pause button: minutes, 0 for until resumed
 	glow = "flash", -- "flash", "ants" or "off": the Cooldown Manager's alert effect on a missing buff
 	glowColor = "gold", -- gold, cyan, red, green or blue
 	expiringGlow = true, -- the Cooldown Manager's pandemic border on a buff that is running out
@@ -975,7 +975,7 @@ local SetPaused -- defined below; the bar's pause button needs it
 -- A pause button at the bar's end, dressed like the icons: a drawn pause
 -- glyph, with the pause length on it. Right-click cycles the length.
 local PAUSE_SIZE = ICON
-local PAUSE_CHOICES = { 0, 5, 10, 30 } -- minutes; 0: until resumed
+local PAUSE_CHOICES = { 5, 10, 30, 0 } -- minutes; 0: until resumed
 local pauseButton = CreateFrame("Button", "BuffNagPauseButton", bar)
 StyleIcon(pauseButton)
 -- Hung off the bar's edge rather than inside it, so the bar's width, and
@@ -1761,6 +1761,10 @@ loader:SetScript("OnEvent", function(self, event, arg)
 				db.sound = db.sound > 0
 			end
 			db.soon = nil -- replaced by soonShare/soonMax/soonMin
+			if not db.pauseDefaulted then
+				db.pauseDefaulted = true
+				db.pauseMinutes = 5 -- the earlier default was "until resumed"
+			end
 			if db.glow == true then
 				db.glow = "flash"
 			elseif db.glow == false then
