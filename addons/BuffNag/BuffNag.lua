@@ -573,20 +573,39 @@ local function UnitUsable(unit)
 	return ok and usable
 end
 
--- Whether a party member is close enough to be buffed. Far ones are still
--- listed as missing, but a click goes to someone in range.
-local function UnitNear(unit)
+-- Whether a party member is close enough to be buffed with a spell. Far
+-- ones are still listed as missing, but a click goes to someone in range.
+-- Asked of the spell itself; when the game will not say, near it is.
+local function UnitNear(unit, spellName)
 	if unit == "player" then
 		return true
 	end
 	local ok, near = pcall(function()
-		if not UnitInRange then
-			return true
+		if spellName then
+			if C_Spell and C_Spell.IsSpellInRange then
+				local inRange = C_Spell.IsSpellInRange(spellName, unit)
+				if inRange ~= nil then
+					return inRange
+				end
+			elseif IsSpellInRange then
+				local inRange = IsSpellInRange(spellName, unit)
+				if inRange ~= nil then
+					return inRange == 1 or inRange == true
+				end
+			end
 		end
-		local inRange, checked = UnitInRange(unit)
-		return not checked or inRange
+		if UnitInRange then
+			local inRange, checked = UnitInRange(unit)
+			if checked then
+				return inRange and true or false
+			end
+		end
+		return true
 	end)
-	return ok and near
+	if not ok then
+		return true
+	end
+	return near
 end
 
 local function UnitHasMana(unit)
@@ -1180,16 +1199,17 @@ function Refresh()
 				ShowGlow(button, (previewing or not entry.expiring) and "missing" or "expiring")
 				local names = {}
 				local castUnit = missing[1]
+				local castSpell = entry.fix and entry.fix.kind == "cast" and entry.fix.value or nil
+				local firstNear
 				for i, unit in ipairs(missing) do
-					if UnitNear(unit) then
+					if UnitNear(unit, castSpell) then
 						names[i] = ShortName(unit)
-						if castUnit == missing[1] and not UnitNear(castUnit) then
-							castUnit = unit
-						end
+						firstNear = firstNear or unit
 					else
 						names[i] = ShortName(unit) .. " |cff808080(far)|r"
 					end
 				end
+				castUnit = firstNear or castUnit
 				button.missingText = (entry.fix and entry.fix.list) or table.concat(names, ", ")
 				button.applyText = nil
 				button.nextText = nil
@@ -1653,13 +1673,16 @@ SlashCmdList.BUFFNAG = function(msg)
 					end
 					return n
 				end)
-				Print("  %s (%s): usable %s, near %s, buffs readable %s (%s)", unit, ShortName(unit), tostring(UnitUsable(unit)),
-					tostring(UnitNear(unit)), tostring(okAura), okAura and tostring(auraCount) or tostring(auraCount))
+				local okRange, inRange, checked = pcall(UnitInRange, unit)
+				Print("  %s (%s): usable %s, UnitInRange %s/%s, buffs readable %s (%s)", unit, ShortName(unit), tostring(UnitUsable(unit)),
+					okRange and tostring(inRange) or "error", okRange and tostring(checked) or tostring(inRange), tostring(okAura), tostring(auraCount))
 				for _, key in ipairs(catalogOrder) do
 					local entry, choice = catalog[key], cdb.nag[key]
 					if choice and choice.party and entry.kind == "aura" then
 						local has, present = UnitHas(unit, entry.auraNames, true)
-						Print("    %s: %s", entry.name, has == nil and "unreadable" or has and "ok" or present and "running out" or "missing")
+						local spell = entry.castNames[1]
+						Print("    %s: %s, %s", entry.name, has == nil and "unreadable" or has and "ok" or present and "running out" or "missing",
+							UnitNear(unit, spell) and "in range" or "far")
 					end
 				end
 			end
