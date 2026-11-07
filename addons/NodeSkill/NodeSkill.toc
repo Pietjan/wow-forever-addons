@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: NodeSkill
+## Notes: Colours a herb or ore node's name on the minimap tooltip red when your skill is too low to gather it.
+## Author: Pietjan
+## Version: 1.0
+## SavedVariables: NodeSkillDB
+
+NodeSkill.lua
