@@ -488,14 +488,6 @@ local function SeedChoices()
 	end
 end
 
-local function CastName(entry)
-	for _, name in ipairs(entry.castNames) do
-		if knownSpells[name] then
-			return name
-		end
-	end
-	return entry.castNames[1]
-end
 
 ------------------------------------------------------------------------------
 -- Looking at units
@@ -645,99 +637,115 @@ end
 -- What could go on the weapon in a slot: a known imbue spell (main hand
 -- only), or an item in the bags that fits the weapon's type. Nothing to
 -- apply means nothing to nag about.
-local function WeaponFix(slot)
+local function WeaponCandidates(slot)
+	local list = {}
 	if slot == MAIN_HAND then
 		for _, id in ipairs(IMBUES) do
 			local name = SpellName(id)
 			if name and knownSpells[name] then
-				return "spell", name, SpellIcon(id), name
+				list[#list + 1] = { kind = "spell", value = name, icon = SpellIcon(id), text = name, slot = slot }
 			end
 		end
 	end
 	local itemID = GetInventoryItemID("player", slot)
 	if not itemID or IsSecret(itemID) then
-		return nil
+		return list
 	end
 	local getInfo = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
 	local _, _, _, _, _, _, subclassID = getInfo(itemID)
 	if not subclassID or IsSecret(subclassID) then
-		return nil
-	end
-	local numSlots = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
-	local itemAt = (C_Container and C_Container.GetContainerItemID) or GetContainerItemID
-	if not (numSlots and itemAt) then
-		return nil
+		return list
 	end
 	local bitOf = bit.lshift(1, subclassID)
-	for bag = 0, NUM_BAGS do
-		for bagSlot = 1, numSlots(bag) or 0 do
-			local bagItem = itemAt(bag, bagSlot)
-			local mask = bagItem and not IsSecret(bagItem) and WEAPON_ITEMS[bagItem]
-			if mask and (mask == 0 or bit.band(mask, bitOf) ~= 0) then
-				local icon, name = ItemLook(bagItem)
-				return "item", bagItem, icon, name
-			end
+	local seen = {}
+	EachBagItem(function(bagItem)
+		local mask = WEAPON_ITEMS[bagItem]
+		if mask and not seen[bagItem] and (mask == 0 or bit.band(mask, bitOf) ~= 0) then
+			seen[bagItem] = true
+			local icon, name = ItemLook(bagItem)
+			list[#list + 1] = { kind = "item", value = bagItem, icon = icon, text = name, slot = slot }
 		end
-	end
-	return nil
+	end)
+	return list
 end
 
 -- Well Fed missing, not eating, and food that gives it in the bags.
-local function FoodFix(entry)
+local function FoodCandidates(entry)
+	local list = {}
 	if UnitHas("player", entry.auraNames, db.soon) ~= false or UnitHas("player", entry.unlessNames, 0) ~= false then
-		return nil
+		return list
 	end
-	local fix
+	local seen = {}
 	EachBagItem(function(itemID)
-		if FOODS[itemID] then
+		if FOODS[itemID] and not seen[itemID] then
+			seen[itemID] = true
 			local icon, name = ItemLook(itemID)
-			fix = { kind = "item", value = itemID, icon = icon, text = name, count = 1, list = name, eat = true }
-			return true
+			list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name, eat = true }
 		end
 	end)
-	return fix
+	return list
 end
 
 -- No flask up (or nearly out) and one in the bags: the fix to drink.
-local function FlaskFix()
+local function FlaskCandidates()
+	local list = {}
 	if UnitHas("player", FLASK_NAMES, db.soon) ~= false then
-		return nil
+		return list
 	end
-	local fix
+	local seen = {}
 	EachBagItem(function(itemID)
-		if FLASKS[itemID] then
+		if FLASKS[itemID] and not seen[itemID] then
+			seen[itemID] = true
 			local icon, name = ItemLook(itemID)
-			fix = { kind = "item", value = itemID, icon = icon, text = name, count = 1, list = name }
-			return true
+			list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name }
 		end
 	end)
-	return fix
+	return list
 end
 
 -- Elixir families in the bags whose buff is not up: the first to drink,
 -- and how many there are.
-local function ElixirFix()
-	local families, order = {}, {}
+local function ElixirCandidates()
+	local list, families = {}, {}
 	EachBagItem(function(itemID)
 		local elixir = ELIXIRS[itemID]
 		if elixir and not families[elixir[2]] then
 			local names = ELIXIR_FAMILY_NAMES[elixir[2]]
 			if names and UnitHas("player", names, db.soon) == false then
-				families[elixir[2]] = itemID
-				order[#order + 1] = elixir[2]
+				families[elixir[2]] = true
+				local icon, name = ItemLook(itemID)
+				list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name }
 			end
 		end
 	end)
-	if #order == 0 then
-		return nil
+	return list
+end
+
+-- The candidate to act on: the one the player picked for this entry by
+-- right-clicking, when it is at hand, otherwise the first.
+local function Pick(entry, list)
+	entry.candidates = list
+	if #list == 0 then
+		return nil, 0
 	end
-	local labels = {}
-	for i, family in ipairs(order) do
-		local _, name = ItemLook(families[family])
-		labels[i] = name
+	local want = cdb.prefer[entry.key]
+	for i, candidate in ipairs(list) do
+		if candidate.value == want then
+			return candidate, i
+		end
 	end
-	local icon, name = ItemLook(families[order[1]])
-	return { kind = "item", value = families[order[1]], icon = icon, text = name, count = #order, list = table.concat(labels, ", ") }
+	return list[1], 1
+end
+
+-- Right-click: the next candidate becomes the preferred one.
+local function CycleCandidate(entry)
+	local list = entry.candidates
+	if not list or #list < 2 then
+		return
+	end
+	local index = entry.fixIndex or 1
+	local nextCandidate = list[index % #list + 1]
+	cdb.prefer[entry.key] = nextCandidate.value
 end
 
 -- Moments when buffs are nobody's concern.
@@ -841,6 +849,8 @@ end
 bar:SetScript("OnDragStart", OnDragStart)
 bar:SetScript("OnDragStop", OnDragStop)
 
+local Refresh -- defined below; the icons' right-click needs it
+
 local function IconTooltip(button)
 	if not button.entry then
 		return
@@ -853,6 +863,9 @@ local function IconTooltip(button)
 	if button.applyText then
 		GameTooltip:AddLine(button.applyText, 0.6, 0.6, 0.6)
 	end
+	if button.nextText then
+		GameTooltip:AddLine(button.nextText, 0.6, 0.6, 0.6, true)
+	end
 	GameTooltip:Show()
 end
 
@@ -864,6 +877,18 @@ local function BarIcon(i)
 	StyleIcon(button)
 	button:SetPoint("LEFT", bar, "LEFT", (i - 1) * (ICON + GAP), 0)
 	button:RegisterForClicks("AnyDown", "AnyUp")
+	-- The right button does nothing secure; it picks the next candidate.
+	button:SetAttribute("type2", "none")
+	button:SetScript("PostClick", function(self, mouseButton, down)
+		if mouseButton == "RightButton" and not down and self.entry and not InCombatLockdown() then
+			CycleCandidate(self.entry)
+			PlaySound(SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or 856)
+			Refresh()
+			if GameTooltip:GetOwner() == self then
+				IconTooltip(self)
+			end
+		end
+	end)
 	button:RegisterForDrag("LeftButton")
 	button:SetScript("OnDragStart", OnDragStart)
 	button:SetScript("OnDragStop", OnDragStop)
@@ -883,33 +908,43 @@ end
 -- The units lacking an entry's buff.
 local function Missing(entry, choice)
 	local missing = {}
-	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "food" then
-		-- (not "a and f() or g()": a fix function returning nil would fall
-		-- through to the next one)
+	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "food" or entry.kind == "weapon" or entry.kind == "offhand" then
+		local list
 		if entry.kind == "flask" then
-			entry.fix = FlaskFix()
+			list = FlaskCandidates()
 		elseif entry.kind == "elixir" then
-			entry.fix = ElixirFix()
+			list = ElixirCandidates()
+		elseif entry.kind == "food" then
+			list = FoodCandidates(entry)
 		else
-			entry.fix = FoodFix(entry)
+			local slot = entry.kind == "weapon" and MAIN_HAND or OFF_HAND
+			list = WeaponMissing(slot) and WeaponCandidates(slot) or {}
 		end
+		entry.fix, entry.fixIndex = Pick(entry, list)
 		if entry.fix then
+			if entry.kind == "elixir" then
+				-- Every missing family counts, not just the one to drink first.
+				local labels = {}
+				for i, candidate in ipairs(list) do
+					labels[i] = candidate.text
+				end
+				entry.fix.count, entry.fix.list = #list, table.concat(labels, ", ")
+			else
+				entry.fix.count, entry.fix.list = 1, entry.fix.text
+			end
 			missing[1] = "player"
 		end
 		return missing
 	end
-	if entry.kind == "weapon" or entry.kind == "offhand" then
-		local slot = entry.kind == "weapon" and MAIN_HAND or OFF_HAND
-		entry.fix = nil
-		if WeaponMissing(slot) then
-			local kind, value, icon, text = WeaponFix(slot)
-			if kind then
-				entry.fix = { kind = kind, value = value, icon = icon, text = text, slot = slot }
-				missing[1] = "player"
-			end
+	-- A buff cast by spell: which spell, when there is a choice (Aspects,
+	-- armours, Blessings).
+	local list = {}
+	for _, name in ipairs(entry.castNames) do
+		if knownSpells[name] or (entry.game and #list == 0) then
+			list[#list + 1] = { kind = "cast", value = name, icon = SpellIcon(name), text = name }
 		end
-		return missing
 	end
+	entry.fix, entry.fixIndex = Pick(entry, list)
 	local inRaid = IsInRaid and IsInRaid()
 	local units = (choice.party and db.party and not inRaid) and PARTY_UNITS or { "player" }
 	for _, unit in ipairs(units) do
@@ -923,7 +958,7 @@ local function Missing(entry, choice)
 	return missing
 end
 
-local function Refresh()
+function Refresh()
 	refreshPending = false
 	if InCombatLockdown() then
 		return
@@ -942,7 +977,8 @@ local function Refresh()
 				count = count + 1
 				local button = BarIcon(count)
 				button.entry = entry
-				button.Icon:SetTexture((entry.fix and entry.fix.icon) or entry.icon or QUESTION_MARK)
+				local manyChoices = entry.candidates and #entry.candidates > 1
+				button.Icon:SetTexture((entry.fix and (manyChoices or entry.fix.kind ~= "cast") and entry.fix.icon) or entry.icon or QUESTION_MARK)
 				local shown = (entry.fix and entry.fix.count) or #missing
 				button.Count:SetText(shown > 1 and tostring(shown) or "")
 				button.Party:SetShown(choice.party and true or false)
@@ -951,8 +987,12 @@ local function Refresh()
 					names[i] = ShortName(unit)
 				end
 				button.missingText = (entry.fix and entry.fix.list) or table.concat(names, ", ")
-				local spell = CastName(entry)
 				button.applyText = nil
+				button.nextText = nil
+				if manyChoices then
+					local nextCandidate = entry.candidates[(entry.fixIndex or 1) % #entry.candidates + 1]
+					button.nextText = ("Right-click for the next of %d: %s."):format(#entry.candidates, nextCandidate.text)
+				end
 				if entry.fix and entry.fix.kind == "spell" then
 					button:SetAttribute("type", "spell")
 					button:SetAttribute("spell", entry.fix.value)
@@ -967,11 +1007,11 @@ local function Refresh()
 						button:SetAttribute("macrotext", ("/use item:%d"):format(entry.fix.value))
 						button.applyText = (entry.fix.eat and "Click to eat " or "Click to drink ") .. entry.fix.text .. "."
 					end
-				elseif spell then
+				elseif entry.fix and entry.fix.kind == "cast" then
 					button:SetAttribute("type", "spell")
-					button:SetAttribute("spell", spell)
+					button:SetAttribute("spell", entry.fix.value)
 					button:SetAttribute("unit", missing[1])
-					button.applyText = "Click to cast on the first one."
+					button.applyText = ("Click to cast %s on the first one."):format(entry.fix.text)
 				else
 					button:SetAttribute("type", nil)
 				end
@@ -1399,6 +1439,7 @@ loader:SetScript("OnEvent", function(self, event, arg)
 			BuffNagCharDB = BuffNagCharDB or {}
 			cdb = BuffNagCharDB
 			cdb.nag = cdb.nag or {}
+			cdb.prefer = cdb.prefer or {} -- entry key -> item or spell picked by right-click
 		elseif arg == "Blizzard_CooldownViewer" and db then
 			HookSettings()
 		end
