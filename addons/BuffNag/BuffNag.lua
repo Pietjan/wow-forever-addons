@@ -228,7 +228,20 @@ local function BuildCatalog()
 		end
 	end
 
-	-- Buffs the Cooldown Manager can track for the class: buffs on you.
+	-- Buffs the Cooldown Manager can track for the class: buffs on you. The
+	-- same lists hold the debuffs you put on targets; those are left out.
+	local function IsBuffOnSelf(info)
+		if info.selfAura then
+			return true
+		end
+		local ok, helpful = pcall(function()
+			if C_Spell and C_Spell.IsSpellHarmful and C_Spell.IsSpellHarmful(info.spellID) then
+				return false
+			end
+			return C_Spell and C_Spell.IsSpellHelpful and C_Spell.IsSpellHelpful(info.spellID)
+		end)
+		return ok and helpful or false
+	end
 	if C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet and Enum.CooldownViewerCategory then
 		local categories = Enum.CooldownViewerCategory
 		for _, category in ipairs({ categories.TrackedBuff, categories.TrackedBar, categories.SpecAgnosticTracked, categories.EquipSlotTracked }) do
@@ -237,7 +250,7 @@ local function BuildCatalog()
 				if ok and type(ids) == "table" then
 					for _, cooldownID in ipairs(ids) do
 						local okInfo, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cooldownID)
-						if okInfo and info and info.isKnown and info.hasAura and not info.isInvisible and info.spellID then
+						if okInfo and info and info.isKnown and info.hasAura and not info.isInvisible and info.spellID and IsBuffOnSelf(info) then
 							local entry = SpellEntry(info.spellID, false, "cdm")
 							if entry then
 								for _, linked in ipairs(info.linkedSpellIDs or {}) do
