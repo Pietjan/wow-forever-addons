@@ -6,8 +6,9 @@
 -- It is configured from its own tab in the Cooldown Manager's settings
 -- window (Escape > Options > Cooldown Manager, or /bn): the buffs on offer
 -- are the ones the game lists for your class there, the group buffs it
--- knows, a food buff and weapon enchants. Buffs are matched by name, so
--- any rank counts. The bar hides in combat, while resting, mounted, on a
+-- knows, a food buff and weapon enchants (shown only when a stone, oil,
+-- poison or imbue spell is at hand to put on). Buffs are matched by name,
+-- so any rank counts. The bar hides in combat, while resting, mounted, on a
 -- flight path or dead.
 
 local ADDON_NAME = ...
@@ -58,6 +59,37 @@ local SEEDS = {
 }
 
 local WELL_FED, FOOD = 19705, 433
+
+-- Shaman weapon imbues, in order of preference: a shaman who knows one
+-- needs nothing from the bags for the main hand.
+local IMBUES = { 8232, 8024, 8033, 8017 } -- Windfury, Flametongue, Frostbrand, Rockbiter
+
+-- Items that put a temporary enchant on a weapon, from the game's data,
+-- with the weapon subclasses each fits as a bit mask (0: any weapon).
+local WEAPON_ITEMS = {
+	-- sharpening stones: axes, swords, daggers, polearms
+	[2862] = 33219, [287978] = 33219, [2863] = 33219, [2871] = 33219, [7964] = 33219, [12404] = 33219,
+	[18262] = 42483, [287980] = 42483, [211845] = 42483, -- elemental and Blackfathom: also blunt
+	[23122] = 1097203, -- Consecrated Sharpening Stone
+	-- weightstones: maces, staves, fist weapons
+	[3239] = 9264, [3240] = 9264, [3241] = 9264, [7965] = 9264, [12643] = 9264,
+	-- oils: any weapon
+	[20744] = 0, [20745] = 0, [20746] = 0, [287979] = 0, [20747] = 0, [20748] = 0, [20749] = 0, [20750] = 0, [23123] = 0,
+	[3824] = 173555, [3829] = 173555, -- Shadow Oil, Frost Oil
+	-- warlock stones
+	[1254] = 0, [13699] = 0, [13700] = 0, [13701] = 0, [5522] = 0, [13602] = 0, [13603] = 0,
+	-- poisons
+	[6947] = 173555, [6949] = 173555, [6950] = 173555, [8926] = 173555, [8927] = 173555, [8928] = 173555, [5654] = 173555,
+	[2892] = 173555, [2893] = 173555, [8984] = 173555, [8985] = 173555, [20844] = 173555,
+	[3775] = 173555, [3776] = 173555, [5237] = 173555, [6951] = 173555, [9186] = 173555,
+	[10918] = 173555, [10920] = 173555, [10921] = 173555, [10922] = 173555,
+	[217345] = 173555, [217346] = 173555, [217347] = 173555, [226374] = 173555, [234444] = 173555,
+	-- scrolls of imbue: staves (1024), daggers (32768), swords (128)
+	[277494] = 1024, [277487] = 1024, [277496] = 1024, [277497] = 1024, [277485] = 1024, [277500] = 1024, [277501] = 1024,
+	[274947] = 1024, [277502] = 1024, [277495] = 1024, [277503] = 1024, [277486] = 1024,
+	[275067] = 32768, [277488] = 32768, [277498] = 32768, [277489] = 128,
+}
+local NUM_BAGS = NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4
 local PARTY_UNITS = { "player", "party1", "party2", "party3", "party4" }
 local MAIN_HAND, OFF_HAND = INVSLOT_MAINHAND or 16, INVSLOT_OFFHAND or 17
 local WEAPON = (Enum.ItemClass and Enum.ItemClass.Weapon) or 2
@@ -449,6 +481,51 @@ local function WeaponMissing(slot)
 	return expires ~= nil and expires > 0 and expires / 1000 <= db.soon
 end
 
+-- What could go on the weapon in a slot: a known imbue spell (main hand
+-- only), or an item in the bags that fits the weapon's type. Nothing to
+-- apply means nothing to nag about.
+local function WeaponFix(slot)
+	if slot == MAIN_HAND then
+		for _, id in ipairs(IMBUES) do
+			local name = SpellName(id)
+			if name and knownSpells[name] then
+				return "spell", name, SpellIcon(id), name
+			end
+		end
+	end
+	local itemID = GetInventoryItemID("player", slot)
+	if not itemID or IsSecret(itemID) then
+		return nil
+	end
+	local getInfo = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+	local _, _, _, _, _, _, subclassID = getInfo(itemID)
+	if not subclassID or IsSecret(subclassID) then
+		return nil
+	end
+	local numSlots = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
+	local itemAt = (C_Container and C_Container.GetContainerItemID) or GetContainerItemID
+	if not (numSlots and itemAt) then
+		return nil
+	end
+	local bitOf = bit.lshift(1, subclassID)
+	for bag = 0, NUM_BAGS do
+		for bagSlot = 1, numSlots(bag) or 0 do
+			local bagItem = itemAt(bag, bagSlot)
+			local mask = bagItem and not IsSecret(bagItem) and WEAPON_ITEMS[bagItem]
+			if mask and (mask == 0 or bit.band(mask, bitOf) ~= 0) then
+				local okIcon, icon = pcall(function()
+					return C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(bagItem)
+				end)
+				local okName, name = pcall(function()
+					return C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(bagItem) or GetItemInfo and GetItemInfo(bagItem)
+				end)
+				return "item", bagItem, okIcon and icon or nil, okName and name or ("item " .. bagItem)
+			end
+		end
+	end
+	return nil
+end
+
 -- Moments when buffs are nobody's concern.
 local function Idle()
 	local ok, idle = pcall(function()
@@ -559,8 +636,8 @@ local function IconTooltip(button)
 	if button.missingText then
 		GameTooltip:AddLine("Missing: " .. button.missingText, 1, 1, 1, true)
 	end
-	if button.castName then
-		GameTooltip:AddLine("Click to cast on the first one.", 0.6, 0.6, 0.6)
+	if button.applyText then
+		GameTooltip:AddLine(button.applyText, 0.6, 0.6, 0.6)
 	end
 	GameTooltip:Show()
 end
@@ -593,8 +670,14 @@ end
 local function Missing(entry, choice)
 	local missing = {}
 	if entry.kind == "weapon" or entry.kind == "offhand" then
-		if WeaponMissing(entry.kind == "weapon" and MAIN_HAND or OFF_HAND) then
-			missing[1] = "player"
+		local slot = entry.kind == "weapon" and MAIN_HAND or OFF_HAND
+		entry.fix = nil
+		if WeaponMissing(slot) then
+			local kind, value, icon, text = WeaponFix(slot)
+			if kind then
+				entry.fix = { kind = kind, value = value, icon = icon, text = text, slot = slot }
+				missing[1] = "player"
+			end
 		end
 		return missing
 	end
@@ -630,7 +713,7 @@ local function Refresh()
 				count = count + 1
 				local button = BarIcon(count)
 				button.entry = entry
-				button.Icon:SetTexture(entry.icon or QUESTION_MARK)
+				button.Icon:SetTexture((entry.fix and entry.fix.icon) or entry.icon or QUESTION_MARK)
 				button.Count:SetText(#missing > 1 and tostring(#missing) or "")
 				button.Party:SetShown(choice.party and true or false)
 				local names = {}
@@ -639,11 +722,21 @@ local function Refresh()
 				end
 				button.missingText = table.concat(names, ", ")
 				local spell = CastName(entry)
-				button.castName = spell
-				if spell then
+				button.applyText = nil
+				if entry.fix and entry.fix.kind == "spell" then
+					button:SetAttribute("type", "spell")
+					button:SetAttribute("spell", entry.fix.value)
+					button:SetAttribute("unit", "player")
+					button.applyText = "Click to cast " .. entry.fix.text .. "."
+				elseif entry.fix and entry.fix.kind == "item" then
+					button:SetAttribute("type", "macro")
+					button:SetAttribute("macrotext", ("/use item:%d\n/use %d"):format(entry.fix.value, entry.fix.slot))
+					button.applyText = "Click to apply " .. entry.fix.text .. "."
+				elseif spell then
 					button:SetAttribute("type", "spell")
 					button:SetAttribute("spell", spell)
 					button:SetAttribute("unit", missing[1])
+					button.applyText = "Click to cast on the first one."
 				else
 					button:SetAttribute("type", nil)
 				end
@@ -1023,6 +1116,7 @@ loader:RegisterEvent("PLAYER_UNGHOST")
 loader:RegisterEvent("PLAYER_UPDATE_RESTING")
 loader:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
 loader:RegisterEvent("PLAYER_CONTROL_GAINED")
+loader:RegisterEvent("BAG_UPDATE_DELAYED")
 pcall(loader.RegisterEvent, loader, "COOLDOWN_VIEWER_DATA_LOADED")
 loader:RegisterUnitEvent("UNIT_AURA", "player", "party1", "party2", "party3", "party4")
 loader:SetScript("OnEvent", function(self, event, arg)
