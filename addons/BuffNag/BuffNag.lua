@@ -27,6 +27,7 @@ local DEFAULTS = { -- account wide: the bar and the sound
 	pingGap = 0.4, -- seconds between pings
 	scale = 1,
 	locked = false,
+	glow = true, -- pulsing glow around the bar's icons
 	point = { "CENTER", 0, 200 },
 }
 
@@ -801,12 +802,24 @@ end
 -- Icons in the Cooldown Manager's style
 ------------------------------------------------------------------------------
 
+local function HasAtlas(name)
+	local ok, info = pcall(function()
+		return C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name)
+	end)
+	return ok and info ~= nil
+end
+
+-- Icon art differs: some icons carry a dark frame of their own, others
+-- none. Every icon is cropped the same way and gets the same border: the
+-- Cooldown Manager's mask and overlay where the client has them, a plain
+-- dark edge otherwise.
 local function StyleIcon(button)
 	button:SetSize(ICON, ICON)
 	local icon = button:CreateTexture(nil, "ARTWORK")
 	icon:SetAllPoints()
+	icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 	button.Icon = icon
-	pcall(function()
+	if HasAtlas("UI-HUD-CoolDownManager-Mask") and HasAtlas("UI-HUD-CoolDownManager-IconOverlay") then
 		local mask = button:CreateMaskTexture()
 		mask:SetAtlas("UI-HUD-CoolDownManager-Mask")
 		mask:SetAllPoints()
@@ -815,7 +828,12 @@ local function StyleIcon(button)
 		overlay:SetAtlas("UI-HUD-CoolDownManager-IconOverlay")
 		overlay:SetPoint("TOPLEFT", -8, 7)
 		overlay:SetPoint("BOTTOMRIGHT", 8, -7)
-	end)
+	else
+		local edge = button:CreateTexture(nil, "BACKGROUND")
+		edge:SetColorTexture(0, 0, 0, 0.9)
+		edge:SetPoint("TOPLEFT", -1.5, 1.5)
+		edge:SetPoint("BOTTOMRIGHT", 1.5, -1.5)
+	end
 	local count = button:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
 	count:SetPoint("BOTTOMRIGHT", -2, 2)
 	button.Count = count
@@ -827,6 +845,39 @@ local function StyleIcon(button)
 	end
 	party:Hide()
 	button.Party = party
+end
+
+-- A soft pulsing glow around a bar icon, to catch the eye.
+local function AddGlow(button)
+	local glow = button:CreateTexture(nil, "OVERLAY", nil, -1)
+	glow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+	glow:SetBlendMode("ADD")
+	glow:SetVertexColor(1, 0.85, 0.3, 1)
+	glow:SetPoint("CENTER")
+	glow:SetSize(ICON * 1.75, ICON * 1.75)
+	glow:Hide()
+	local pulse = glow:CreateAnimationGroup()
+	pulse:SetLooping("BOUNCE")
+	local fade = pulse:CreateAnimation("Alpha")
+	fade:SetFromAlpha(1)
+	fade:SetToAlpha(0.25)
+	fade:SetDuration(0.8)
+	fade:SetSmoothing("IN_OUT")
+	button.Glow, button.GlowPulse = glow, pulse
+end
+
+local function ShowGlow(button, shown)
+	if not button.Glow then
+		return
+	end
+	button.Glow:SetShown(shown)
+	if shown then
+		if not button.GlowPulse:IsPlaying() then
+			button.GlowPulse:Play()
+		end
+	else
+		button.GlowPulse:Stop()
+	end
 end
 
 ------------------------------------------------------------------------------
@@ -892,6 +943,7 @@ local function BarIcon(i)
 	end
 	local button = CreateFrame("Button", "BuffNagIcon" .. i, bar, "SecureActionButtonTemplate")
 	StyleIcon(button)
+	AddGlow(button)
 	button:SetPoint("LEFT", bar, "LEFT", (i - 1) * (ICON + GAP), 0)
 	button:RegisterForClicks("AnyDown", "AnyUp")
 	-- The right button does nothing secure; it picks the next candidate.
@@ -999,6 +1051,7 @@ function Refresh()
 				local shown = (entry.fix and entry.fix.count) or #missing
 				button.Count:SetText(shown > 1 and tostring(shown) or "")
 				button.Party:SetShown(choice.party and true or false)
+				ShowGlow(button, db.glow)
 				local names = {}
 				for i, unit in ipairs(missing) do
 					names[i] = ShortName(unit)
@@ -1134,6 +1187,7 @@ local function BuildPanel(settings)
 	Checkbox("Sound", 0, function() return db.sound end, function(v) db.sound = v end)
 	Checkbox("Party", 80, function() return db.party end, function(v) db.party = v end)
 	Checkbox("Lock bar", 160, function() return db.locked end, function(v) db.locked = v end)
+	Checkbox("Glow", 250, function() return db.glow end, function(v) db.glow = v end)
 	local test = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 	test:SetSize(70, 22)
 	test:SetPoint("TOPRIGHT", 0, -1)
@@ -1378,6 +1432,8 @@ SlashCmdList.BUFFNAG = function(msg)
 		db.locked = word == "lock"
 	elseif word == "party" then
 		db.party = rest ~= "off"
+	elseif word == "glow" then
+		db.glow = rest ~= "off"
 	elseif word == "sound" then
 		db.sound = rest ~= "off"
 		if not db.sound then
@@ -1408,7 +1464,7 @@ SlashCmdList.BUFFNAG = function(msg)
 		end
 		return
 	else
-		Print("/bn opens the settings; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn gap <seconds>; /bn soon <max seconds>; /bn soonmin <seconds>; /bn soonshare <percent>; /bn scale <n>; /bn test; /bn reset")
+		Print("/bn opens the settings; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn glow on|off; /bn gap <seconds>; /bn soon <max seconds>; /bn soonmin <seconds>; /bn soonshare <percent>; /bn scale <n>; /bn test; /bn reset")
 		return
 	end
 	if InCombatLockdown() then
