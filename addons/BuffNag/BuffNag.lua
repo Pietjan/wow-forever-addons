@@ -17,7 +17,12 @@ local IsSecret = issecretvalue or function() return false end
 
 local DEFAULTS = { -- account wide: the bar and the sound
 	party = true, -- also look at party members, for buffs marked for the party
-	soon = 30, -- seconds left at which a buff counts as missing
+	-- A buff counts as running out at this share of its duration left,
+	-- but never more than soonMax seconds before the end nor less than
+	-- soonMin; buffs of unknown duration use soonMax.
+	soonShare = 0.1,
+	soonMax = 120,
+	soonMin = 30,
 	sound = true, -- ping while something is missing
 	pingGap = 0.4, -- seconds between pings
 	scale = 1,
@@ -493,8 +498,18 @@ end
 -- Looking at units
 ------------------------------------------------------------------------------
 
+-- Seconds before the end at which a buff of this duration counts as
+-- running out.
+local function SoonFor(duration)
+	if not duration or duration <= 0 then
+		return db.soonMax
+	end
+	return math.max(db.soonMin, math.min(db.soonMax, duration * db.soonShare))
+end
+
 -- Whether a unit has one of the named buffs with enough time left; nil when
--- the game would not let us look.
+-- the game would not let us look. "soon" true applies the running-out
+-- margin; false or 0 accepts any time left.
 local function UnitHas(unit, names, soon)
 	if not next(names) then
 		return false
@@ -510,7 +525,8 @@ local function UnitHas(unit, names, soon)
 				end
 				if names[aura.name] then
 					local left = aura.expirationTime and aura.expirationTime > 0 and (aura.expirationTime - now) or math.huge
-					if left > soon then
+					local margin = (soon and soon ~= 0) and SoonFor(aura.duration) or 0
+					if left > margin then
 						found = true
 						return
 					end
@@ -518,13 +534,14 @@ local function UnitHas(unit, names, soon)
 			end
 		else
 			for i = 1, 80 do
-				local name, _, _, _, _, expirationTime = UnitBuff(unit, i, "HELPFUL")
+				local name, _, _, _, duration, expirationTime = UnitBuff(unit, i, "HELPFUL")
 				if not name then
 					break
 				end
 				if names[name] then
 					local left = expirationTime and expirationTime > 0 and (expirationTime - now) or math.huge
-					if left > soon then
+					local margin = (soon and soon ~= 0) and SoonFor(duration) or 0
+					if left > margin then
 						found = true
 						return
 					end
@@ -604,7 +621,7 @@ local function WeaponMissing(slot)
 	if not has then
 		return true
 	end
-	return expires ~= nil and expires > 0 and expires / 1000 <= db.soon
+	return expires ~= nil and expires > 0 and expires / 1000 <= db.soonMax
 end
 
 local function ItemLook(itemID)
@@ -672,7 +689,7 @@ end
 -- Well Fed missing, not eating, and food that gives it in the bags.
 local function FoodCandidates(entry)
 	local list = {}
-	if UnitHas("player", entry.auraNames, db.soon) ~= false or UnitHas("player", entry.unlessNames, 0) ~= false then
+	if UnitHas("player", entry.auraNames, true) ~= false or UnitHas("player", entry.unlessNames, 0) ~= false then
 		return list
 	end
 	local seen = {}
@@ -689,7 +706,7 @@ end
 -- No flask up (or nearly out) and one in the bags: the fix to drink.
 local function FlaskCandidates()
 	local list = {}
-	if UnitHas("player", FLASK_NAMES, db.soon) ~= false then
+	if UnitHas("player", FLASK_NAMES, true) ~= false then
 		return list
 	end
 	local seen = {}
@@ -711,7 +728,7 @@ local function ElixirCandidates()
 		local elixir = ELIXIRS[itemID]
 		if elixir and not families[elixir[2]] then
 			local names = ELIXIR_FAMILY_NAMES[elixir[2]]
-			if names and UnitHas("player", names, db.soon) == false then
+			if names and UnitHas("player", names, true) == false then
 				families[elixir[2]] = true
 				local icon, name = ItemLook(itemID)
 				list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name }
@@ -949,7 +966,7 @@ local function Missing(entry, choice)
 	local units = (choice.party and db.party and not inRaid) and PARTY_UNITS or { "player" }
 	for _, unit in ipairs(units) do
 		if UnitUsable(unit) and (not entry.mana or UnitHasMana(unit)) then
-			local has = UnitHas(unit, entry.auraNames, db.soon)
+			local has = UnitHas(unit, entry.auraNames, true)
 			if has == false and not UnitHas(unit, entry.unlessNames, 0) then
 				missing[#missing + 1] = unit
 			end
@@ -1292,8 +1309,17 @@ local function HookSettings()
 		settingsTab:SetPoint("TOPLEFT", settings, "TOPRIGHT", 0, -200)
 	end
 	settingsTab.Icon:SetSize(34, 34)
-	settingsTab.Icon:SetTexture(SpellIcon(1243))
-	settingsTab.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+	local _, class = UnitClass("player")
+	local atlas = class and ("classicon-" .. class:lower())
+	if atlas and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas) then
+		settingsTab.Icon:SetAtlas(atlas)
+	elseif class and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[class] then
+		settingsTab.Icon:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
+		settingsTab.Icon:SetTexCoord(unpack(CLASS_ICON_TCOORDS[class]))
+	else
+		settingsTab.Icon:SetTexture(SpellIcon(1243))
+		settingsTab.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+	end
 	settingsTab:SetChecked(false)
 	if settingsTab.SetCustomOnMouseUpHandler then
 		settingsTab:SetCustomOnMouseUpHandler(function(_, button, upInside)
@@ -1360,7 +1386,11 @@ SlashCmdList.BUFFNAG = function(msg)
 	elseif word == "gap" then
 		db.pingGap = math.max(0.1, math.min(10, tonumber(rest) or 0.4))
 	elseif word == "soon" then
-		db.soon = math.max(0, math.min(600, tonumber(rest) or 30))
+		db.soonMax = math.max(0, math.min(1800, tonumber(rest) or 120))
+	elseif word == "soonmin" then
+		db.soonMin = math.max(0, math.min(db.soonMax, tonumber(rest) or 30))
+	elseif word == "soonshare" then
+		db.soonShare = math.max(0, math.min(1, (tonumber(rest) or 10) / 100))
 	elseif word == "scale" then
 		db.scale = math.max(0.5, math.min(3, tonumber(rest) or 1))
 	elseif word == "reset" then
@@ -1378,7 +1408,7 @@ SlashCmdList.BUFFNAG = function(msg)
 		end
 		return
 	else
-		Print("/bn opens the settings; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn gap <seconds>; /bn soon <seconds>; /bn scale <n>; /bn test; /bn reset")
+		Print("/bn opens the settings; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn gap <seconds>; /bn soon <max seconds>; /bn soonmin <seconds>; /bn soonshare <percent>; /bn scale <n>; /bn test; /bn reset")
 		return
 	end
 	if InCombatLockdown() then
@@ -1431,6 +1461,7 @@ loader:SetScript("OnEvent", function(self, event, arg)
 			if type(db.sound) == "number" then
 				db.sound = db.sound > 0
 			end
+			db.soon = nil -- replaced by soonShare/soonMax/soonMin
 			for key, value in pairs(DEFAULTS) do
 				if db[key] == nil then
 					db[key] = type(value) == "table" and CopyTable(value) or value
