@@ -1086,12 +1086,16 @@ function Refresh()
 		return
 	end
 	local count = 0
+	local anyMissing = false -- gone, rather than still up and running out
 	for _, key in ipairs(catalogOrder) do
 		local entry, choice = catalog[key], cdb.nag[key]
 		if choice and count < MAX_ICONS then
 			local missing = previewing and { "player" } or Missing(entry, choice)
 			if #missing > 0 then
 				count = count + 1
+				if not entry.expiring then
+					anyMissing = true
+				end
 				local button = BarIcon(count)
 				button.entry = entry
 				local manyChoices = entry.candidates and #entry.candidates > 1
@@ -1142,7 +1146,8 @@ function Refresh()
 	end
 	bar:SetWidth(math.max(ICON, count * (ICON + GAP) - GAP))
 	bar:SetShown(count > 0)
-	if count > 0 and not previewing and db.sound then
+	-- A buff that is only running out shows, but does not sound.
+	if anyMissing and not previewing and db.sound then
 		StartNag()
 	else
 		StopNag()
@@ -1211,10 +1216,10 @@ local function BuildPanel(settings)
 	panel:Hide()
 
 	-- Options along the top.
-	local function Checkbox(text, x, get, set)
+	local function Checkbox(text, x, y, get, set)
 		local box = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
 		box:SetSize(24, 24)
-		box:SetPoint("TOPLEFT", x, 0)
+		box:SetPoint("TOPLEFT", x, y)
 		local caption = box.Text or box.text
 		if caption then
 			caption:SetText(text)
@@ -1232,10 +1237,11 @@ local function BuildPanel(settings)
 		end)
 		return box
 	end
-	Checkbox("Sound", 0, function() return db.sound end, function(v) db.sound = v end)
-	Checkbox("Party", 80, function() return db.party end, function(v) db.party = v end)
-	Checkbox("Lock bar", 160, function() return db.locked end, function(v) db.locked = v end)
-	Checkbox("Glow", 250, function() return db.glow ~= "off" end, function(v) db.glow = v and "flash" or "off" end)
+	Checkbox("Sound", 0, 0, function() return db.sound end, function(v) db.sound = v end)
+	Checkbox("Party", 90, 0, function() return db.party end, function(v) db.party = v end)
+	Checkbox("Glow", 180, 0, function() return db.glow ~= "off" end, function(v) db.glow = v and "flash" or "off" end)
+	Checkbox("Lock bar", 0, -24, function() return db.locked end, function(v) db.locked = v end)
+	Checkbox("Expiring border", 90, -24, function() return db.expiringGlow end, function(v) db.expiringGlow = v end)
 	local test = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 	test:SetSize(70, 22)
 	test:SetPoint("TOPRIGHT", 0, -1)
@@ -1249,7 +1255,7 @@ local function BuildPanel(settings)
 	end)
 
 	local help = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-	help:SetPoint("TOPLEFT", 4, -28)
+	help:SetPoint("TOPLEFT", 4, -54)
 	help:SetPoint("RIGHT", -4, 0)
 	help:SetJustifyH("LEFT")
 	help:SetText("Click a buff to move it between the lists. Right-click a watched buff to also watch your party for it.")
@@ -1267,7 +1273,7 @@ local function BuildPanel(settings)
 			self:SetVerticalScroll(math.max(0, math.min(range, self:GetVerticalScroll() - delta * 40)))
 		end)
 	end
-	scroll:SetPoint("TOPLEFT", 0, -58)
+	scroll:SetPoint("TOPLEFT", 0, -84)
 	scroll:SetPoint("BOTTOMRIGHT", -16, 0)
 	local content = CreateFrame("Frame", nil, scroll)
 	content:SetSize(300, 1)
