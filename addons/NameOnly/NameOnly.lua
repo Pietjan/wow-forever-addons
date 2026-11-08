@@ -20,11 +20,13 @@
 
 local ADDON_NAME = ...
 
+-- "default" and size 0 mean Blizzard's own nameplate font, size and
+-- outline, so out of the box only the position is the addon's.
 local DEFAULTS = {
-	font = "friz",
-	size = 14,
-	outline = "thin", -- "none", "thin" or "thick"
-	shadow = true,
+	font = "default",
+	size = 0,
+	outline = "default", -- "none", "thin" or "thick"
+	shadow = false,
 	x = 0, -- offset from where Blizzard puts the name
 	y = 0,
 	raidIcon = true, -- keep the raid marker above the name
@@ -36,8 +38,9 @@ local FONTS = {
 	skurri = { "Fonts\\skurri.ttf", "Skurri" },
 	morpheus = { "Fonts\\MORPHEUS.ttf", "Morpheus" },
 }
-local FONT_ORDER = { "friz", "arial", "skurri", "morpheus" }
+local FONT_ORDER = { "default", "friz", "arial", "skurri", "morpheus" }
 local OUTLINES = { none = "", thin = "OUTLINE", thick = "THICKOUTLINE" }
+local VERSION = 2 -- bumped when saved settings need migrating
 
 -- What Blizzard's name-only mode needs switched on. Applied once, on the
 -- first login with the addon, and again on /nameonly setup.
@@ -74,8 +77,25 @@ local function Style(unitFrame)
 	end
 	unitFrame.nameOnlyStyled = true
 
-	local font = FONTS[db.font] or FONTS.friz
-	name:SetFont(font[1], db.size, OUTLINES[db.outline] or OUTLINES.thin)
+	-- Blizzard's font is already on the name when this runs; only replace
+	-- it when a face, size or outline has been chosen. Whatever is not
+	-- chosen is filled in the way Blizzard would: Friz Quadrata, the
+	-- health bar text height, and an outline only for styles that put the
+	-- name inside the bar.
+	local options = NamePlateSetupOptions or {}
+	local styles = NamePlateConstants and NamePlateConstants.NAME_ANCHOR_STYLES or {}
+	if db.font ~= "default" or db.size > 0 or db.outline ~= "default" then
+		local face = FONTS[db.font] and FONTS[db.font][1] or STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
+		local size = db.size > 0 and db.size or options.healthBarFontHeight or 14
+		local flags = OUTLINES[db.outline]
+		if not flags then
+			local style = options.unitNameAnchorStyle
+			local outlined = style == styles.InsideHealthBar or style == styles.CenteredAboveHealthBar
+				or (style == styles.AboveHealthBar and options.useOutlinedFontWhenAboveHealthBar)
+			flags = outlined and "OUTLINE" or ""
+		end
+		name:SetFont(face, size, flags)
+	end
 	if db.shadow then
 		name:SetShadowColor(0, 0, 0, 1)
 		name:SetShadowOffset(1, -1)
@@ -91,9 +111,7 @@ local function Style(unitFrame)
 	-- Forever (GetPoint and friends are refused), so the style is read from
 	-- Blizzard's setup table rather than from the name's current anchors.
 	local container = unitFrame.HealthBarsContainer
-	local styles = NamePlateConstants and NamePlateConstants.NAME_ANCHOR_STYLES
-	local inside = styles and NamePlateSetupOptions
-		and NamePlateSetupOptions.unitNameAnchorStyle == styles.InsideHealthBar
+	local inside = options.unitNameAnchorStyle == styles.InsideHealthBar
 	name:ClearAllPoints()
 	if inside then
 		name:SetPoint("CENTER", container, "CENTER", db.x, db.y)
@@ -161,14 +179,16 @@ end
 -- Slash command ------------------------------------------------------------
 
 local function Status()
-	local font = FONTS[db.font] or FONTS.friz
-	Print(("font %s (%s), size %d, outline %s, shadow %s, offset %d %d, raid marker %s"):format(
-		db.font, font[2], db.size, db.outline, db.shadow and "on" or "off", db.x, db.y, db.raidIcon and "shown" or "hidden"))
+	local font = FONTS[db.font] and (db.font .. " (" .. FONTS[db.font][2] .. ")") or "default"
+	Print(("font %s, size %s, outline %s, shadow %s, offset %d %d, raid marker %s"):format(
+		font, db.size > 0 and tostring(db.size) or "default", db.outline, db.shadow and "on" or "off",
+		db.x, db.y, db.raidIcon and "shown" or "hidden"))
 end
 
 local function Usage()
 	Status()
 	Print("/nameonly size 8-32 | font friz, arial, skurri or morpheus | outline none, thin or thick")
+	Print("Each of those also takes 'default' for Blizzard's own.")
 	Print("/nameonly shadow on|off | x -50..50 | y -50..50 | raidicon on|off | setup | reset")
 	Print("Turn friendly player nameplates themselves on or off under Options > Gameplay > Nameplates.")
 end
@@ -193,19 +213,19 @@ local function Command(msg)
 	cmd = cmd and cmd:lower()
 	arg = arg and arg:lower() or ""
 	if cmd == "size" then
-		local n = Number(arg, 8, 32)
+		local n = arg == "default" and 0 or Number(arg, 8, 32)
 		if not n then
-			return Print("Size is a number from 8 to 32.")
+			return Print("Size is a number from 8 to 32, or default.")
 		end
 		db.size = n
 	elseif cmd == "font" then
-		if not FONTS[arg] then
+		if arg ~= "default" and not FONTS[arg] then
 			return Print("Fonts: " .. table.concat(FONT_ORDER, ", ") .. ".")
 		end
 		db.font = arg
 	elseif cmd == "outline" then
-		if not OUTLINES[arg] then
-			return Print("Outline is none, thin or thick.")
+		if arg ~= "default" and not OUTLINES[arg] then
+			return Print("Outline is none, thin, thick or default.")
 		end
 		db.outline = arg
 	elseif cmd == "shadow" or cmd == "raidicon" then
@@ -255,6 +275,12 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 				db[key] = value
 			end
 		end
+		if (db.version or 1) < 2 then
+			-- Version 1 shipped with Friz 14, a thin outline and a shadow
+			-- as its defaults; Blizzard's font is the default now.
+			db.font, db.size, db.outline, db.shadow = DEFAULTS.font, DEFAULTS.size, DEFAULTS.outline, DEFAULTS.shadow
+		end
+		db.version = VERSION
 		SLASH_NAMEONLY1 = "/nameonly"
 		SLASH_NAMEONLY2 = "/nonly"
 		SlashCmdList.NAMEONLY = Command
