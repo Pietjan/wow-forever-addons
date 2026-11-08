@@ -65,8 +65,8 @@ local function Style(unitFrame)
 			-- Blizzard has already re-anchored the name; put its font back
 			-- too, shadow included, by reapplying the font object it set.
 			unitFrame.nameOnlyStyled = nil
-			local object = name:GetFontObject()
-			if object then
+			local ok, object = pcall(name.GetFontObject, name)
+			if ok and object then
 				name:SetFontObject(object)
 			end
 		end
@@ -87,11 +87,15 @@ local function Style(unitFrame)
 	-- Blizzard anchors the name either across the (hidden) health bar or
 	-- along its top edge, depending on the nameplate style. Keep that
 	-- reference and add the offset, on a single point so the text takes
-	-- its natural width.
+	-- its natural width. Nameplate regions cannot be measured by addons on
+	-- Forever (GetPoint and friends are refused), so the style is read from
+	-- Blizzard's setup table rather than from the name's current anchors.
 	local container = unitFrame.HealthBarsContainer
-	local point = name:GetPoint(1)
+	local styles = NamePlateConstants and NamePlateConstants.NAME_ANCHOR_STYLES
+	local inside = styles and NamePlateSetupOptions
+		and NamePlateSetupOptions.unitNameAnchorStyle == styles.InsideHealthBar
 	name:ClearAllPoints()
-	if point == "LEFT" or point == "RIGHT" or point == "CENTER" then
+	if inside then
 		name:SetPoint("CENTER", container, "CENTER", db.x, db.y)
 	else
 		name:SetPoint("BOTTOM", container, "TOP", db.x, 2 + db.y)
