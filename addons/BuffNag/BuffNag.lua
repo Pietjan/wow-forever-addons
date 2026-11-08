@@ -1058,8 +1058,10 @@ local function GlowFrame(button, template)
 					frame:SetManualRelease(true)
 				end
 				frame:SetScript("OnUpdate", nil)
+				-- The Cooldown Manager hangs these at -8,8 / 9,-9, half a
+				-- pixel off centre; the art is symmetric, so centre it.
 				frame:SetPoint("TOPLEFT", button, "TOPLEFT", -8, 8)
-				frame:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 9, -9)
+				frame:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 8, -8)
 			end
 			frame:SetFrameLevel(button:GetFrameLevel() + 2)
 			frame:Hide()
