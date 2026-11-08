@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: NameOnly
+## Notes: Friendly player nameplates show just the name: your font, size and position. /nameonly
+## Author: Pietjan
+## Version: 1.0
+## Dependencies: Blizzard_NamePlates
+## SavedVariables: NameOnlyDB
+
+NameOnly.lua
