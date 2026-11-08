@@ -4,16 +4,21 @@
 -- Forever has a "show only name" mode for friendly player nameplates
 -- (Options > Gameplay > Nameplates): it drops the health bar, cast bar,
 -- auras and level, and leaves the name standing where the bar would be.
--- On first login this addon turns that mode on, together with friendly
--- player nameplates and class-coloured names, and from then on restyles
--- the name on every such plate: font, size, outline, shadow and an offset
--- from where Blizzard puts it. The raid marker stays, as it does in
--- Blizzard's mode, unless you turn it off here.
+-- At every login this addon sets the game options that go with it: that
+-- mode, friendly player nameplates, class-coloured names, names on every
+-- plate, the nameplate range at Forever's ceiling of 41 yards, and the
+-- floating names of friendly players and their pets off, since the plates
+-- replace them within range and nothing is legible beyond it. It then
+-- restyles the name on every such plate: font, size, outline, shadow and
+-- an offset from where Blizzard puts it. The raid marker stays, as it
+-- does in Blizzard's mode, unless you turn it off here.
 --
 -- Blizzard only grants name-only mode to players. With /nameonly npcs on,
 -- friendly NPC nameplates are switched on as well and the addon makes
 -- them look the same itself: it hides the bars, auras, classification and
--- level, and hides them again whenever Blizzard shows them. It must not
+-- level, and hides them again whenever Blizzard shows them. Floating NPC
+-- names go off with it, and back to Forever's default, interactive NPCs
+-- only, when it is turned off again. It must not
 -- write Blizzard's own name-only flag for that: a value written by an
 -- addon is tainted, Blizzard's code that reads it then runs as addon
 -- code, and on Forever addon code may not measure nameplate regions,
@@ -52,14 +57,33 @@ local FONT_ORDER = { "default", "friz", "arial", "skurri", "morpheus" }
 local OUTLINES = { none = "", thin = "OUTLINE", thick = "THICKOUTLINE" }
 local VERSION = 2 -- bumped when saved settings need migrating
 
--- What Blizzard's name-only mode needs switched on. Applied once, on the
--- first login with the addon, and again on /nameonly setup.
+-- The game options the addon owns, applied at every login and on
+-- /nameonly setup, so a settings reset or another character does not undo
+-- them. Nameplate range is capped at 41 on Forever; higher is clamped.
 local CVARS = {
 	{ "nameplateShowFriendlyPlayers", "1", "friendly player nameplates" },
 	{ "nameplateShowOnlyNameForFriendlyPlayerUnits", "1", "only the name on them" },
 	{ "nameplateUseClassColorForFriendlyPlayerUnitNames", "1", "class-coloured names" },
+	{ "nameplateForceShowUnitName", "1", "a name on every nameplate" },
+	{ "nameplateMaxDistance", "41", "nameplates out to 41 yards" },
+	{ "UnitNameFriendlyPlayerName", "0", "floating names of friendly players off" },
+	{ "UnitNameFriendlyMinionName", "0", "floating names of their pets off" },
 }
-local NPC_CVAR = "nameplateShowFriendlyNpcs"
+-- With friendly NPC nameplates, and the floating NPC names that go with
+-- them: none when the plates carry the names, otherwise Forever's default
+-- of interactive NPCs only (the "Interactive" choice in the options).
+local NPC_CVARS = {
+	on = {
+		{ "nameplateShowFriendlyNpcs", "1", "friendly NPC nameplates" },
+		{ "UnitNameNPC", "0" }, { "UnitNameFriendlySpecialNPCName", "0" },
+		{ "UnitNameHostleNPC", "0" }, { "UnitNameInteractiveNPC", "0", "floating NPC names off" },
+	},
+	off = {
+		{ "nameplateShowFriendlyNpcs", "0", "friendly NPC nameplates off" },
+		{ "UnitNameNPC", "0" }, { "UnitNameFriendlySpecialNPCName", "1" },
+		{ "UnitNameHostleNPC", "1" }, { "UnitNameInteractiveNPC", "1", "floating names for interactive NPCs" },
+	},
+}
 
 local db
 
@@ -234,36 +258,46 @@ local function StyleAll()
 	end
 end
 
-local function Setup()
+-- Set one game option when it differs; true when it did.
+local function Apply(cvar)
+	local current, wanted = GetCVar(cvar[1]), cvar[2]
+	if tonumber(current) and tonumber(wanted) and tonumber(current) == tonumber(wanted) then
+		return false
+	elseif current == wanted then
+		return false
+	end
+	SetCVar(cvar[1], wanted)
+	return true
+end
+
+local function Setup(quiet)
 	if InCombatLockdown() then
-		Print("Nameplate options cannot be changed in combat; try /nameonly setup afterwards.")
-		return
+		Print("Game options cannot be changed in combat; try /nameonly setup afterwards.")
+		return false
 	end
 	local changed = {}
-	for _, cvar in ipairs(CVARS) do
-		if GetCVar(cvar[1]) ~= cvar[2] then
-			SetCVar(cvar[1], cvar[2])
-			changed[#changed + 1] = cvar[3]
+	for _, list in ipairs({ CVARS, NPC_CVARS[db.npcs and "on" or "off"] }) do
+		for _, cvar in ipairs(list) do
+			if Apply(cvar) and cvar[3] then
+				changed[#changed + 1] = cvar[3]
+			end
 		end
 	end
-	if db.npcs and GetCVar(NPC_CVAR) ~= "1" then
-		SetCVar(NPC_CVAR, "1")
-		changed[#changed + 1] = "friendly NPC nameplates"
-	end
 	if #changed > 0 then
-		Print("Turned on " .. table.concat(changed, ", ") .. ".")
-	else
-		Print("Friendly player nameplates, name-only mode and class colours are already on.")
+		Print("Set " .. table.concat(changed, ", ") .. ".")
+	elseif not quiet then
+		Print("All game options already as the addon wants them.")
 	end
+	return true
 end
 
 local function SetNpcs(on)
-	if InCombatLockdown() then
-		Print("Nameplate options cannot be changed in combat; try again afterwards.")
+	local was = db.npcs
+	db.npcs = on
+	if not Setup(true) then
+		db.npcs = was
 		return false
 	end
-	db.npcs = on
-	SetCVar(NPC_CVAR, on and "1" or "0")
 	return true
 end
 
@@ -339,7 +373,8 @@ local function Command(msg)
 		end
 		db[cmd] = n
 	elseif cmd == "setup" then
-		return Setup()
+		Setup()
+		return
 	elseif cmd == "reset" then
 		for key, value in pairs(DEFAULTS) do
 			if key ~= "npcs" then
@@ -384,9 +419,11 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		SLASH_NAMEONLY2 = "/nonly"
 		SlashCmdList.NAMEONLY = Command
 	elseif event == "PLAYER_LOGIN" then
-		if not db.setupDone then
-			db.setupDone = true
-			Setup()
+		-- Quiet unless something had to change; the first login says it all.
+		local first = not db.setupDone
+		db.setupDone = true
+		Setup(true)
+		if first then
 			Print("Friendly player names are now nameplates with just the name. /nameonly to style them.")
 		end
 	elseif event == "NAME_PLATE_UNIT_ADDED" then
