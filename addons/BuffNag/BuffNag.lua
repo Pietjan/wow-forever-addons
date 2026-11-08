@@ -162,8 +162,8 @@ local ELIXIRS = {
 }
 -- Scrolls, from the game's data: item to the spell of the buff it gives,
 -- and its family (tiers of one scroll replace each other). A scroll is
--- taken not to stack with the class buffs of the same stat, so those
--- rule its family out while they are up.
+-- taken not to stack with the cast class buffs of the same stat, so those
+-- rule its family out while they are up; auras and totems do stack.
 local SCROLLS = {
 	[3012] = { 8115, "Agility" }, [1477] = { 8116, "Agility" }, [4425] = { 8117, "Agility" }, [10309] = { 12174, "Agility" },
 	[955] = { 8096, "Intellect" }, [2290] = { 8097, "Intellect" }, [4419] = { 8098, "Intellect" }, [10308] = { 12176, "Intellect" },
@@ -176,12 +176,9 @@ local SCROLLS = {
 	[289088] = { 1327754, "Endless Fortitude" },
 }
 local SCROLL_BLOCKERS = { -- family -> spells whose buff makes the scroll pointless
-	Agility = { 8836 }, -- Grace of Air
-	Strength = { 8076 }, -- Strength of Earth
-	Stamina = { 1243, 21562, 6307 }, -- Power Word: Fortitude, Prayer of Fortitude, Blood Pact
+	Stamina = { 1243, 21562 }, -- Power Word: Fortitude, Prayer of Fortitude
 	Intellect = { 1459, 23028 }, -- Arcane Intellect, Arcane Brilliance
 	Spirit = { 14752, 27681 }, -- Divine Spirit, Prayer of Spirit
-	Protection = { 465, 8072 }, -- Devotion Aura, Stoneskin
 }
 local FLASK_NAMES, ELIXIR_FAMILY_NAMES, SCROLL_FAMILY_NAMES, SCROLL_BLOCKER_NAMES = {}, {}, {}, {} -- resolved from the spells once their names load
 
