@@ -13,16 +13,12 @@
 -- an offset from where Blizzard puts it. The raid marker stays, as it
 -- does in Blizzard's mode, unless you turn it off here.
 --
--- Blizzard only grants name-only mode to players. With /nameonly npcs on,
--- friendly NPC nameplates are switched on as well and the addon makes
--- them look the same itself: it hides the bars, auras, classification and
--- level, and hides them again whenever Blizzard shows them. Floating NPC
--- names go off with it, and back to Forever's default, interactive NPCs
--- only, when it is turned off again. It must not
--- write Blizzard's own name-only flag for that: a value written by an
--- addon is tainted, Blizzard's code that reads it then runs as addon
--- code, and on Forever addon code may not measure nameplate regions,
--- which Blizzard's layout does for the level frame.
+-- NPC nameplates and NPC floating names are left to the game's own
+-- options. (An NPC name-only mode was tried and dropped: Forever shows
+-- some neutral guards' floating names whatever the options say, and the
+-- forced mode needed care, as a value an addon writes into Blizzard's
+-- frames taints Blizzard's code that reads it, and on Forever addon code
+-- may not measure nameplate regions, which Blizzard's layout does.)
 --
 -- Nameplate unit frames are pooled and reused. Blizzard sets the name's
 -- font up in ApplyFrameOptions each time a frame is handed a unit, and
@@ -44,7 +40,6 @@ local DEFAULTS = {
 	x = 0, -- offset from where Blizzard puts the name
 	y = 0,
 	raidIcon = true, -- keep the raid marker above the name
-	npcs = false, -- friendly NPC nameplates too, name only
 }
 
 local FONTS = {
@@ -55,7 +50,7 @@ local FONTS = {
 }
 local FONT_ORDER = { "default", "friz", "arial", "skurri", "morpheus" }
 local OUTLINES = { none = "", thin = "OUTLINE", thick = "THICKOUTLINE" }
-local VERSION = 2 -- bumped when saved settings need migrating
+local VERSION = 3 -- bumped when saved settings need migrating
 
 -- The game options the addon owns, applied at every login and on
 -- /nameonly setup, so a settings reset or another character does not undo
@@ -69,20 +64,11 @@ local CVARS = {
 	{ "UnitNameFriendlyPlayerName", "0", "floating names of friendly players off" },
 	{ "UnitNameFriendlyMinionName", "0", "floating names of their pets off" },
 }
--- With friendly NPC nameplates, and the floating NPC names that go with
--- them: none when the plates carry the names, otherwise Forever's default
--- of interactive NPCs only (the "Interactive" choice in the options).
-local NPC_CVARS = {
-	on = {
-		{ "nameplateShowFriendlyNpcs", "1", "friendly NPC nameplates" },
-		{ "UnitNameNPC", "0" }, { "UnitNameFriendlySpecialNPCName", "0" },
-		{ "UnitNameHostleNPC", "0" }, { "UnitNameInteractiveNPC", "0", "floating NPC names off" },
-	},
-	off = {
-		{ "nameplateShowFriendlyNpcs", "0", "friendly NPC nameplates off" },
-		{ "UnitNameNPC", "0" }, { "UnitNameFriendlySpecialNPCName", "1" },
-		{ "UnitNameHostleNPC", "1" }, { "UnitNameInteractiveNPC", "1", "floating names for interactive NPCs" },
-	},
+-- Options an earlier version owned and this one leaves to the game; put
+-- back to their defaults once when upgrading.
+local RELEASED_CVARS = {
+	"nameplateShowFriendlyNpcs", "UnitNameNPC", "UnitNameFriendlySpecialNPCName",
+	"UnitNameHostleNPC", "UnitNameInteractiveNPC",
 }
 
 local db
@@ -98,8 +84,7 @@ local function Style(unitFrame)
 	if not name then
 		return
 	end
-	local nameOnly = unitFrame.nameOnlyForced or (unitFrame.IsShowOnlyName and unitFrame:IsShowOnlyName())
-	if not nameOnly then
+	if not (unitFrame.IsShowOnlyName and unitFrame:IsShowOnlyName()) then
 		if unitFrame.nameOnlyStyled then
 			-- Blizzard has already re-anchored the name; put its font back
 			-- too, shadow included, by reapplying the font object it set.
@@ -156,65 +141,11 @@ local function Style(unitFrame)
 	end
 end
 
--- The parts of a plate that name-only mode does without. The raid marker
--- is handled separately, as Blizzard keeps it in that mode too.
-local function Parts(unitFrame)
-	return {
-		unitFrame.HealthBarsContainer and unitFrame.HealthBarsContainer.healthBar,
-		unitFrame.CastBarsContainer and unitFrame.CastBarsContainer.castBar,
-		unitFrame.AurasFrame, unitFrame.ClassificationFrame,
-		unitFrame.PlayerLevelDiffFrame, unitFrame.LevelFrame,
-	}
-end
-
--- Blizzard shows a part again from code that knows nothing of the forced
--- mode; hide it straight back. Hooked on each part's Show.
-local function HideForcedPart(part)
-	local unitFrame = part.nameOnlyOwner
-	if unitFrame and unitFrame.nameOnlyForced then
-		part:Hide()
-	end
-end
-
--- Runs after Blizzard's UpdateShowOnlyName, which grants the mode to
--- friendly players only. For a friendly NPC, when asked, hide the parts
--- and lay the name out as for a player. Only the addon's own fields on
--- the frames are written, never Blizzard's.
-local function ForceNameOnly(unitFrame)
-	local force = db.npcs and unitFrame.unit ~= nil and not unitFrame.widgetsOnlyMode
-		and unitFrame.IsFriend and unitFrame:IsFriend() and not unitFrame:IsPlayer()
-	local was = unitFrame.nameOnlyForced
-	unitFrame.nameOnlyForced = force or nil
-	if force then
-		for _, part in ipairs(Parts(unitFrame)) do
-			part:Hide()
-		end
-		Style(unitFrame)
-		if unitFrame.GetNamePlateFrame then
-			local plate = unitFrame:GetNamePlateFrame()
-			if plate and plate.ClearAllHitTestPoints then
-				pcall(plate.ClearAllHitTestPoints, plate) -- as Blizzard does for name-only plates
-			end
-		end
-	elseif was then
-		-- Let the parts come back; the name keeps its place until the
-		-- plate is next handed a unit, when Blizzard lays it out afresh.
-		for _, part in ipairs(Parts(unitFrame)) do
-			if part.UpdateShownState then
-				pcall(part.UpdateShownState, part)
-			end
-		end
-		pcall(CompactUnitFrame_UpdatePlayerLevelDiff, unitFrame)
-		Style(unitFrame)
-	end
-end
-
 local function StyleRaidIcon(raidTargetFrame)
 	if db.raidIcon then
 		return
 	end
-	local owner = raidTargetFrame.nameOnlyOwner
-	if (owner and owner.nameOnlyForced) or (raidTargetFrame.IsShowOnlyName and raidTargetFrame:IsShowOnlyName()) then
+	if raidTargetFrame.IsShowOnlyName and raidTargetFrame:IsShowOnlyName() then
 		raidTargetFrame:Hide()
 	end
 end
@@ -227,19 +158,9 @@ local function Hook(unitFrame)
 	if type(unitFrame.UpdateAnchors) == "function" then
 		hooksecurefunc(unitFrame, "UpdateAnchors", Style)
 	end
-	if type(unitFrame.UpdateShowOnlyName) == "function" then
-		hooksecurefunc(unitFrame, "UpdateShowOnlyName", ForceNameOnly)
-	end
-	for _, part in ipairs(Parts(unitFrame)) do
-		part.nameOnlyOwner = unitFrame
-		hooksecurefunc(part, "Show", HideForcedPart)
-	end
 	local raid = unitFrame.RaidTargetFrame
-	if raid then
-		raid.nameOnlyOwner = unitFrame
-		if type(raid.UpdateShownState) == "function" then
-			hooksecurefunc(raid, "UpdateShownState", StyleRaidIcon)
-		end
+	if raid and type(raid.UpdateShownState) == "function" then
+		hooksecurefunc(raid, "UpdateShownState", StyleRaidIcon)
 	end
 end
 
@@ -248,7 +169,6 @@ local function StyleAll()
 		local unitFrame = plate.UnitFrame
 		if unitFrame then
 			Hook(unitFrame)
-			ForceNameOnly(unitFrame)
 			Style(unitFrame)
 			local raid = unitFrame.RaidTargetFrame
 			if raid and raid.UpdateShownState then
@@ -276,11 +196,9 @@ local function Setup(quiet)
 		return false
 	end
 	local changed = {}
-	for _, list in ipairs({ CVARS, NPC_CVARS[db.npcs and "on" or "off"] }) do
-		for _, cvar in ipairs(list) do
-			if Apply(cvar) and cvar[3] then
-				changed[#changed + 1] = cvar[3]
-			end
+	for _, cvar in ipairs(CVARS) do
+		if Apply(cvar) then
+			changed[#changed + 1] = cvar[3]
 		end
 	end
 	if #changed > 0 then
@@ -294,23 +212,22 @@ end
 -- The live values of every option the addon owns, for checking that they
 -- took and stayed.
 local function PrintCVars()
-	for _, list in ipairs({ CVARS, NPC_CVARS[db.npcs and "on" or "off"] }) do
-		for _, cvar in ipairs(list) do
-			local current = GetCVar(cvar[1])
-			local same = tonumber(current) and tonumber(cvar[2]) and tonumber(current) == tonumber(cvar[2]) or current == cvar[2]
-			Print(("%s%s = %s (addon wants %s)"):format(same and "" or "|cffff8080", cvar[1], tostring(current), cvar[2]))
-		end
+	for _, cvar in ipairs(CVARS) do
+		local current = GetCVar(cvar[1])
+		local same = tonumber(current) and tonumber(cvar[2]) and tonumber(current) == tonumber(cvar[2]) or current == cvar[2]
+		Print(("%s%s = %s (addon wants %s)"):format(same and "" or "|cffff8080", cvar[1], tostring(current), cvar[2]))
 	end
 end
 
-local function SetNpcs(on)
-	local was = db.npcs
-	db.npcs = on
-	if not Setup(true) then
-		db.npcs = was
-		return false
+-- Hand options an earlier version owned back to the game, at their defaults.
+local function ReleaseCVars()
+	for _, name in ipairs(RELEASED_CVARS) do
+		local default = GetCVarDefault(name)
+		if default then
+			SetCVar(name, default)
+		end
 	end
-	return true
+	Print("NPC nameplate and NPC name options are back to the game's defaults.")
 end
 
 -- Slash command ------------------------------------------------------------
@@ -320,14 +237,13 @@ local function Status()
 	Print(("font %s, size %s, outline %s, shadow %s, offset %d %d, raid marker %s"):format(
 		font, db.size > 0 and tostring(db.size) or "default", db.outline, db.shadow and "on" or "off",
 		db.x, db.y, db.raidIcon and "shown" or "hidden"))
-	Print("friendly NPC nameplates " .. (db.npcs and "on, name only" or "off"))
 end
 
 local function Usage()
 	Status()
 	Print("/nameonly size 8-32 | font friz, arial, skurri or morpheus | outline none, thin or thick")
 	Print("Each of those also takes 'default' for Blizzard's own.")
-	Print("/nameonly shadow on|off | x -50..50 | y -50..50 | raidicon on|off | npcs on|off | setup | cvars | reset")
+	Print("/nameonly shadow on|off | x -50..50 | y -50..50 | raidicon on|off | setup | cvars | reset")
 	Print("The addon sets the nameplate and floating-name options it needs at every login; setup reapplies them now.")
 end
 
@@ -366,17 +282,15 @@ local function Command(msg)
 			return Print("Outline is none, thin, thick or default.")
 		end
 		db.outline = arg
-	elseif cmd == "shadow" or cmd == "raidicon" or cmd == "npcs" then
+	elseif cmd == "shadow" or cmd == "raidicon" then
 		local value = OnOff(arg)
 		if value == nil then
 			return Print(cmd .. " is on or off.")
 		end
 		if cmd == "shadow" then
 			db.shadow = value
-		elseif cmd == "raidicon" then
+		else
 			db.raidIcon = value
-		elseif not SetNpcs(value) then
-			return
 		end
 	elseif cmd == "x" or cmd == "y" then
 		local n = Number(arg, -50, 50)
@@ -391,12 +305,7 @@ local function Command(msg)
 		return PrintCVars()
 	elseif cmd == "reset" then
 		for key, value in pairs(DEFAULTS) do
-			if key ~= "npcs" then
-				db[key] = value
-			end
-		end
-		if db.npcs then
-			SetNpcs(false)
+			db[key] = value
 		end
 	else
 		return Usage()
@@ -429,6 +338,8 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 			-- as its defaults; Blizzard's font is the default now.
 			db.font, db.size, db.outline, db.shadow = DEFAULTS.font, DEFAULTS.size, DEFAULTS.outline, DEFAULTS.shadow
 		end
+		db.release = (db.version or 1) < 3 -- version 2 owned the NPC options
+		db.npcs = nil
 		db.version = VERSION
 		SLASH_NAMEONLY1 = "/nameonly"
 		SLASH_NAMEONLY2 = "/nonly"
@@ -437,6 +348,10 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		-- Quiet unless something had to change; the first login says it all.
 		local first = not db.setupDone
 		db.setupDone = true
+		if db.release and not InCombatLockdown() then
+			db.release = nil
+			ReleaseCVars()
+		end
 		Setup(true)
 		if first then
 			Print("Friendly player names are now nameplates with just the name. /nameonly to style them.")
@@ -454,8 +369,7 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		local plate = C_NamePlate.GetNamePlateForUnit(arg1)
 		local unitFrame = plate and plate.UnitFrame
 		if unitFrame then
-			Hook(unitFrame) -- too late for this plate's own setup calls, hence the two below
-			ForceNameOnly(unitFrame)
+			Hook(unitFrame) -- too late for this plate's own UpdateAnchors, hence the call below
 			Style(unitFrame)
 		end
 	end
