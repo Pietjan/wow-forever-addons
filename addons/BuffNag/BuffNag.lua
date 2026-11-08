@@ -6,8 +6,8 @@
 -- It is configured from its own tab in the Cooldown Manager's settings
 -- window (Escape > Options > Cooldown Manager, or /bn): the buffs on offer
 -- are the ones the game lists for your class there, the group buffs it
--- knows, a food buff, a flask, elixirs and weapon enchants (the last three
--- only when a fitting item is in the bags). Buffs are matched by name,
+-- knows, a food buff, a flask, elixirs, scrolls and weapon enchants (the
+-- last four only when a fitting item is in the bags), and a hunter's pet. Buffs are matched by name,
 -- so any rank counts. The bar hides in combat, while resting, mounted, on a
 -- flight path or dead.
 
@@ -160,7 +160,26 @@ local ELIXIRS = {
 	[3382] = { 3219, "Troll's Blood Elixir" }, [3388] = { 3222, "Troll's Blood Elixir" }, [3826] = { 3223, "Troll's Blood Elixir" },
 	[20004] = { 24361, "Troll's Blood Elixir" },
 }
-local FLASK_NAMES, ELIXIR_FAMILY_NAMES = {}, {} -- resolved from the spells once their names load
+-- Scrolls, from the game's data: item to the spell of the buff it gives,
+-- and its family (tiers of one scroll replace each other). The scroll
+-- families other scrolls or buffs rule out: the Agility and Strength
+-- scrolls share their slot with the shaman's totems.
+local SCROLLS = {
+	[3012] = { 8115, "Agility" }, [1477] = { 8116, "Agility" }, [4425] = { 8117, "Agility" }, [10309] = { 12174, "Agility" },
+	[955] = { 8096, "Intellect" }, [2290] = { 8097, "Intellect" }, [4419] = { 8098, "Intellect" }, [10308] = { 12176, "Intellect" },
+	[3013] = { 8091, "Protection" }, [1478] = { 8094, "Protection" }, [4421] = { 8095, "Protection" }, [10305] = { 12175, "Protection" },
+	[1181] = { 8112, "Spirit" }, [1712] = { 8113, "Spirit" }, [4424] = { 8114, "Spirit" }, [10306] = { 12177, "Spirit" },
+	[1180] = { 8099, "Stamina" }, [1711] = { 8100, "Stamina" }, [4422] = { 8101, "Stamina" }, [10307] = { 12178, "Stamina" },
+	[954] = { 8118, "Strength" }, [2289] = { 8119, "Strength" }, [4426] = { 8120, "Strength" }, [10310] = { 12179, "Strength" },
+	[211954] = { 430949, "Arcane Accuracy" }, [211957] = { 430952, "Arcane Power" }, [211953] = { 430948, "Arcane Recovery" },
+	[211955] = { 430950, "Arcane Protection - Fire" }, [211956] = { 430951, "Arcane Protection - Frost" },
+	[289088] = { 1327754, "Endless Fortitude" },
+}
+local SCROLL_BLOCKERS = { -- family -> spells whose buff makes the scroll pointless
+	Agility = { 8836 }, -- Grace of Air
+	Strength = { 8076 }, -- Strength of Earth
+}
+local FLASK_NAMES, ELIXIR_FAMILY_NAMES, SCROLL_FAMILY_NAMES, SCROLL_BLOCKER_NAMES = {}, {}, {}, {} -- resolved from the spells once their names load
 
 -- Foods and drinks whose use leaves a Well Fed buff, from the game's data.
 local FOODS = {
@@ -430,6 +449,24 @@ local function BuildCatalog()
 			ELIXIR_FAMILY_NAMES[elixir[2]][name] = true
 		end
 	end
+	wipe(SCROLL_FAMILY_NAMES)
+	for _, scroll in pairs(SCROLLS) do
+		local name = SpellName(scroll[1])
+		if name then
+			SCROLL_FAMILY_NAMES[scroll[2]] = SCROLL_FAMILY_NAMES[scroll[2]] or {}
+			SCROLL_FAMILY_NAMES[scroll[2]][name] = true
+		end
+	end
+	wipe(SCROLL_BLOCKER_NAMES)
+	for family, spells in pairs(SCROLL_BLOCKERS) do
+		for _, spellID in ipairs(spells) do
+			local name = SpellName(spellID)
+			if name then
+				SCROLL_BLOCKER_NAMES[family] = SCROLL_BLOCKER_NAMES[family] or {}
+				SCROLL_BLOCKER_NAMES[family][name] = true
+			end
+		end
+	end
 
 	-- Everyone: a food buff and the weapon enchants. Eating or drinking
 	-- right now excuses the missing food buff.
@@ -461,6 +498,10 @@ local function BuildCatalog()
 	})
 	AddEntry({
 		key = "elixir", name = "Elixirs", icon = SpellIcon(17538), kind = "elixir", source = "extra",
+		auraNames = {}, castNames = {}, party = false, unlessNames = {}, seedDefault = true,
+	})
+	AddEntry({
+		key = "scroll", name = "Scrolls", icon = SpellIcon(8099), kind = "scroll", source = "extra",
 		auraNames = {}, castNames = {}, party = false, unlessNames = {}, seedDefault = true,
 	})
 	AddEntry({
@@ -498,7 +539,7 @@ local function SeedChoices()
 			-- Seeded by an earlier version: count everything it had as
 			-- offered, except the entries added since.
 			for _, key in ipairs(catalogOrder) do
-				if key ~= "flask" and key ~= "elixir" and key ~= "pet" then
+				if key ~= "flask" and key ~= "elixir" and key ~= "pet" and key ~= "scroll" then
 					cdb.offered[key] = true
 				end
 			end
@@ -838,27 +879,46 @@ end
 
 -- Elixir families in the bags whose buff is not up: the first to drink,
 -- and how many there are.
-local function ElixirCandidates(entry)
+-- Items in families (elixirs, scrolls): one candidate per family whose
+-- buff is missing or running out, in bag order. A family with a blocking
+-- buff up (a totem in a scroll's slot) is left alone.
+local function FamilyCandidates(entry, items, familyNames, blockerNames, mark)
 	local list, families = {}, {}
 	local allExpiring = true
 	EachBagItem(function(itemID)
-		local elixir = ELIXIRS[itemID]
-		if elixir and not families[elixir[2]] then
-			local names = ELIXIR_FAMILY_NAMES[elixir[2]]
+		local item = items[itemID]
+		if item and not families[item[2]] then
+			local names = familyNames[item[2]]
+			local blockers = blockerNames and blockerNames[item[2]]
+			if blockers and UnitHas("player", blockers, 0) ~= false then
+				names = nil
+			end
 			local enough, present, endTime, duration = UnitHas("player", names or {}, true)
 			if names and enough == false then
 				allExpiring = allExpiring and present
 				if present then
 					NoteEnd(entry, endTime, duration)
 				end
-				families[elixir[2]] = true
+				families[item[2]] = true
 				local icon, name = ItemLook(itemID)
-				list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name }
+				local candidate = { kind = "item", value = itemID, icon = icon, text = name }
+				if mark then
+					candidate[mark] = true
+				end
+				list[#list + 1] = candidate
 			end
 		end
 	end)
 	entry.expiring = #list > 0 and allExpiring
 	return list
+end
+
+local function ElixirCandidates(entry)
+	return FamilyCandidates(entry, ELIXIRS, ELIXIR_FAMILY_NAMES)
+end
+
+local function ScrollCandidates(entry)
+	return FamilyCandidates(entry, SCROLLS, SCROLL_FAMILY_NAMES, SCROLL_BLOCKER_NAMES, "read")
 end
 
 -- The candidate to act on: the one the player picked for this entry by
@@ -1213,12 +1273,14 @@ end
 local function Missing(entry, choice)
 	local missing = {}
 	entry.endsAt, entry.endDuration = nil, nil
-	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "food" or entry.kind == "pet" or entry.kind == "weapon" or entry.kind == "offhand" then
+	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "scroll" or entry.kind == "food" or entry.kind == "pet" or entry.kind == "weapon" or entry.kind == "offhand" then
 		local list
 		if entry.kind == "flask" then
 			list = FlaskCandidates(entry)
 		elseif entry.kind == "elixir" then
 			list = ElixirCandidates(entry)
+		elseif entry.kind == "scroll" then
+			list = ScrollCandidates(entry)
 		elseif entry.kind == "food" then
 			list = FoodCandidates(entry)
 		elseif entry.kind == "pet" then
@@ -1232,8 +1294,8 @@ local function Missing(entry, choice)
 		end
 		entry.fix, entry.fixIndex = Pick(entry, list)
 		if entry.fix then
-			if entry.kind == "elixir" then
-				-- Every missing family counts, not just the one to drink first.
+			if entry.kind == "elixir" or entry.kind == "scroll" then
+				-- Every missing family counts, not just the one to use first.
 				local labels = {}
 				for i, candidate in ipairs(list) do
 					labels[i] = candidate.text
@@ -1352,7 +1414,7 @@ function Refresh()
 						button.applyText = "Click to feed it " .. entry.fix.text .. "."
 					else
 						button:SetAttribute("macrotext", ("/use item:%d"):format(entry.fix.value))
-						button.applyText = (entry.fix.eat and "Click to eat " or "Click to drink ") .. entry.fix.text .. "."
+						button.applyText = (entry.fix.eat and "Click to eat " or entry.fix.read and "Click to read " or "Click to drink ") .. entry.fix.text .. "."
 					end
 				elseif entry.fix and entry.fix.kind == "cast" then
 					button:SetAttribute("type", "spell")
