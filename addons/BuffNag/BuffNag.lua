@@ -1393,7 +1393,7 @@ function Refresh()
 	local anyMissing = false -- gone, rather than still up and running out
 	for _, key in ipairs(catalogOrder) do
 		local entry, choice = catalog[key], cdb.nag[key]
-		if choice and count < MAX_ICONS then
+		if choice and TierActive(TierOf(choice)) and count < MAX_ICONS then
 			local missing = previewing and { "player" } or Missing(entry, choice)
 			if #missing > 0 then
 				count = count + 1
@@ -1496,6 +1496,35 @@ local panel -- our page inside the settings window
 local settingsTab
 local COLUMNS = 7
 
+-- Where a watched buff matters: everywhere, in instances (dungeons and
+-- raids), or in raids only. A choice without a tier is from before tiers
+-- and counts as "always".
+local TIERS = {
+	{ key = "always", label = "Always", help = "watched everywhere" },
+	{ key = "dungeon", label = "Dungeons", help = "watched in dungeons and raids" },
+	{ key = "raid", label = "Raids", help = "watched in raids" },
+}
+local TIER_INDEX = { always = 1, dungeon = 2, raid = 3 }
+local function TierOf(choice)
+	return (choice and TIER_INDEX[choice.tier]) and choice.tier or "always"
+end
+local function TierLabel(tier)
+	return TIERS[TIER_INDEX[tier] or 1].label
+end
+local function TierActive(tier)
+	if tier == "always" or not TIER_INDEX[tier] then
+		return true
+	end
+	local ok, _, instanceType = pcall(IsInInstance)
+	if not ok then
+		return true
+	end
+	if tier == "raid" then
+		return instanceType == "raid"
+	end
+	return instanceType == "party" or instanceType == "raid"
+end
+
 -- Taint: nothing here may write into the game's own tables (the settings
 -- window's fields, its tab list), or the game's code reading them later
 -- runs tainted and its protected tables refuse it. The tab lives on a
@@ -1584,7 +1613,7 @@ local function BuildPanel(settings)
 	help:SetPoint("TOPLEFT", 4, -54)
 	help:SetPoint("RIGHT", -4, 0)
 	help:SetJustifyH("LEFT")
-	help:SetText("Click a buff to move it between the lists. Right-click a watched buff to also watch your party for it.")
+	help:SetText("Drag a buff into a section: watched everywhere, only in dungeons and raids, or only in raids. Click moves it between Always and Not Displayed; right-click a watched buff to also watch your party for it.")
 
 	-- The two lists, in a scroll frame.
 	local scroll
@@ -1606,14 +1635,103 @@ local function BuildPanel(settings)
 	scroll:SetScrollChild(content)
 	panel.content = content
 
-	local headers = {}
-	for i = 1, 2 do
-		local header = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-		header:SetJustifyH("LEFT")
-		headers[i] = header
+	-- Four sections, headed like the Cooldown Manager's own categories:
+	-- one per tier, and the buffs not watched at all.
+	local SECTIONS = {}
+	for i, tier in ipairs(TIERS) do
+		SECTIONS[i] = { tier = tier.key, label = tier.label }
 	end
-	headers[1]:SetText("Nag when missing")
-	headers[2]:SetText("Available")
+	SECTIONS[#SECTIONS + 1] = { tier = nil, label = "Not Displayed" }
+	local sections = {}
+	for i, def in ipairs(SECTIONS) do
+		local section = CreateFrame("Frame", nil, content)
+		section:SetPoint("LEFT", content, "LEFT", 0, 0)
+		section:SetPoint("RIGHT", content, "RIGHT", 0, 0)
+		section.tier = def.tier
+		local header
+		local okHeader = pcall(function()
+			header = CreateFrame("Button", nil, section, "ListHeaderThreeSliceTemplate")
+		end)
+		if okHeader and header and header.Name then
+			header:SetHeight(22)
+			header.Name:SetText(def.label)
+			header:SetScript("OnClick", nil)
+			header:EnableMouse(false)
+			-- Shown open, as the Cooldown Manager shows its categories.
+			pcall(header.UpdateCollapsedState, header, false)
+		else
+			header = CreateFrame("Frame", nil, section)
+			header:SetHeight(22)
+			local text = header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+			text:SetPoint("LEFT", 10, 0)
+			text:SetText(def.label)
+		end
+		header:SetPoint("TOPLEFT", section, "TOPLEFT", 0, 0)
+		header:SetPoint("TOPRIGHT", section, "TOPRIGHT", -4, 0)
+		section.header = header
+		-- Lit while a dragged buff hovers over it.
+		local drop = section:CreateTexture(nil, "BACKGROUND")
+		drop:SetColorTexture(1, 0.82, 0, 0.12)
+		drop:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, 0)
+		drop:SetPoint("BOTTOMRIGHT", section, "BOTTOMRIGHT", -4, 0)
+		drop:Hide()
+		section.drop = drop
+		sections[i] = section
+	end
+
+	-- Dragging: a copy of the icon rides the cursor; letting go over a
+	-- section puts the buff there.
+	local ghost = CreateFrame("Frame", nil, UIParent)
+	ghost:SetSize(ICON, ICON)
+	ghost:SetFrameStrata("TOOLTIP")
+	ghost.Icon = ghost:CreateTexture(nil, "ARTWORK")
+	ghost.Icon:SetAllPoints()
+	ghost:SetAlpha(0.85)
+	ghost:Hide()
+	local function SectionUnderCursor()
+		if not scroll:IsMouseOver() then
+			return nil
+		end
+		for _, section in ipairs(sections) do
+			if section:IsMouseOver() then
+				return section
+			end
+		end
+		return nil
+	end
+	ghost:SetScript("OnUpdate", function(self)
+		local x, y = GetCursorPosition()
+		local scale = self:GetEffectiveScale()
+		self:ClearAllPoints()
+		self:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x / scale, y / scale)
+		local over = SectionUnderCursor()
+		for _, section in ipairs(sections) do
+			section.drop:SetShown(section == over)
+		end
+	end)
+	local function EndDrag(entry)
+		ghost:Hide()
+		for _, section in ipairs(sections) do
+			section.drop:Hide()
+		end
+		local over = SectionUnderCursor()
+		if not (over and entry) then
+			return
+		end
+		local key = entry.key
+		if over.tier then
+			local choice = cdb.nag[key] or { party = entry.party }
+			choice.tier = over.tier
+			cdb.nag[key] = choice
+		else
+			cdb.nag[key] = nil
+		end
+		PlaySound(SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or 856)
+		panel:Layout()
+		if not InCombatLockdown() then
+			Refresh()
+		end
+	end
 
 	local buttons = {}
 	local function PanelButton(i)
@@ -1629,10 +1747,11 @@ local function BuildPanel(settings)
 			GameTooltip:SetText(self.entry.name)
 			local choice = cdb.nag[self.entry.key]
 			if choice then
-				GameTooltip:AddLine(choice.party and "Watched on you and your party." or "Watched on you.", 1, 1, 1)
-				GameTooltip:AddLine("Click to stop watching; right-click to toggle the party.", 0.6, 0.6, 0.6, true)
+				local tier = TIERS[TIER_INDEX[TierOf(choice)]]
+				GameTooltip:AddLine(("%s, %s."):format(choice.party and "Watched on you and your party" or "Watched on you", tier.help), 1, 1, 1, true)
+				GameTooltip:AddLine("Drag to another section. Click to stop watching; right-click to toggle the party.", 0.6, 0.6, 0.6, true)
 			else
-				GameTooltip:AddLine("Click to watch.", 0.6, 0.6, 0.6)
+				GameTooltip:AddLine("Drag into a section, or click to watch everywhere.", 0.6, 0.6, 0.6, true)
 			end
 			GameTooltip:Show()
 		end)
@@ -1646,13 +1765,24 @@ local function BuildPanel(settings)
 			elseif cdb.nag[key] then
 				cdb.nag[key] = nil
 			else
-				cdb.nag[key] = { party = self.entry.party }
+				cdb.nag[key] = { party = self.entry.party, tier = "always" }
 			end
 			PlaySound(SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or 856)
 			panel:Layout()
 			if not InCombatLockdown() then
 				Refresh()
 			end
+		end)
+		button:RegisterForDrag("LeftButton")
+		button:SetScript("OnDragStart", function(self)
+			ghost.Icon:SetTexture(self.entry.icon or QUESTION_MARK)
+			ghost.entry = self.entry
+			ghost:Show()
+			GameTooltip_Hide()
+		end)
+		button:SetScript("OnDragStop", function(self)
+			EndDrag(ghost.entry)
+			ghost.entry = nil
 		end)
 		buttons[i] = button
 		return button
@@ -1662,13 +1792,12 @@ local function BuildPanel(settings)
 		local used = 0
 		local y = 0
 		local step = ICON + 8
-		local function Section(index, keys)
-			headers[index]:ClearAllPoints()
-			headers[index]:SetPoint("TOPLEFT", content, "TOPLEFT", 4, -y)
-			y = y + 22
-			if #keys == 0 then
-				y = y + 8
-			end
+		local function Fill(section, keys, dimmed)
+			section:ClearAllPoints()
+			section:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
+			section:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -y)
+			local top = y
+			y = y + 22 + 12
 			for n, key in ipairs(keys) do
 				used = used + 1
 				local button = PanelButton(used)
@@ -1676,24 +1805,28 @@ local function BuildPanel(settings)
 				button.Icon:SetTexture(button.entry.icon or QUESTION_MARK)
 				local choice = cdb.nag[key]
 				button.Party:SetShown(choice and choice.party and true or false)
-				button.Icon:SetDesaturated(index == 2)
+				button.Icon:SetDesaturated(dimmed)
 				local column, row = (n - 1) % COLUMNS, math.floor((n - 1) / COLUMNS)
 				button:ClearAllPoints()
-				button:SetPoint("TOPLEFT", content, "TOPLEFT", 8 + column * step, -(y + row * step))
+				button:SetPoint("TOPLEFT", content, "TOPLEFT", 12 + column * step, -(y + row * step))
 				button:Show()
 			end
-			y = y + math.ceil(#keys / COLUMNS) * step + 16
+			-- An empty section keeps a row's height, as somewhere to drop.
+			y = y + math.max(1, math.ceil(#keys / COLUMNS)) * step + 8
+			section:SetHeight(y - top)
 		end
-		local chosen, available = {}, {}
+		local lists = {}
+		for i = 1, #sections do
+			lists[i] = {}
+		end
 		for _, key in ipairs(catalogOrder) do
-			if cdb.nag[key] then
-				chosen[#chosen + 1] = key
-			else
-				available[#available + 1] = key
-			end
+			local choice = cdb.nag[key]
+			local index = choice and TIER_INDEX[TierOf(choice)] or #sections
+			lists[index][#lists[index] + 1] = key
 		end
-		Section(1, chosen)
-		Section(2, available)
+		for i, section in ipairs(sections) do
+			Fill(section, lists[i], section.tier == nil)
+		end
 		for i = used + 1, #buttons do
 			buttons[i]:Hide()
 		end
@@ -1952,7 +2085,7 @@ SlashCmdList.BUFFNAG = function(msg)
 		for _, key in ipairs(catalogOrder) do
 			local choice = cdb.nag[key]
 			if choice then
-				Print("  %s%s", catalog[key].name, choice.party and " (and party)" or "")
+				Print("  %s%s, %s", catalog[key].name, choice.party and " (and party)" or "", TierLabel(TierOf(choice)):lower())
 			end
 		end
 		return
