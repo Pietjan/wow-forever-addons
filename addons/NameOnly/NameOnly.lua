@@ -10,6 +10,11 @@
 -- from where Blizzard puts it. The raid marker stays, as it does in
 -- Blizzard's mode, unless you turn it off here.
 --
+-- Blizzard only grants name-only mode to players. With /nameonly npcs on,
+-- friendly NPC nameplates are switched on as well and the addon puts them
+-- in the same mode itself, by setting the flag Blizzard's components read
+-- and hiding the level, each time Blizzard re-evaluates the plate.
+--
 -- Nameplate unit frames are pooled and reused. Blizzard sets the name's
 -- font up in ApplyFrameOptions each time a frame is handed a unit, and
 -- lays the name out in UpdateAnchors, which also runs at the end of
@@ -30,6 +35,7 @@ local DEFAULTS = {
 	x = 0, -- offset from where Blizzard puts the name
 	y = 0,
 	raidIcon = true, -- keep the raid marker above the name
+	npcs = false, -- friendly NPC nameplates too, name only
 }
 
 local FONTS = {
@@ -49,6 +55,7 @@ local CVARS = {
 	{ "nameplateShowOnlyNameForFriendlyPlayerUnits", "1", "only the name on them" },
 	{ "nameplateUseClassColorForFriendlyPlayerUnitNames", "1", "class-coloured names" },
 }
+local NPC_CVAR = "nameplateShowFriendlyNpcs"
 
 local db
 
@@ -120,6 +127,53 @@ local function Style(unitFrame)
 	end
 end
 
+-- Blizzard's UpdateShowOnlyName grants the mode to friendly players only.
+-- Runs after it: for a friendly NPC, when asked, do what it would have
+-- done for a player. Blizzard's own next evaluation turns the mode off
+-- again and this turns it straight back on, within the same call.
+local function ForceNameOnly(unitFrame)
+	local force = db.npcs and unitFrame.unit ~= nil and not unitFrame.widgetsOnlyMode
+		and unitFrame.IsFriend and unitFrame:IsFriend() and not unitFrame:IsPlayer()
+	if not force then
+		unitFrame.nameOnlyForced = nil
+		return
+	end
+	unitFrame.nameOnlyForced = true
+	if unitFrame.showOnlyName then
+		return
+	end
+	unitFrame.showOnlyName = true
+	for _, component in ipairs({
+		unitFrame.HealthBarsContainer and unitFrame.HealthBarsContainer.healthBar,
+		unitFrame.CastBarsContainer and unitFrame.CastBarsContainer.castBar,
+		unitFrame.AurasFrame, unitFrame.ClassificationFrame, unitFrame.RaidTargetFrame,
+	}) do
+		if component and component.SetShowOnlyName then
+			component:SetShowOnlyName(true)
+		end
+	end
+	for _, level in ipairs({ unitFrame.PlayerLevelDiffFrame, unitFrame.LevelFrame }) do
+		if level then
+			level:Hide()
+		end
+	end
+	if unitFrame.UpdateAnchors then
+		unitFrame:UpdateAnchors() -- lays the name out for name-only; Style runs after it
+	end
+	if unitFrame.UpdateHitTestArea and NamePlateSetupOptions then
+		unitFrame:UpdateHitTestArea(NamePlateSetupOptions)
+	end
+end
+
+-- The level is re-shown by Blizzard code that does not know about the
+-- forced mode; keep it hidden on those plates.
+local function HideForcedLevel(levelFrame)
+	local unitFrame = levelFrame:GetParent()
+	if unitFrame and unitFrame.nameOnlyForced then
+		levelFrame:Hide()
+	end
+end
+
 local function StyleRaidIcon(raidTargetFrame)
 	if db.raidIcon then
 		return
@@ -137,6 +191,14 @@ local function Hook(unitFrame)
 	if type(unitFrame.UpdateAnchors) == "function" then
 		hooksecurefunc(unitFrame, "UpdateAnchors", Style)
 	end
+	if type(unitFrame.UpdateShowOnlyName) == "function" then
+		hooksecurefunc(unitFrame, "UpdateShowOnlyName", ForceNameOnly)
+	end
+	for _, level in ipairs({ unitFrame.PlayerLevelDiffFrame, unitFrame.LevelFrame }) do
+		if level then
+			hooksecurefunc(level, "Show", HideForcedLevel)
+		end
+	end
 	local raid = unitFrame.RaidTargetFrame
 	if raid and type(raid.UpdateShownState) == "function" then
 		hooksecurefunc(raid, "UpdateShownState", StyleRaidIcon)
@@ -148,6 +210,9 @@ local function StyleAll()
 		local unitFrame = plate.UnitFrame
 		if unitFrame then
 			Hook(unitFrame)
+			if unitFrame.UpdateShowOnlyName then
+				unitFrame:UpdateShowOnlyName() -- re-evaluates, and ForceNameOnly after it
+			end
 			Style(unitFrame)
 			local raid = unitFrame.RaidTargetFrame
 			if raid and raid.UpdateShownState then
@@ -169,11 +234,25 @@ local function Setup()
 			changed[#changed + 1] = cvar[3]
 		end
 	end
+	if db.npcs and GetCVar(NPC_CVAR) ~= "1" then
+		SetCVar(NPC_CVAR, "1")
+		changed[#changed + 1] = "friendly NPC nameplates"
+	end
 	if #changed > 0 then
 		Print("Turned on " .. table.concat(changed, ", ") .. ".")
 	else
 		Print("Friendly player nameplates, name-only mode and class colours are already on.")
 	end
+end
+
+local function SetNpcs(on)
+	if InCombatLockdown() then
+		Print("Nameplate options cannot be changed in combat; try again afterwards.")
+		return false
+	end
+	db.npcs = on
+	SetCVar(NPC_CVAR, on and "1" or "0")
+	return true
 end
 
 -- Slash command ------------------------------------------------------------
@@ -183,13 +262,14 @@ local function Status()
 	Print(("font %s, size %s, outline %s, shadow %s, offset %d %d, raid marker %s"):format(
 		font, db.size > 0 and tostring(db.size) or "default", db.outline, db.shadow and "on" or "off",
 		db.x, db.y, db.raidIcon and "shown" or "hidden"))
+	Print("friendly NPC nameplates " .. (db.npcs and "on, name only" or "off"))
 end
 
 local function Usage()
 	Status()
 	Print("/nameonly size 8-32 | font friz, arial, skurri or morpheus | outline none, thin or thick")
 	Print("Each of those also takes 'default' for Blizzard's own.")
-	Print("/nameonly shadow on|off | x -50..50 | y -50..50 | raidicon on|off | setup | reset")
+	Print("/nameonly shadow on|off | x -50..50 | y -50..50 | raidicon on|off | npcs on|off | setup | reset")
 	Print("Turn friendly player nameplates themselves on or off under Options > Gameplay > Nameplates.")
 end
 
@@ -228,15 +308,17 @@ local function Command(msg)
 			return Print("Outline is none, thin, thick or default.")
 		end
 		db.outline = arg
-	elseif cmd == "shadow" or cmd == "raidicon" then
+	elseif cmd == "shadow" or cmd == "raidicon" or cmd == "npcs" then
 		local value = OnOff(arg)
 		if value == nil then
 			return Print(cmd .. " is on or off.")
 		end
 		if cmd == "shadow" then
 			db.shadow = value
-		else
+		elseif cmd == "raidicon" then
 			db.raidIcon = value
+		elseif not SetNpcs(value) then
+			return
 		end
 	elseif cmd == "x" or cmd == "y" then
 		local n = Number(arg, -50, 50)
@@ -248,7 +330,12 @@ local function Command(msg)
 		return Setup()
 	elseif cmd == "reset" then
 		for key, value in pairs(DEFAULTS) do
-			db[key] = value
+			if key ~= "npcs" then
+				db[key] = value
+			end
+		end
+		if db.npcs then
+			SetNpcs(false)
 		end
 	else
 		return Usage()
