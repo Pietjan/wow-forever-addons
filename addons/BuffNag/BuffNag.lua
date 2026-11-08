@@ -1149,7 +1149,7 @@ end
 local function LayoutPauseGlyph()
 	local width = math.floor(PAUSE_SIZE * 0.14 + 0.5)
 	local height = math.floor(PAUSE_SIZE * 0.45 + 0.5)
-	local gap = 2
+	local gap = width -- as wide as a bar, the usual pause proportions
 	for _, entry in ipairs(pauseButton.bars) do
 		local texture = entry.texture
 		local x = entry.side > 0 and gap / 2 or -(gap / 2 + width)
