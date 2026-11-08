@@ -558,6 +558,35 @@ local function SeedChoices()
 end
 
 
+-- Where a watched buff matters: everywhere, in instances (dungeons and
+-- raids), or in raids only. A choice without a tier is from before tiers
+-- and counts as "always".
+local TIERS = {
+	{ key = "always", label = "Always", help = "watched everywhere" },
+	{ key = "dungeon", label = "Dungeons", help = "watched in dungeons and raids" },
+	{ key = "raid", label = "Raids", help = "watched in raids" },
+}
+local TIER_INDEX = { always = 1, dungeon = 2, raid = 3 }
+local function TierOf(choice)
+	return (choice and TIER_INDEX[choice.tier]) and choice.tier or "always"
+end
+local function TierLabel(tier)
+	return TIERS[TIER_INDEX[tier] or 1].label
+end
+local function TierActive(tier)
+	if tier == "always" or not TIER_INDEX[tier] then
+		return true
+	end
+	local ok, _, instanceType = pcall(IsInInstance)
+	if not ok then
+		return true
+	end
+	if tier == "raid" then
+		return instanceType == "raid"
+	end
+	return instanceType == "party" or instanceType == "raid"
+end
+
 ------------------------------------------------------------------------------
 -- Looking at units
 ------------------------------------------------------------------------------
@@ -1495,35 +1524,6 @@ end
 local panel -- our page inside the settings window
 local settingsTab
 local COLUMNS = 7
-
--- Where a watched buff matters: everywhere, in instances (dungeons and
--- raids), or in raids only. A choice without a tier is from before tiers
--- and counts as "always".
-local TIERS = {
-	{ key = "always", label = "Always", help = "watched everywhere" },
-	{ key = "dungeon", label = "Dungeons", help = "watched in dungeons and raids" },
-	{ key = "raid", label = "Raids", help = "watched in raids" },
-}
-local TIER_INDEX = { always = 1, dungeon = 2, raid = 3 }
-local function TierOf(choice)
-	return (choice and TIER_INDEX[choice.tier]) and choice.tier or "always"
-end
-local function TierLabel(tier)
-	return TIERS[TIER_INDEX[tier] or 1].label
-end
-local function TierActive(tier)
-	if tier == "always" or not TIER_INDEX[tier] then
-		return true
-	end
-	local ok, _, instanceType = pcall(IsInInstance)
-	if not ok then
-		return true
-	end
-	if tier == "raid" then
-		return instanceType == "raid"
-	end
-	return instanceType == "party" or instanceType == "raid"
-end
 
 -- Taint: nothing here may write into the game's own tables (the settings
 -- window's fields, its tab list), or the game's code reading them later
