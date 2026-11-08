@@ -224,9 +224,7 @@ local function StyleAll()
 		local unitFrame = plate.UnitFrame
 		if unitFrame then
 			Hook(unitFrame)
-			if unitFrame.UpdateShowOnlyName then
-				unitFrame:UpdateShowOnlyName() -- re-evaluates, and ForceNameOnly after it
-			end
+			ForceNameOnly(unitFrame)
 			Style(unitFrame)
 			local raid = unitFrame.RaidTargetFrame
 			if raid and raid.UpdateShownState then
@@ -397,7 +395,8 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		local plate = C_NamePlate.GetNamePlateForUnit(arg1)
 		local unitFrame = plate and plate.UnitFrame
 		if unitFrame then
-			Hook(unitFrame)
+			Hook(unitFrame) -- too late for this plate's own setup calls, hence the two below
+			ForceNameOnly(unitFrame)
 			Style(unitFrame)
 		end
 	end
