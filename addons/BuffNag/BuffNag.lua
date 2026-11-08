@@ -996,8 +996,14 @@ end
 -- The Cooldown Manager's own icon dressing: its rounded mask and border
 -- overlay, uncropped, as in CooldownViewerBuffIconItemTemplate. A plain
 -- dark edge stands in on a client without those atlases.
-local function StyleIcon(button)
-	button:SetSize(ICON, ICON)
+-- The border ring's reach past the icon, per icon size, as the Cooldown
+-- Manager sets it for its three sizes.
+local OVERLAY_REACH = { [50] = { 9, 8 }, [40] = { 8, 7 }, [30] = { 6, 5 } }
+
+local function StyleIcon(button, size)
+	size = size or ICON
+	button:SetSize(size, size)
+	local reach = OVERLAY_REACH[size] or { size * 0.2, size * 0.2 - 1 }
 	local icon = button:CreateTexture(nil, "ARTWORK")
 	icon:SetPoint("TOPLEFT", -ICON_OUTSET, ICON_OUTSET)
 	icon:SetPoint("BOTTOMRIGHT", ICON_OUTSET, -ICON_OUTSET)
@@ -1010,8 +1016,8 @@ local function StyleIcon(button)
 		icon:AddMaskTexture(mask)
 		local overlay = button:CreateTexture(nil, "OVERLAY")
 		overlay:SetAtlas("UI-HUD-CoolDownManager-IconOverlay")
-		overlay:SetPoint("TOPLEFT", -8, 7)
-		overlay:SetPoint("BOTTOMRIGHT", 8, -7)
+		overlay:SetPoint("TOPLEFT", -reach[1], reach[2])
+		overlay:SetPoint("BOTTOMRIGHT", reach[1], -reach[2])
 	else
 		local edge = button:CreateTexture(nil, "BACKGROUND")
 		edge:SetColorTexture(0, 0, 0, 0.9)
@@ -1118,12 +1124,14 @@ local icons = {}
 
 local SetPaused -- defined below; the bar's pause button needs it
 
--- A pause button at the bar's end, dressed like the icons: a drawn pause
--- glyph, with the pause length on it. Right-click cycles the length.
-local PAUSE_SIZE = ICON
+-- A pause button at the bar's end, dressed like the icons but smaller,
+-- so it does not read as a buff: a drawn pause glyph, with the pause
+-- length on it. Right-click cycles the length.
+local PAUSE_SIZE = 30
 local PAUSE_CHOICES = { 5, 10, 30, 0 } -- minutes; 0: until resumed
 local pauseButton = CreateFrame("Button", "BuffNagPauseButton", bar)
-StyleIcon(pauseButton)
+StyleIcon(pauseButton, PAUSE_SIZE)
+pauseButton.Count:SetFontObject("NumberFontNormalSmall")
 -- Hung off the bar's edge rather than inside it, so the bar's width, and
 -- with it the centring, is the icons alone.
 pauseButton:SetPoint("LEFT", bar, "RIGHT", GAP, 0)
@@ -1131,8 +1139,8 @@ pauseButton.Icon:SetColorTexture(0.12, 0.12, 0.14)
 for i = -1, 1, 2 do
 	local barTexture = pauseButton:CreateTexture(nil, "ARTWORK", nil, 1)
 	barTexture:SetColorTexture(0.9, 0.9, 0.9)
-	barTexture:SetSize(ICON * 0.15, ICON * 0.45)
-	barTexture:SetPoint("CENTER", pauseButton, "CENTER", i * ICON * 0.13, 0)
+	barTexture:SetSize(PAUSE_SIZE * 0.15, PAUSE_SIZE * 0.45)
+	barTexture:SetPoint("CENTER", pauseButton, "CENTER", i * PAUSE_SIZE * 0.13, 0)
 end
 pauseButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 pauseButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
