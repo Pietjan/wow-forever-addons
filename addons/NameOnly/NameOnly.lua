@@ -316,7 +316,7 @@ local function Usage()
 	Print("/nameonly size 8-32 | font friz, arial, skurri or morpheus | outline none, thin or thick")
 	Print("Each of those also takes 'default' for Blizzard's own.")
 	Print("/nameonly shadow on|off | x -50..50 | y -50..50 | raidicon on|off | npcs on|off | setup | reset")
-	Print("Turn friendly player nameplates themselves on or off under Options > Gameplay > Nameplates.")
+	Print("The addon sets the nameplate and floating-name options it needs at every login; setup reapplies them now.")
 end
 
 local function OnOff(value)
