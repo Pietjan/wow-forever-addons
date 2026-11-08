@@ -157,11 +157,16 @@ local function ForceNameOnly(unitFrame)
 			level:Hide()
 		end
 	end
-	if unitFrame.UpdateAnchors then
-		unitFrame:UpdateAnchors() -- lays the name out for name-only; Style runs after it
-	end
-	if unitFrame.UpdateHitTestArea and NamePlateSetupOptions then
-		unitFrame:UpdateHitTestArea(NamePlateSetupOptions)
+	-- Blizzard's UpdateAnchors cannot be called from here: run as addon
+	-- code it measures the level frame, which Forever refuses. Style
+	-- anchors the name on its own, which is all name-only needs; the
+	-- hidden bars keep whatever anchors they have.
+	Style(unitFrame)
+	if unitFrame.GetNamePlateFrame then
+		local plate = unitFrame:GetNamePlateFrame()
+		if plate and plate.ClearAllHitTestPoints then
+			pcall(plate.ClearAllHitTestPoints, plate) -- as Blizzard does for name-only plates
+		end
 	end
 end
 
