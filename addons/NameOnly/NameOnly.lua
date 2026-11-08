@@ -291,6 +291,18 @@ local function Setup(quiet)
 	return true
 end
 
+-- The live values of every option the addon owns, for checking that they
+-- took and stayed.
+local function PrintCVars()
+	for _, list in ipairs({ CVARS, NPC_CVARS[db.npcs and "on" or "off"] }) do
+		for _, cvar in ipairs(list) do
+			local current = GetCVar(cvar[1])
+			local same = tonumber(current) and tonumber(cvar[2]) and tonumber(current) == tonumber(cvar[2]) or current == cvar[2]
+			Print(("%s%s = %s (addon wants %s)"):format(same and "" or "|cffff8080", cvar[1], tostring(current), cvar[2]))
+		end
+	end
+end
+
 local function SetNpcs(on)
 	local was = db.npcs
 	db.npcs = on
@@ -315,7 +327,7 @@ local function Usage()
 	Status()
 	Print("/nameonly size 8-32 | font friz, arial, skurri or morpheus | outline none, thin or thick")
 	Print("Each of those also takes 'default' for Blizzard's own.")
-	Print("/nameonly shadow on|off | x -50..50 | y -50..50 | raidicon on|off | npcs on|off | setup | reset")
+	Print("/nameonly shadow on|off | x -50..50 | y -50..50 | raidicon on|off | npcs on|off | setup | cvars | reset")
 	Print("The addon sets the nameplate and floating-name options it needs at every login; setup reapplies them now.")
 end
 
@@ -375,6 +387,8 @@ local function Command(msg)
 	elseif cmd == "setup" then
 		Setup()
 		return
+	elseif cmd == "cvars" then
+		return PrintCVars()
 	elseif cmd == "reset" then
 		for key, value in pairs(DEFAULTS) do
 			if key ~= "npcs" then
@@ -396,6 +410,7 @@ end
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
 loader:RegisterEvent("PLAYER_LOGIN")
+loader:RegisterEvent("PLAYER_ENTERING_WORLD")
 loader:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 loader:SetScript("OnEvent", function(self, event, arg1)
 	if event == "ADDON_LOADED" then
@@ -425,6 +440,13 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		Setup(true)
 		if first then
 			Print("Friendly player names are now nameplates with just the name. /nameonly to style them.")
+		end
+	elseif event == "PLAYER_ENTERING_WORLD" then
+		-- Per-character options can load after PLAYER_LOGIN and undo what
+		-- was set there; apply again once the world is up (harmless when
+		-- nothing differs).
+		if not InCombatLockdown() then
+			Setup(true)
 		end
 	elseif event == "NAME_PLATE_UNIT_ADDED" then
 		-- Blizzard's driver registered first, so the plate already has its
