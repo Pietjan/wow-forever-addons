@@ -203,6 +203,7 @@ local MAIN_HAND, OFF_HAND = INVSLOT_MAINHAND or 16, INVSLOT_OFFHAND or 17
 local WEAPON = (Enum.ItemClass and Enum.ItemClass.Weapon) or 2
 local FISHING_POLE = (Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Fishingpole) or 20
 local ICON, GAP = 40, 6
+local ICON_OUTSET = 2 -- the picture reaches this far under the border ring, so it fills the frame
 local MAX_ICONS = 16
 local QUESTION_MARK = 134400
 
@@ -998,12 +999,14 @@ end
 local function StyleIcon(button)
 	button:SetSize(ICON, ICON)
 	local icon = button:CreateTexture(nil, "ARTWORK")
-	icon:SetAllPoints()
+	icon:SetPoint("TOPLEFT", -ICON_OUTSET, ICON_OUTSET)
+	icon:SetPoint("BOTTOMRIGHT", ICON_OUTSET, -ICON_OUTSET)
 	button.Icon = icon
 	if HasAtlas("UI-HUD-CoolDownManager-Mask") and HasAtlas("UI-HUD-CoolDownManager-IconOverlay") then
 		local mask = button:CreateMaskTexture()
 		mask:SetAtlas("UI-HUD-CoolDownManager-Mask")
-		mask:SetAllPoints()
+		mask:SetPoint("TOPLEFT", -ICON_OUTSET, ICON_OUTSET)
+		mask:SetPoint("BOTTOMRIGHT", ICON_OUTSET, -ICON_OUTSET)
 		icon:AddMaskTexture(mask)
 		local overlay = button:CreateTexture(nil, "OVERLAY")
 		overlay:SetAtlas("UI-HUD-CoolDownManager-IconOverlay")
