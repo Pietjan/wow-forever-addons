@@ -1136,12 +1136,34 @@ pauseButton.Count:SetFontObject("NumberFontNormalSmall")
 -- with it the centring, is the icons alone.
 pauseButton:SetPoint("LEFT", bar, "RIGHT", GAP, 0)
 pauseButton.Icon:SetColorTexture(0.12, 0.12, 0.14)
+pauseButton.bars = {}
 for i = -1, 1, 2 do
 	local barTexture = pauseButton:CreateTexture(nil, "ARTWORK", nil, 1)
 	barTexture:SetColorTexture(0.9, 0.9, 0.9)
-	barTexture:SetSize(PAUSE_SIZE * 0.15, PAUSE_SIZE * 0.45)
-	barTexture:SetPoint("CENTER", pauseButton, "CENTER", i * PAUSE_SIZE * 0.13, 0)
+	pauseButton.bars[#pauseButton.bars + 1] = { texture = barTexture, side = i }
 end
+
+-- The two bars of the glyph, in whole pixels and the same distance either
+-- side of the centre, so they come out the same width on screen. Redone
+-- when the bar's scale changes, as the pixel size changes with it.
+local function LayoutPauseGlyph()
+	local width = math.floor(PAUSE_SIZE * 0.14 + 0.5)
+	local height = math.floor(PAUSE_SIZE * 0.45 + 0.5)
+	local gap = 2
+	for _, entry in ipairs(pauseButton.bars) do
+		local texture = entry.texture
+		local x = entry.side > 0 and gap / 2 or -(gap / 2 + width)
+		texture:ClearAllPoints()
+		if PixelUtil and PixelUtil.SetSize and PixelUtil.SetPoint then
+			PixelUtil.SetSize(texture, width, height)
+			PixelUtil.SetPoint(texture, "LEFT", pauseButton, "CENTER", x, 0)
+		else
+			texture:SetSize(width, height)
+			texture:SetPoint("LEFT", pauseButton, "CENTER", x, 0)
+		end
+	end
+end
+LayoutPauseGlyph()
 pauseButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 pauseButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
@@ -1281,6 +1303,7 @@ local function ApplyLayout()
 	bar:ClearAllPoints()
 	bar:SetPoint(db.point[1], UIParent, db.point[1], db.point[2], db.point[3])
 	label:SetShown(not db.locked)
+	LayoutPauseGlyph()
 end
 
 -- The units lacking an entry's buff.
