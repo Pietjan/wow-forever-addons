@@ -11,9 +11,13 @@
 -- Blizzard's mode, unless you turn it off here.
 --
 -- Blizzard only grants name-only mode to players. With /nameonly npcs on,
--- friendly NPC nameplates are switched on as well and the addon puts them
--- in the same mode itself, by setting the flag Blizzard's components read
--- and hiding the level, each time Blizzard re-evaluates the plate.
+-- friendly NPC nameplates are switched on as well and the addon makes
+-- them look the same itself: it hides the bars, auras, classification and
+-- level, and hides them again whenever Blizzard shows them. It must not
+-- write Blizzard's own name-only flag for that: a value written by an
+-- addon is tainted, Blizzard's code that reads it then runs as addon
+-- code, and on Forever addon code may not measure nameplate regions,
+-- which Blizzard's layout does for the level frame.
 --
 -- Nameplate unit frames are pooled and reused. Blizzard sets the name's
 -- font up in ApplyFrameOptions each time a frame is handed a unit, and
@@ -70,7 +74,8 @@ local function Style(unitFrame)
 	if not name then
 		return
 	end
-	if not (unitFrame.IsShowOnlyName and unitFrame:IsShowOnlyName()) then
+	local nameOnly = unitFrame.nameOnlyForced or (unitFrame.IsShowOnlyName and unitFrame:IsShowOnlyName())
+	if not nameOnly then
 		if unitFrame.nameOnlyStyled then
 			-- Blizzard has already re-anchored the name; put its font back
 			-- too, shadow included, by reapplying the font object it set.
@@ -127,55 +132,56 @@ local function Style(unitFrame)
 	end
 end
 
--- Blizzard's UpdateShowOnlyName grants the mode to friendly players only.
--- Runs after it: for a friendly NPC, when asked, do what it would have
--- done for a player. Blizzard's own next evaluation turns the mode off
--- again and this turns it straight back on, within the same call.
-local function ForceNameOnly(unitFrame)
-	local force = db.npcs and unitFrame.unit ~= nil and not unitFrame.widgetsOnlyMode
-		and unitFrame.IsFriend and unitFrame:IsFriend() and not unitFrame:IsPlayer()
-	if not force then
-		unitFrame.nameOnlyForced = nil
-		return
-	end
-	unitFrame.nameOnlyForced = true
-	if unitFrame.showOnlyName then
-		return
-	end
-	unitFrame.showOnlyName = true
-	for _, component in ipairs({
+-- The parts of a plate that name-only mode does without. The raid marker
+-- is handled separately, as Blizzard keeps it in that mode too.
+local function Parts(unitFrame)
+	return {
 		unitFrame.HealthBarsContainer and unitFrame.HealthBarsContainer.healthBar,
 		unitFrame.CastBarsContainer and unitFrame.CastBarsContainer.castBar,
-		unitFrame.AurasFrame, unitFrame.ClassificationFrame, unitFrame.RaidTargetFrame,
-	}) do
-		if component and component.SetShowOnlyName then
-			component:SetShowOnlyName(true)
-		end
-	end
-	for _, level in ipairs({ unitFrame.PlayerLevelDiffFrame, unitFrame.LevelFrame }) do
-		if level then
-			level:Hide()
-		end
-	end
-	-- Blizzard's UpdateAnchors cannot be called from here: run as addon
-	-- code it measures the level frame, which Forever refuses. Style
-	-- anchors the name on its own, which is all name-only needs; the
-	-- hidden bars keep whatever anchors they have.
-	Style(unitFrame)
-	if unitFrame.GetNamePlateFrame then
-		local plate = unitFrame:GetNamePlateFrame()
-		if plate and plate.ClearAllHitTestPoints then
-			pcall(plate.ClearAllHitTestPoints, plate) -- as Blizzard does for name-only plates
-		end
+		unitFrame.AurasFrame, unitFrame.ClassificationFrame,
+		unitFrame.PlayerLevelDiffFrame, unitFrame.LevelFrame,
+	}
+end
+
+-- Blizzard shows a part again from code that knows nothing of the forced
+-- mode; hide it straight back. Hooked on each part's Show.
+local function HideForcedPart(part)
+	local unitFrame = part.nameOnlyOwner
+	if unitFrame and unitFrame.nameOnlyForced then
+		part:Hide()
 	end
 end
 
--- The level is re-shown by Blizzard code that does not know about the
--- forced mode; keep it hidden on those plates.
-local function HideForcedLevel(levelFrame)
-	local unitFrame = levelFrame:GetParent()
-	if unitFrame and unitFrame.nameOnlyForced then
-		levelFrame:Hide()
+-- Runs after Blizzard's UpdateShowOnlyName, which grants the mode to
+-- friendly players only. For a friendly NPC, when asked, hide the parts
+-- and lay the name out as for a player. Only the addon's own fields on
+-- the frames are written, never Blizzard's.
+local function ForceNameOnly(unitFrame)
+	local force = db.npcs and unitFrame.unit ~= nil and not unitFrame.widgetsOnlyMode
+		and unitFrame.IsFriend and unitFrame:IsFriend() and not unitFrame:IsPlayer()
+	local was = unitFrame.nameOnlyForced
+	unitFrame.nameOnlyForced = force or nil
+	if force then
+		for _, part in ipairs(Parts(unitFrame)) do
+			part:Hide()
+		end
+		Style(unitFrame)
+		if unitFrame.GetNamePlateFrame then
+			local plate = unitFrame:GetNamePlateFrame()
+			if plate and plate.ClearAllHitTestPoints then
+				pcall(plate.ClearAllHitTestPoints, plate) -- as Blizzard does for name-only plates
+			end
+		end
+	elseif was then
+		-- Let the parts come back; the name keeps its place until the
+		-- plate is next handed a unit, when Blizzard lays it out afresh.
+		for _, part in ipairs(Parts(unitFrame)) do
+			if part.UpdateShownState then
+				pcall(part.UpdateShownState, part)
+			end
+		end
+		pcall(CompactUnitFrame_UpdatePlayerLevelDiff, unitFrame)
+		Style(unitFrame)
 	end
 end
 
@@ -183,7 +189,8 @@ local function StyleRaidIcon(raidTargetFrame)
 	if db.raidIcon then
 		return
 	end
-	if raidTargetFrame.IsShowOnlyName and raidTargetFrame:IsShowOnlyName() then
+	local owner = raidTargetFrame.nameOnlyOwner
+	if (owner and owner.nameOnlyForced) or (raidTargetFrame.IsShowOnlyName and raidTargetFrame:IsShowOnlyName()) then
 		raidTargetFrame:Hide()
 	end
 end
@@ -199,14 +206,16 @@ local function Hook(unitFrame)
 	if type(unitFrame.UpdateShowOnlyName) == "function" then
 		hooksecurefunc(unitFrame, "UpdateShowOnlyName", ForceNameOnly)
 	end
-	for _, level in ipairs({ unitFrame.PlayerLevelDiffFrame, unitFrame.LevelFrame }) do
-		if level then
-			hooksecurefunc(level, "Show", HideForcedLevel)
-		end
+	for _, part in ipairs(Parts(unitFrame)) do
+		part.nameOnlyOwner = unitFrame
+		hooksecurefunc(part, "Show", HideForcedPart)
 	end
 	local raid = unitFrame.RaidTargetFrame
-	if raid and type(raid.UpdateShownState) == "function" then
-		hooksecurefunc(raid, "UpdateShownState", StyleRaidIcon)
+	if raid then
+		raid.nameOnlyOwner = unitFrame
+		if type(raid.UpdateShownState) == "function" then
+			hooksecurefunc(raid, "UpdateShownState", StyleRaidIcon)
+		end
 	end
 end
 
