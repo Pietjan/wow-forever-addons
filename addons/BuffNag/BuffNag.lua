@@ -203,7 +203,7 @@ local MAIN_HAND, OFF_HAND = INVSLOT_MAINHAND or 16, INVSLOT_OFFHAND or 17
 local WEAPON = (Enum.ItemClass and Enum.ItemClass.Weapon) or 2
 local FISHING_POLE = (Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Fishingpole) or 20
 local ICON, GAP = 40, 6
-local ICON_OUTSET = 2 -- the picture reaches this far under the border ring, so it fills the frame
+local ICON_OUTSET = 0.5 -- the picture reaches this far under the border ring, so it fills the frame
 local MAX_ICONS = 16
 local QUESTION_MARK = 134400
 
