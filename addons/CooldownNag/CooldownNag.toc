@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: CooldownNag
+## Notes: An icon pops up a few seconds before an ability you chose comes off cooldown, and stays a moment once it is ready. Configured from a tab in the Cooldown Manager's settings. /cdn
+## Author: Pietjan
+## Version: 1.0
+## SavedVariables: CooldownNagDB
+## SavedVariablesPerCharacter: CooldownNagCharDB
+
+CooldownNag.lua
