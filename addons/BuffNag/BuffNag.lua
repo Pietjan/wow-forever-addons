@@ -670,8 +670,9 @@ local function UnitUsable(unit)
 end
 
 -- Whether a party member is close enough to be buffed with a spell. Far
--- ones are still listed as missing, but a click goes to someone in range.
--- Asked of the spell itself; when the game will not say, near it is.
+-- ones are not nagged about: nothing can be done for them from here, and
+-- the ticker brings them back once they come close. Asked of the spell
+-- itself; when the game will not say, near it is.
 local function UnitNear(unit, spellName)
 	if unit == "player" then
 		return true
@@ -1388,8 +1389,9 @@ local function Missing(entry, choice)
 	local inRaid = IsInRaid and IsInRaid()
 	local units = (choice.party and db.party and not inRaid) and PARTY_UNITS or { "player" }
 	local allExpiring = true
+	local castSpell = entry.fix and entry.fix.value
 	for _, unit in ipairs(units) do
-		if UnitUsable(unit) and (not entry.mana or UnitHasMana(unit)) then
+		if UnitUsable(unit) and (not entry.mana or UnitHasMana(unit)) and UnitNear(unit, castSpell) then
 			local has, present, endTime, duration = UnitHas(unit, entry.auraNames, true)
 			if has == false and not UnitHas(unit, entry.unlessNames, 0) then
 				missing[#missing + 1] = unit
@@ -1447,17 +1449,9 @@ function Refresh()
 				end
 				local names = {}
 				local castUnit = missing[1]
-				local castSpell = entry.fix and entry.fix.kind == "cast" and entry.fix.value or nil
-				local firstNear
 				for i, unit in ipairs(missing) do
-					if UnitNear(unit, castSpell) then
-						names[i] = ShortName(unit)
-						firstNear = firstNear or unit
-					else
-						names[i] = ShortName(unit) .. " |cff808080(far)|r"
-					end
+					names[i] = ShortName(unit)
 				end
-				castUnit = firstNear or castUnit
 				button.missingText = (entry.fix and entry.fix.list) or table.concat(names, ", ")
 				button.applyText = nil
 				button.nextText = nil
@@ -1479,7 +1473,8 @@ function Refresh()
 						button:SetAttribute("macrotext", ("/cast %s\n/use item:%d"):format(entry.fix.feed, entry.fix.value))
 						button.applyText = "Click to feed it " .. entry.fix.text .. "."
 					else
-						button:SetAttribute("macrotext", ("/use item:%d"):format(entry.fix.value))
+						-- [@player]: a scroll otherwise goes on a friendly target
+						button:SetAttribute("macrotext", ("/use [@player] item:%d"):format(entry.fix.value))
 						button.applyText = (entry.fix.eat and "Click to eat " or entry.fix.read and "Click to read " or "Click to drink ") .. entry.fix.text .. "."
 					end
 				elseif entry.fix and entry.fix.kind == "cast" then
