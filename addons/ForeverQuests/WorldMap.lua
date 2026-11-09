@@ -66,5 +66,6 @@ function ns.SetUpWorldMap()
 	hooksecurefunc(WorldMapFrame, "OnCanvasSizeChanged", Layout)
 	WorldMapFrame:HookScript("OnShow", ns.RefreshWorldMap)
 	ns.HideMapAreas()
+	ns.HideMapIcons()
 	ns.RefreshWorldMap()
 end

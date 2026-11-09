@@ -23,6 +23,15 @@ function ns.Print(text)
 	print("|cffffd100ForeverQuests|r: " .. text)
 end
 
+function ns.IsActive(questID)
+	for _, quest in ipairs(ns.active) do
+		if quest.questID == questID then
+			return true
+		end
+	end
+	return false
+end
+
 local function PickColor(questID, taken)
 	local color = colorOf[questID]
 	if color and not taken[color] then
@@ -64,6 +73,7 @@ local function Rebuild()
 	ns.ResetMinimap()
 	ns.RefreshWorldMap()
 	ns.HideMapAreas() -- areas of quests without dots may need to come back
+	ns.HideMapIcons()
 end
 
 local pending = false
