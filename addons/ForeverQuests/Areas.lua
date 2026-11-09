@@ -60,7 +60,53 @@ end
 local hiddenIcons = {}
 local hookedProviders = {}
 
-local function UpdateQuestIcons()
+-- Our own show/hide of an icon fades like the dots. Quest pins do not
+-- manage their alpha themselves, so it is ours while fading.
+local FADE = 0.2 -- seconds
+local fadingIcons = {} -- pin -> true fading in, false fading out
+local fader = CreateFrame("Frame")
+
+local function FadeIcons(_, elapsed)
+	local step = elapsed / FADE
+	for pin, fadeIn in pairs(fadingIcons) do
+		local alpha = pin:GetAlpha() + (fadeIn and step or -step)
+		if fadeIn and alpha >= 1 then
+			pin:SetAlpha(1)
+			fadingIcons[pin] = nil
+		elseif not fadeIn and alpha <= 0 then
+			pin:Hide()
+			pin:SetAlpha(1)
+			fadingIcons[pin] = nil
+		else
+			pin:SetAlpha(alpha)
+		end
+	end
+	if not next(fadingIcons) then
+		fader:SetScript("OnUpdate", nil)
+	end
+end
+
+local function FadeIcon(pin, fadeIn)
+	if fadeIn then
+		if not pin:IsShown() then
+			pin:SetAlpha(0)
+			pin:Show()
+		end
+	end
+	fadingIcons[pin] = fadeIn
+	fader:SetScript("OnUpdate", FadeIcons)
+end
+
+-- After a refresh every pin is new: put alphas back, stop all fades.
+local function StopIconFades()
+	for pin in pairs(fadingIcons) do
+		pin:SetAlpha(1)
+	end
+	wipe(fadingIcons)
+	fader:SetScript("OnUpdate", nil)
+end
+
+local function UpdateQuestIcons(instant)
 	if not WorldMapFrame or not WorldMapFrame.EnumeratePinsByTemplate then
 		return
 	end
@@ -76,13 +122,17 @@ local function UpdateQuestIcons()
 			end
 		end
 		if hide then
-			if pin:IsShown() then
-				pin:Hide()
+			if pin:IsShown() and not hiddenIcons[pin] then
 				hiddenIcons[pin] = true
+				if instant then
+					pin:Hide()
+				else
+					FadeIcon(pin, false)
+				end
 			end
 		elseif hiddenIcons[pin] then
 			hiddenIcons[pin] = nil
-			pin:Show()
+			FadeIcon(pin, true)
 		end
 	end
 end
@@ -116,7 +166,8 @@ function ns.HideMapIcons()
 			hookedProviders[provider] = true
 			hooksecurefunc(provider, "RefreshAllData", function(self)
 				wipe(hiddenIcons) -- every pin was released and acquired again
-				UpdateQuestIcons()
+				StopIconFades()
+				UpdateQuestIcons(true)
 				HidePing(self)
 			end)
 			if provider.PingQuestID then
@@ -124,5 +175,5 @@ function ns.HideMapIcons()
 			end
 		end
 	end
-	UpdateQuestIcons()
+	UpdateQuestIcons(false)
 end
