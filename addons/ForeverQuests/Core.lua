@@ -1,5 +1,5 @@
--- Tracked quests -> dots; while a quest's details are open in the map's
--- quest log, only that quest. Rebuilds after quest log and watch list changes,
+-- Tracked quests -> dots, plus the quest hovered in the map's quest log;
+-- while a quest's details are open there, only that quest. Rebuilds after quest log and watch list changes,
 -- and tells the world map and minimap to redraw.
 
 local addonName, ns = ...
@@ -74,13 +74,23 @@ local function FocusedQuest()
 	end
 end
 
+-- Whether the game's "?" turn-in icon of a quest should show.
+function ns.ShowsTurnIn(questID)
+	return questID == ns.focused or questID == ns.hovered or C_QuestLog.GetQuestWatchType(questID) ~= nil
+end
+
 function ns.Rebuild()
 	if not ns.ready then
 		return
 	end
 	wipe(ns.active)
 	local focused = FocusedQuest()
-	for _, questID in ipairs(focused and { focused } or TrackedQuests()) do
+	ns.focused = focused
+	local shown = focused and { focused } or TrackedQuests()
+	if ns.hovered and not tContains(shown, ns.hovered) then
+		shown[#shown + 1] = ns.hovered
+	end
+	for _, questID in ipairs(shown) do
 		local quest = ns.Quest(questID)
 		if quest.count > 0 and not C_QuestLog.IsComplete(questID) then
 			ns.UpdateProgress(quest)

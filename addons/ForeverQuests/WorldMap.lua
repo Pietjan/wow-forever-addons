@@ -68,6 +68,15 @@ function ns.SetUpWorldMap()
 	-- Opening a quest's details in the map's quest log focuses it.
 	hooksecurefunc(WorldMapFrame, "SetFocusedQuestID", ns.Rebuild)
 	hooksecurefunc(WorldMapFrame, "ClearFocusedQuestID", ns.Rebuild)
+	-- Hovering a quest in that log highlights it.
+	hooksecurefunc(WorldMapFrame, "SetHighlightedQuestID", function(_, questID)
+		ns.hovered = questID
+		ns.Rebuild()
+	end)
+	hooksecurefunc(WorldMapFrame, "ClearHighlightedQuestID", function()
+		ns.hovered = nil
+		ns.Rebuild()
+	end)
 	ns.HideMapAreas()
 	ns.HideMapIcons()
 	ns.RefreshWorldMap()
