@@ -51,8 +51,8 @@ function ns.HideMinimapAreas()
 	end
 end
 
--- The "..." in-progress icons on the world map, for quests that have dots;
--- turn-in "?" icons and quests without dots keep theirs. The icons are
+-- The "..." in-progress icons on the world map, for every quest; the dots
+-- of tracked quests take their place. Turn-in "?" icons stay. The icons are
 -- Blizzard's QuestPinTemplate pins, re-acquired on every refresh of the
 -- quest data provider, so a post-hook on that refresh hides them again.
 
@@ -66,7 +66,7 @@ local function UpdateQuestIcons()
 	for pin in WorldMapFrame:EnumeratePinsByTemplate("QuestPinTemplate") do
 		local questID = pin.GetQuestID and pin:GetQuestID()
 		local inProgress = pin.GetStyle and pin:GetStyle() == POIButtonUtil.Style.QuestInProgress
-		if questID and inProgress and ns.IsActive(questID) then
+		if questID and inProgress and ns.ready then
 			if pin:IsShown() then
 				pin:Hide()
 				hiddenIcons[pin] = true
