@@ -1,0 +1,70 @@
+-- Dots on the world map, for zone-sized maps and smaller.
+--
+-- The dots are our own frames on the map canvas; we hook Blizzard's map
+-- methods for when to redraw instead of registering a data provider, so
+-- nothing of ours runs inside the map's own (secure) provider loops.
+
+local _, ns = ...
+
+local DOT_SIZE = 12
+
+local pool
+local canvas
+local hooked = false
+
+local function Place(dot)
+	local scale = 1 / WorldMapFrame:GetCanvasScale()
+	local width, height = canvas:GetSize()
+	dot:SetScale(scale)
+	dot:ClearAllPoints()
+	dot:SetPoint("CENTER", canvas, "TOPLEFT", dot.point.x * width / scale, -dot.point.y * height / scale)
+end
+
+local function Layout()
+	if not pool then
+		return
+	end
+	for i = 1, pool.used do
+		Place(pool.dots[i])
+	end
+end
+
+local function FrameLevel()
+	local ok, level = pcall(function()
+		return WorldMapFrame:GetPinFrameLevelsManager():GetValidFrameLevel("PIN_FRAME_LEVEL_MAP_HIGHLIGHT")
+	end)
+	return ok and level or canvas:GetFrameLevel() + 1
+end
+
+function ns.RefreshWorldMap()
+	if not pool or not WorldMapFrame:IsShown() then
+		return
+	end
+	pool:Begin()
+	local mapID = WorldMapFrame:GetMapID()
+	local info = mapID and C_Map.GetMapInfo(mapID)
+	if ns.ready and info and info.mapType >= Enum.UIMapType.Zone then
+		local level = FrameLevel()
+		for _, point in ipairs(ns.PointsOn(mapID)) do
+			local dot = pool:Acquire(point)
+			dot:SetFrameLevel(level)
+		end
+	end
+	pool:Finish()
+	Layout()
+end
+
+function ns.SetUpWorldMap()
+	if hooked or not WorldMapFrame then
+		return
+	end
+	hooked = true
+	canvas = WorldMapFrame:GetCanvas()
+	pool = ns.DotPool(canvas, DOT_SIZE)
+	hooksecurefunc(WorldMapFrame, "OnMapChanged", ns.RefreshWorldMap)
+	hooksecurefunc(WorldMapFrame, "OnCanvasScaleChanged", Layout)
+	hooksecurefunc(WorldMapFrame, "OnCanvasSizeChanged", Layout)
+	WorldMapFrame:HookScript("OnShow", ns.RefreshWorldMap)
+	ns.HideMapAreas()
+	ns.RefreshWorldMap()
+end

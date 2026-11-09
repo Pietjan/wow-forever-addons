@@ -1,0 +1,13 @@
+## Interface: 16001
+## Title: ForeverQuests
+## Notes: Quest log and tracking tweaks. Spawn dots for tracked quests on the map and minimap instead of the quest areas. /fq
+## Author: Pietjan
+## Version: 1.0
+## Dependencies: QuestieDB
+
+Data.lua
+Dots.lua
+Areas.lua
+WorldMap.lua
+Minimap.lua
+Core.lua
