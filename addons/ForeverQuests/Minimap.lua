@@ -31,18 +31,16 @@ local function Update()
 	local position = mapID and #points > 0 and mapWidth > 0 and C_Map.GetPlayerMapPosition(mapID, "player")
 	if position then
 		local px, py = position:GetXY()
-		local radius = Minimap:GetViewRadius()
+		local radius = C_Minimap.GetViewRadius()
 		local half = Minimap:GetWidth() / 2
 		local limit = (radius * EDGE) ^ 2
-		local facing
-		if GetCVarBool("rotateMinimap") then
-			facing = GetPlayerFacing()
-		end
+		local rotates = GetCVarBool("rotateMinimap") and not C_Minimap.IsRotateMinimapIgnored()
+		local facing = rotates and GetPlayerFacing() or nil
 		local cos, sin = 1, 0
 		if facing then
 			cos, sin = math.cos(facing), math.sin(facing)
 		end
-		if radius > 0 and (facing or not GetCVarBool("rotateMinimap")) then
+		if radius > 0 and (facing or not rotates) then
 			for _, point in ipairs(points) do
 				local east = (point.x - px) * mapWidth -- yards
 				local north = (py - point.y) * mapHeight
