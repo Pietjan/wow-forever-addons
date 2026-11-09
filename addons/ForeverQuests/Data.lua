@@ -214,7 +214,7 @@ function ns.PointsOn(mapID)
 					if target.open then
 						local x, y = spot[1] * ax + bx, spot[2] * ay + by
 						if x >= 0 and x <= 1 and y >= 0 and y <= 1 then
-							list[#list + 1] = { x = x, y = y, target = target }
+							list[#list + 1] = { x = x, y = y, target = target, spot = spot }
 						end
 					end
 				end

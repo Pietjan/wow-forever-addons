@@ -63,31 +63,101 @@ function ns.CreateDot(parent, size)
 	return dot
 end
 
--- A growable set of dots on one parent.
+-- The dots on one parent, one per spawn point (point.spot), so a dot that
+-- stays does not flicker when the set changes. New dots fade in, dots that
+-- are no longer wanted fade out and then go back to the free list.
+local FADE = 0.2 -- seconds
+
 function ns.DotPool(parent, size)
-	local pool = { dots = {}, used = 0 }
-	function pool:Acquire(point)
-		self.used = self.used + 1
-		local dot = self.dots[self.used]
-		if not dot then
-			dot = ns.CreateDot(parent, size)
-			self.dots[self.used] = dot
+	local pool = { active = {}, free = {}, fading = {} }
+	local driver = CreateFrame("Frame", nil, parent)
+
+	local function Fade(_, elapsed)
+		local step = elapsed / FADE
+		for dot in pairs(pool.fading) do
+			local alpha = dot:GetAlpha()
+			if dot.wanted then
+				alpha = math.min(1, alpha + step)
+			else
+				alpha = math.max(0, alpha - step)
+			end
+			dot:SetAlpha(alpha)
+			if dot.wanted and alpha >= 1 then
+				pool.fading[dot] = nil
+			elseif not dot.wanted and alpha <= 0 then
+				pool.fading[dot] = nil
+				pool.active[dot.key] = nil
+				dot:Hide()
+				dot.key, dot.point = nil, nil
+				pool.free[#pool.free + 1] = dot
+			end
 		end
+		if not next(pool.fading) then
+			driver:SetScript("OnUpdate", nil)
+		end
+	end
+
+	local function StartFade(dot, wanted)
+		dot.wanted = wanted
+		dot:SetMouseMotionEnabled(wanted)
+		if wanted and not dot:IsShown() then
+			dot:SetAlpha(0)
+			dot:Show()
+		end
+		if wanted then
+			if dot:GetAlpha() >= 1 then
+				return
+			end
+		elseif not wanted and OnLeave then
+			OnLeave(dot)
+		end
+		pool.fading[dot] = true
+		driver:SetScript("OnUpdate", Fade)
+	end
+
+	function pool:Begin()
+		for _, dot in pairs(self.active) do
+			dot.seen = false
+		end
+	end
+
+	function pool:Acquire(point)
+		local key = point.spot or point
+		local dot = self.active[key]
+		if not dot then
+			dot = table.remove(self.free) or ns.CreateDot(parent, size)
+			dot.key = key
+			dot.wanted = false
+			dot:Hide()
+			self.active[key] = dot
+		end
+		dot.seen = true
 		dot:SetPointData(point)
-		dot:Show()
+		if not dot.wanted then
+			StartFade(dot, true)
+		end
 		return dot
 	end
-	function pool:Begin()
-		self.used = 0
+
+	-- Drop every dot at once, for when the map underneath changes.
+	function pool:Clear()
+		for key, dot in pairs(self.active) do
+			OnLeave(dot)
+			dot:Hide()
+			dot.key, dot.point, dot.wanted = nil, nil, false
+			self.active[key] = nil
+			self.fading[dot] = nil
+			self.free[#self.free + 1] = dot
+		end
 	end
+
 	function pool:Finish()
-		for i = self.used + 1, #self.dots do
-			local dot = self.dots[i]
-			if dot:IsShown() then
-				OnLeave(dot)
-				dot:Hide()
+		for _, dot in pairs(self.active) do
+			if not dot.seen and dot.wanted then
+				StartFade(dot, false)
 			end
 		end
 	end
+
 	return pool
 end

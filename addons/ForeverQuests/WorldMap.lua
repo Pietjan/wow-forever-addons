@@ -11,6 +11,7 @@ local DOT_SIZE = 12
 local pool
 local canvas
 local hooked = false
+local shownMap
 
 local function Place(dot)
 	local scale = 1 / WorldMapFrame:GetCanvasScale()
@@ -24,8 +25,8 @@ local function Layout()
 	if not pool then
 		return
 	end
-	for i = 1, pool.used do
-		Place(pool.dots[i])
+	for _, dot in pairs(pool.active) do
+		Place(dot)
 	end
 end
 
@@ -40,8 +41,12 @@ function ns.RefreshWorldMap()
 	if not pool or not WorldMapFrame:IsShown() then
 		return
 	end
-	pool:Begin()
 	local mapID = WorldMapFrame:GetMapID()
+	if mapID ~= shownMap then
+		shownMap = mapID
+		pool:Clear()
+	end
+	pool:Begin()
 	local info = mapID and C_Map.GetMapInfo(mapID)
 	if ns.ready and info and info.mapType >= Enum.UIMapType.Zone then
 		local level = FrameLevel()
