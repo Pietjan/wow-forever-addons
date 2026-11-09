@@ -9,6 +9,16 @@
 -- offer are the spells in your spellbook with a cooldown of ten seconds or
 -- more, with the ones the Cooldown Manager calls essential for your class
 -- first. A new character starts out watching those.
+--
+-- In combat (and in encounters, dungeons on a timer and PvP) the game keeps
+-- cooldown numbers secret from addons: they cannot be compared or printed,
+-- only handed to the game to draw. So the bar has two ways of working. Out
+-- of combat it reads the numbers and decides for itself. In combat it asks
+-- the game for the cooldown as a "duration object" and lets the game drive
+-- the icon's transparency through a curve (opaque in the last seconds,
+-- transparent otherwise), its sweep and its countdown. What the game will
+-- not tell, the moment the ability comes ready, is predicted from when it
+-- was cast and how long its cooldown is, for the sound and the glow.
 
 local ADDON_NAME = ...
 
@@ -39,6 +49,7 @@ local db, cdb -- account settings, this character's choices
 local book = {} -- spell name -> { spellID, icon }, from the spellbook, highest rank last
 local bookOrder = {}
 local catalog, catalogOrder = {}, {} -- name -> entry, in display order
+local watched = {} -- the watched entries, in display order; each has its own icon slot
 local previewing = false
 local evaluateToken = 0
 
@@ -148,7 +159,10 @@ end
 -- The catalogue: the abilities that can be watched
 ------------------------------------------------------------------------------
 
--- An entry: name, spellID, icon, cooldown (seconds, maybe nil), essential.
+-- An entry: name, spellID, icon, cooldown (seconds, maybe nil), essential;
+-- then what is known of its state: armed (on a cooldown that is worth
+-- announcing the end of), endsAt (when, as far as is known), total (the
+-- cooldown's length), lingerUntil, frame (its icon slot).
 
 local function BuildCatalog()
 	wipe(catalog)
@@ -219,19 +233,44 @@ end
 -- Reading cooldowns
 ------------------------------------------------------------------------------
 
--- Seconds until the ability is ready (0 when it is) and the length of the
--- cooldown it is on; nil when the game keeps the cooldown secret.
+-- What the game says about an ability's cooldown:
+--   "ready"             nothing is running;
+--   "open", left, total the seconds left and the cooldown's length;
+--   "secret", duration  it is running but the numbers are secret: here is the
+--                       duration object, for the game to draw from;
+--   nil                 nothing can be known this moment.
 local function ReadCooldown(name)
-	local ok, remaining, duration = pcall(function()
-		if C_Spell.GetSpellCharges then
-			local charges = C_Spell.GetSpellCharges(name)
-			if charges and charges.maxCharges and charges.maxCharges > 1 then
-				if charges.currentCharges > 0 then
-					return 0, 0
+	if C_Spell.GetSpellCooldownDuration then
+		local ok, duration = pcall(C_Spell.GetSpellCooldownDuration, name, true) -- true: the global cooldown does not count
+		if not ok or not duration then
+			return "ready"
+		end
+		local okSecret, secret = pcall(duration.HasSecretValues, duration)
+		if okSecret and not secret then
+			local okRead, zero, left, total = pcall(function()
+				return duration:IsZero(), duration:GetRemainingDuration(), duration:GetTotalDuration()
+			end)
+			if okRead then
+				if zero or left <= 0 or total <= 0 then
+					return "ready"
 				end
-				return charges.cooldownStartTime + charges.cooldownDuration - GetTime(), charges.cooldownDuration
+				return "open", left, total
 			end
 		end
+		-- Secret numbers; whether there is a cooldown at all may still be plain.
+		local okZero, zero = pcall(function()
+			if duration:IsZero() then
+				return true
+			end
+			return false
+		end)
+		if okZero and zero then
+			return "ready"
+		end
+		return "secret", duration
+	end
+	-- Older client: plain numbers, or nothing.
+	local ok, left, total = pcall(function()
 		local info = C_Spell.GetSpellCooldown(name)
 		if not info or info.isEnabled == false or info.duration <= 0 then
 			return 0, 0
@@ -245,8 +284,11 @@ local function ReadCooldown(name)
 		end
 		return info.startTime + info.duration - GetTime(), info.duration
 	end)
-	if ok and type(remaining) == "number" and not IsSecret(remaining) and not IsSecret(duration) then
-		return math.max(0, remaining), duration
+	if ok and type(left) == "number" and not IsSecret(left) and not IsSecret(total) then
+		if left <= 0 then
+			return "ready"
+		end
+		return "open", left, total
 	end
 	return nil
 end
@@ -257,12 +299,36 @@ local catalogDirty = false
 local function LearnCooldowns()
 	for _, name in ipairs(bookOrder) do
 		if not catalog[name] and not cdb.learned[name] then
-			local remaining, duration = ReadCooldown(name)
-			if remaining and remaining > 0 and duration >= db.minCooldown then
-				cdb.learned[name] = duration
+			local kind, _, total = ReadCooldown(name)
+			if kind == "open" and total >= db.minCooldown then
+				cdb.learned[name] = total
 				catalogDirty = true
 			end
 		end
+	end
+end
+
+-- The curve the game runs a secret cooldown's remaining time through to
+-- get the icon's transparency: opaque in the last "soon" seconds, else
+-- transparent.
+local soonCurve
+local function BuildSoonCurve()
+	if not (C_CurveUtil and C_CurveUtil.CreateCurve) then
+		return
+	end
+	local ok = pcall(function()
+		soonCurve = soonCurve or C_CurveUtil.CreateCurve()
+		if Enum.LuaCurveType then
+			soonCurve:SetType(Enum.LuaCurveType.Linear)
+		end
+		soonCurve:ClearPoints()
+		soonCurve:AddPoint(0, 0)
+		soonCurve:AddPoint(0.05, 1)
+		soonCurve:AddPoint(db.soon, 1)
+		soonCurve:AddPoint(db.soon + 0.05, 0)
+	end)
+	if not ok then
+		soonCurve = nil
 	end
 end
 
@@ -368,18 +434,23 @@ end
 -- The bar
 ------------------------------------------------------------------------------
 
+-- Every watched ability has a slot of its own, so icons never shift: in
+-- combat the game decides what is visible, and only it knows.
+
 local bar = CreateFrame("Frame", "CooldownNagBar", UIParent)
 bar:SetSize(ICON, ICON)
 bar:SetMovable(true)
 bar:SetClampedToScreen(true)
 bar:RegisterForDrag("LeftButton")
+bar:EnableMouse(false)
 bar:Hide()
 
 local label = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 label:SetPoint("BOTTOM", bar, "TOP", 0, 6)
 label:SetText("CooldownNag: drag to move")
+label:Hide()
 
-local icons = {}
+local slots = {}
 
 local function SavePosition()
 	local point, _, _, x, y = bar:GetPoint(1)
@@ -396,43 +467,62 @@ bar:SetScript("OnDragStop", function()
 	SavePosition()
 end)
 
-local function BarIcon(i)
-	if icons[i] then
-		return icons[i]
+local function Slot(i)
+	if slots[i] then
+		return slots[i]
 	end
 	local frame = CreateFrame("Frame", "CooldownNagIcon" .. i, bar)
 	StyleIcon(frame)
-	-- The last seconds of the cooldown, as the Cooldown Manager draws them:
-	-- a sweep, with our own countdown on top (the game's numbers depend on
-	-- an option of its own).
+	frame.Count:Hide()
+	-- The last seconds of the cooldown, as the Cooldown Manager draws
+	-- them: a sweep with the game's own countdown on it. The game draws
+	-- both, so they work on secret numbers too.
 	local cooldown = CreateFrame("Cooldown", nil, frame, "CooldownFrameTemplate")
 	cooldown:SetAllPoints()
 	cooldown:SetDrawEdge(false)
 	cooldown:SetDrawBling(false)
-	cooldown:SetHideCountdownNumbers(true)
+	cooldown:SetHideCountdownNumbers(false)
 	pcall(cooldown.SetSwipeTexture, cooldown, "Interface\\HUD\\UI-HUD-CoolDownManager-Icon-Swipe")
 	pcall(cooldown.SetSwipeColor, cooldown, 0, 0, 0, 0.7)
 	cooldown:SetFrameLevel(frame:GetFrameLevel() + 1)
-	cooldown:Hide()
 	frame.Cooldown = cooldown
-	local texts = CreateFrame("Frame", nil, frame)
-	texts:SetAllPoints()
-	texts:SetFrameLevel(frame:GetFrameLevel() + 3)
-	local timer = texts:CreateFontString(nil, "OVERLAY", "NumberFontNormalLarge")
-	timer:SetPoint("CENTER", 0, 0)
-	frame.Timer = timer
 	frame:SetPoint("LEFT", bar, "LEFT", (i - 1) * (ICON + GAP), 0)
-	icons[i] = frame
+	frame:SetAlpha(0)
+	slots[i] = frame
 	return frame
 end
 
+-- The bar can be dragged only while it is being previewed: the rest of
+-- the time it takes no clicks, as its icons are usually transparent.
 local function ApplyLayout()
 	bar:SetScale(db.scale)
 	bar:ClearAllPoints()
 	bar:SetPoint(db.point[1], UIParent, db.point[1], db.point[2], db.point[3])
-	label:SetShown(not db.locked)
-	-- Locked, the bar takes no clicks at all; unlocked, it can be dragged.
-	bar:EnableMouse(not db.locked)
+	label:SetShown(previewing and not db.locked)
+	bar:EnableMouse(previewing and not db.locked)
+end
+
+-- Hands out the slots: one per watched ability, in catalogue order.
+local function LayoutSlots()
+	wipe(watched)
+	for _, name in ipairs(catalogOrder) do
+		local entry = catalog[name]
+		if cdb.watch[name] and #watched < MAX_ICONS then
+			watched[#watched + 1] = entry
+			local frame = Slot(#watched)
+			frame.Icon:SetTexture(entry.icon or QUESTION_MARK)
+			frame:Show()
+			entry.frame = frame
+		else
+			entry.frame = nil
+		end
+	end
+	for i = #watched + 1, #slots do
+		slots[i]:Hide()
+		slots[i]:SetAlpha(0)
+	end
+	bar:SetWidth(math.max(ICON, #watched * (ICON + GAP) - GAP))
+	bar:SetShown(#watched > 0)
 end
 
 local function PlayReadySound()
@@ -442,34 +532,52 @@ local function PlayReadySound()
 	pcall(PlaySound, db.soundKit or PING)
 end
 
--- shown: list of { entry, state ("soon" or "ready"), remaining }.
-local function Draw(shown)
-	local now = GetTime()
-	for i, item in ipairs(shown) do
-		local frame = BarIcon(i)
-		local entry = item.entry
-		frame.Icon:SetTexture(entry.icon or QUESTION_MARK)
-		if item.state == "soon" then
-			frame.Icon:SetDesaturated(true)
-			local duration = (entry.duration and entry.duration > 0) and entry.duration or db.soon
-			frame.Cooldown:SetCooldown(entry.endsAt - duration, duration)
-			frame.Cooldown:Show()
-			frame.Timer:SetText(tostring(math.ceil(entry.endsAt - now)))
-			ShowGlow(frame, false)
-		else
-			frame.Icon:SetDesaturated(false)
-			frame.Cooldown:Clear()
-			frame.Cooldown:Hide()
-			frame.Timer:SetText("")
-			ShowGlow(frame, true)
+-- Dresses a slot for its state: "hidden"; "soon" (the last seconds, with
+-- plain numbers); "ready" (the glow); or "secret", when the game decides
+-- from the duration object.
+local function Dress(frame, state, entry, duration)
+	local cooldown = frame.Cooldown
+	if state == "soon" then
+		frame:SetAlpha(1)
+		frame.Icon:SetDesaturated(true)
+		cooldown:SetCooldown(entry.endsAt - entry.total, entry.total)
+		ShowGlow(frame, false)
+	elseif state == "ready" then
+		frame:SetAlpha(1)
+		frame.Icon:SetDesaturated(false)
+		cooldown:Clear()
+		ShowGlow(frame, true)
+	elseif state == "secret" then
+		frame.Icon:SetDesaturated(true)
+		ShowGlow(frame, false)
+		-- Transparency from the curve; if the game will not do even that,
+		-- better invisible than an icon that never goes away.
+		local okAlpha = soonCurve and pcall(function()
+			frame:SetAlpha(duration:EvaluateRemainingDuration(soonCurve))
+		end)
+		if not okAlpha then
+			frame:SetAlpha(0)
 		end
-		frame:Show()
+		-- The sweep: from the object, else from its (secret) numbers.
+		if entry.sweep ~= "none" then
+			local okSweep = entry.sweep ~= "numbers" and pcall(cooldown.SetCooldownFromDurationObject, cooldown, duration)
+			if okSweep then
+				entry.sweep = "object"
+			elseif pcall(function()
+				cooldown:SetCooldown(duration:GetStartTime(), duration:GetTotalDuration())
+			end) then
+				entry.sweep = "numbers"
+			else
+				entry.sweep = "none"
+				cooldown:Clear()
+			end
+		end
+	else
+		frame:SetAlpha(0)
+		frame.Icon:SetDesaturated(false)
+		cooldown:Clear()
+		ShowGlow(frame, false)
 	end
-	for i = #shown + 1, #icons do
-		icons[i]:Hide()
-	end
-	bar:SetWidth(math.max(ICON, #shown * (ICON + GAP) - GAP))
-	bar:SetShown(#shown > 0)
 end
 
 ------------------------------------------------------------------------------
@@ -478,8 +586,9 @@ end
 
 local Evaluate
 
--- While something is on the bar, look every tenth of a second; otherwise
--- wake up when the first watched ability gets close.
+-- While something is on the bar, or the game is drawing it, look every
+-- tenth of a second; otherwise wake up when the first watched ability
+-- gets close.
 local driver = CreateFrame("Frame")
 local elapsedSince = 0
 local function OnUpdate(_, elapsed)
@@ -500,55 +609,71 @@ local function WakeAt(when)
 	end)
 end
 
+local function Ready(entry, now)
+	entry.armed = false
+	entry.endsAt = nil
+	entry.lingerUntil = now + db.linger
+end
+
 function Evaluate()
 	local now = GetTime()
-	local shown = {}
+	local busy = false -- something is showing, or the game is deciding
 	local nextAt
 	local announce = false
-	for _, name in ipairs(catalogOrder) do
-		local entry = catalog[name]
-		if cdb.watch[name] and #shown < MAX_ICONS then
-			local state
-			if previewing then
-				state = "ready"
-			else
-				local remaining, duration = ReadCooldown(name)
-				if remaining == nil then
-					-- Secret: nothing to be known this moment.
-				elseif remaining > 0 then
-					entry.armed = true -- it will come ready, and that is worth telling
-					entry.endsAt = now + remaining
-					entry.duration = duration
-					entry.lingerUntil = nil
-					if remaining <= db.soon then
-						state = "soon"
-					else
-						local at = entry.endsAt - db.soon
-						nextAt = (nextAt and nextAt < at) and nextAt or at
-					end
+	for _, entry in ipairs(watched) do
+		local state, duration
+		if previewing then
+			state = "ready"
+		else
+			local kind, a, b = ReadCooldown(entry.name)
+			if kind == "open" then
+				entry.armed = true -- it will come ready, and that is worth telling
+				entry.endsAt = now + a
+				entry.total = b
+				entry.lingerUntil = nil
+				if a <= db.soon then
+					state = "soon"
 				else
-					if entry.armed then
-						entry.armed = false
-						entry.lingerUntil = now + db.linger
-						announce = true
-					end
-					if entry.lingerUntil and now < entry.lingerUntil then
-						state = "ready"
-					else
-						entry.lingerUntil = nil
-					end
+					state = "hidden"
+					local at = entry.endsAt - db.soon
+					nextAt = (nextAt and nextAt < at) and nextAt or at
 				end
-			end
-			if state then
-				shown[#shown + 1] = { entry = entry, state = state }
+			elseif kind == "secret" then
+				duration = a
+				if entry.lingerUntil and now < entry.lingerUntil then
+					state = "ready"
+				elseif entry.armed and entry.endsAt and now >= entry.endsAt then
+					-- The game will not say, but by our reckoning it is ready.
+					Ready(entry, now)
+					announce = true
+					state = "ready"
+				else
+					state = "secret"
+				end
+			elseif kind == "ready" then
+				if entry.armed then
+					Ready(entry, now)
+					announce = true
+				end
+				if entry.lingerUntil and now < entry.lingerUntil then
+					state = "ready"
+				else
+					entry.lingerUntil = nil
+					state = "hidden"
+				end
+			else
+				state = "hidden"
 			end
 		end
+		if state ~= "hidden" then
+			busy = true
+		end
+		Dress(entry.frame, state, entry, duration)
 	end
 	if announce then
 		PlayReadySound()
 	end
-	Draw(shown)
-	if #shown > 0 then
+	if busy then
 		driver:SetScript("OnUpdate", OnUpdate)
 	else
 		driver:SetScript("OnUpdate", nil)
@@ -558,14 +683,20 @@ function Evaluate()
 	end
 end
 
-local function Watching()
-	local n = 0
-	for name in pairs(cdb.watch) do
-		if catalog[name] then
-			n = n + 1
+-- A cast of a watched ability: in combat this is the one plain fact there
+-- is, so the end of the cooldown is reckoned from it and the ability's
+-- cooldown length. Exact numbers, when they come, overrule it.
+local function NoteCast(spellID)
+	local name = SpellName(spellID)
+	local entry = name and catalog[name]
+	if entry and entry.frame and entry.cooldown and entry.cooldown > GCD_MAX then
+		local kind = ReadCooldown(name)
+		if kind == "secret" or kind == nil then
+			entry.armed = true
+			entry.endsAt = GetTime() + entry.cooldown
+			entry.total = entry.cooldown
 		end
 	end
-	return n
 end
 
 ------------------------------------------------------------------------------
@@ -683,6 +814,12 @@ local function HidePanel(settings)
 	end
 end
 
+local function SetPreview(on)
+	previewing = on
+	ApplyLayout()
+	Evaluate()
+end
+
 local function BuildPanel(settings)
 	panel = CreateFrame("Frame", "CooldownNagSettingsPanel", settings)
 	panel:SetPoint("TOPLEFT", 17, -72)
@@ -716,13 +853,12 @@ local function BuildPanel(settings)
 	test:SetPoint("TOPRIGHT", 0, -1)
 	test:SetText("Show bar")
 	test:SetScript("OnClick", function()
-		if not previewing and Watching() == 0 then
+		if not previewing and #watched == 0 then
 			Print("nothing is watched yet: click an ability below")
 			return
 		end
-		previewing = not previewing
+		SetPreview(not previewing)
 		test:SetText(previewing and "Hide bar" or "Show bar")
-		Evaluate()
 	end)
 
 	local help = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -809,6 +945,7 @@ local function BuildPanel(settings)
 			end
 			PlaySound(SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or 856)
 			panel:Layout()
+			LayoutSlots()
 			Evaluate()
 		end)
 		buttons[i] = button
@@ -840,16 +977,16 @@ local function BuildPanel(settings)
 			y = y + math.max(1, math.ceil(#names / COLUMNS)) * step + 8
 			section:SetHeight(y - top)
 		end
-		local watched, rest = {}, {}
+		local on, off = {}, {}
 		for _, name in ipairs(catalogOrder) do
 			if cdb.watch[name] then
-				watched[#watched + 1] = name
+				on[#on + 1] = name
 			else
-				rest[#rest + 1] = name
+				off[#off + 1] = name
 			end
 		end
-		Fill(sections[1], watched, false)
-		Fill(sections[2], rest, true)
+		Fill(sections[1], on, false)
+		Fill(sections[2], off, true)
 		for i = used + 1, #buttons do
 			buttons[i]:Hide()
 		end
@@ -862,9 +999,8 @@ local function BuildPanel(settings)
 	end)
 	panel:SetScript("OnHide", function()
 		if previewing then
-			previewing = false
+			SetPreview(false)
 			test:SetText("Show bar")
-			Evaluate()
 		end
 	end)
 end
@@ -950,6 +1086,7 @@ local function Rebuild()
 	if panel and panel:IsShown() then
 		panel:Layout()
 	end
+	LayoutSlots()
 	Evaluate()
 end
 
@@ -966,6 +1103,26 @@ local function BookSpell(words)
 	end
 end
 
+-- What the game is willing to tell right now, for when the bar does not
+-- behave.
+local function Debug()
+	local okSecret, secret = pcall(function()
+		return C_Secrets and C_Secrets.ShouldCooldownsBeSecret and C_Secrets.ShouldCooldownsBeSecret()
+	end)
+	Print("cooldowns secret now: %s; in combat: %s; duration objects: %s; curve: %s", okSecret and tostring(secret) or "unknown",
+		tostring(InCombatLockdown()), tostring(C_Spell.GetSpellCooldownDuration ~= nil), tostring(soonCurve ~= nil))
+	for _, entry in ipairs(watched) do
+		local kind, a, b = ReadCooldown(entry.name)
+		local detail = ""
+		if kind == "open" then
+			detail = (": %.1f of %.1f s left"):format(a, b)
+		elseif kind == "secret" then
+			detail = (": sweep %s, reckoned end %s"):format(entry.sweep or "untried", entry.endsAt and ("in %.1f s"):format(entry.endsAt - GetTime()) or "unknown")
+		end
+		Print("  %s: %s%s%s", entry.name, tostring(kind), detail, entry.lingerUntil and " (lingering)" or "")
+	end
+end
+
 SLASH_COOLDOWNNAG1 = "/cdn"
 SLASH_COOLDOWNNAG2 = "/cooldownnag"
 SlashCmdList.COOLDOWNNAG = function(msg)
@@ -976,6 +1133,7 @@ SlashCmdList.COOLDOWNNAG = function(msg)
 		return
 	elseif word == "soon" then
 		db.soon = math.max(1, math.min(60, tonumber(rest) or DEFAULTS.soon))
+		BuildSoonCurve()
 		Print("icons appear %g seconds before an ability is ready", db.soon)
 	elseif word == "linger" then
 		db.linger = math.max(0, math.min(60, tonumber(rest) or DEFAULTS.linger))
@@ -1062,19 +1220,21 @@ SlashCmdList.COOLDOWNNAG = function(msg)
 		return
 	elseif word == "list" then
 		Print("watching:")
-		for _, name in ipairs(catalogOrder) do
-			if cdb.watch[name] then
-				Print("  %s (%s)", name, CooldownText(catalog[name].cooldown))
-			end
+		for _, entry in ipairs(watched) do
+			Print("  %s (%s)", entry.name, CooldownText(entry.cooldown))
 		end
 		return
 	elseif word == "test" then
-		previewing = not previewing
+		SetPreview(not previewing)
 		Print("bar preview %s", previewing and "on" or "off")
+		return
+	elseif word == "debug" then
+		Debug()
+		return
 	elseif word == "reset" then
 		db.point = { DEFAULTS.point[1], DEFAULTS.point[2], DEFAULTS.point[3] }
 	else
-		Print("/cdn opens the settings; /cdn soon <seconds>; /cdn linger <seconds>; /cdn sound on|off|list|test|<name>; /cdn glow flash|ants|off; /cdn glowcolor <colour>; /cdn lock|unlock; /cdn scale <n>; /cdn min <seconds>; /cdn watch|unwatch <spell>; /cdn list; /cdn test; /cdn reset")
+		Print("/cdn opens the settings; /cdn soon <seconds>; /cdn linger <seconds>; /cdn sound on|off|list|test|<name>; /cdn glow flash|ants|off; /cdn glowcolor <colour>; /cdn lock|unlock; /cdn scale <n>; /cdn min <seconds>; /cdn watch|unwatch <spell>; /cdn list; /cdn test; /cdn debug; /cdn reset")
 		return
 	end
 	ApplyLayout()
@@ -1092,12 +1252,14 @@ local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
 loader:RegisterEvent("PLAYER_LOGIN")
 loader:RegisterEvent("PLAYER_ENTERING_WORLD")
+loader:RegisterEvent("PLAYER_REGEN_ENABLED")
 loader:RegisterEvent("SPELLS_CHANGED")
 loader:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 pcall(loader.RegisterEvent, loader, "SPELL_UPDATE_CHARGES")
 pcall(loader.RegisterEvent, loader, "COOLDOWN_VIEWER_DATA_LOADED")
+pcall(loader.RegisterUnitEvent, loader, "UNIT_SPELLCAST_SUCCEEDED", "player")
 local learnedAt = 0
-loader:SetScript("OnEvent", function(self, event, arg)
+loader:SetScript("OnEvent", function(self, event, arg, _, spellID)
 	if event == "ADDON_LOADED" then
 		if arg == ADDON_NAME then
 			CooldownNagDB = CooldownNagDB or {}
@@ -1112,18 +1274,24 @@ loader:SetScript("OnEvent", function(self, event, arg)
 			cdb.watch = cdb.watch or {} -- spell name -> true
 			cdb.extra = cdb.extra or {} -- spells added by /cdn watch, listed whatever their cooldown
 			cdb.learned = cdb.learned or {} -- spell name -> cooldown seconds seen
+			BuildSoonCurve()
 		elseif arg == "Blizzard_CooldownViewer" and db then
 			HookSettings()
 		end
+	elseif not db then
+		return
 	elseif event == "PLAYER_LOGIN" then
 		Rebuild()
 		ApplyLayout()
 		HookSettings()
-		if Watching() == 0 then
+		if #watched == 0 then
 			Print("nothing watched yet: /cdn to pick abilities")
 		end
 	elseif event == "SPELLS_CHANGED" or event == "COOLDOWN_VIEWER_DATA_LOADED" then
 		Rebuild()
+	elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+		pcall(NoteCast, spellID)
+		Evaluate()
 	elseif event == "SPELL_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_CHARGES" then
 		local now = GetTime()
 		if now - learnedAt > 0.5 then
