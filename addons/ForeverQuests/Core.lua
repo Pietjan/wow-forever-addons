@@ -1,4 +1,5 @@
--- Tracked quests -> dots. Rebuilds after quest log and watch list changes,
+-- Tracked quests -> dots; while a quest's details are open in the map's
+-- quest log, only that quest. Rebuilds after quest log and watch list changes,
 -- and tells the world map and minimap to redraw.
 
 local addonName, ns = ...
@@ -57,10 +58,21 @@ local function TrackedQuests()
 	return list
 end
 
-local function Rebuild()
+local function FocusedQuest()
+	local questID = QuestMapFrame_GetFocusedQuestID and QuestMapFrame_GetFocusedQuestID()
+	if questID and questID > 0 then
+		return questID
+	end
+end
+
+function ns.Rebuild()
+	if not ns.ready then
+		return
+	end
 	wipe(ns.active)
 	local taken = {}
-	for _, questID in ipairs(TrackedQuests()) do
+	local focused = FocusedQuest()
+	for _, questID in ipairs(focused and { focused } or TrackedQuests()) do
 		local quest = ns.Quest(questID)
 		if quest.count > 0 and not C_QuestLog.IsComplete(questID) then
 			ns.UpdateProgress(quest)
@@ -82,7 +94,7 @@ local function ScheduleRebuild()
 		pending = true
 		C_Timer.After(0.2, function()
 			pending = false
-			Rebuild()
+			ns.Rebuild()
 		end)
 	end
 end
@@ -100,7 +112,7 @@ local function Start()
 	ns.ready = true
 	ns.HideMinimapAreas()
 	ns.SetUpMinimap()
-	Rebuild()
+	ns.Rebuild()
 end
 
 local events = CreateFrame("Frame")

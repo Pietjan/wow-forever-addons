@@ -78,6 +78,25 @@ local function UpdateQuestIcons()
 	end
 end
 
+-- Selecting a quest pings its icon's spot; with the icon hidden, hide the
+-- ping too.
+local function HidePing(provider)
+	local ping = provider.pingPin
+	if not ping or not ping.GetID then
+		return
+	end
+	local idKey, id = ping:GetID()
+	if idKey ~= "questID" then
+		return
+	end
+	for pin in pairs(hiddenIcons) do
+		if pin:GetQuestID() == id then
+			ping:Hide()
+			return
+		end
+	end
+end
+
 function ns.HideMapIcons()
 	if not WorldMapFrame or type(WorldMapFrame.dataProviders) ~= "table" then
 		return
@@ -86,10 +105,14 @@ function ns.HideMapIcons()
 		if not hookedProviders[provider] and provider.AddQuest and provider.GetPinTemplate
 			and provider:GetPinTemplate() == "QuestPinTemplate" then
 			hookedProviders[provider] = true
-			hooksecurefunc(provider, "RefreshAllData", function()
+			hooksecurefunc(provider, "RefreshAllData", function(self)
 				wipe(hiddenIcons) -- every pin was released and acquired again
 				UpdateQuestIcons()
+				HidePing(self)
 			end)
+			if provider.PingQuestID then
+				hooksecurefunc(provider, "PingQuestID", HidePing)
+			end
 		end
 	end
 	UpdateQuestIcons()
