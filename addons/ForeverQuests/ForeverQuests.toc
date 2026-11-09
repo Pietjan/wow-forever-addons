@@ -4,6 +4,7 @@
 ## Author: Pietjan
 ## Version: 1.0
 ## Dependencies: QuestieDB
+## SavedVariablesPerCharacter: ForeverQuestsColors
 
 Data.lua
 Dots.lua

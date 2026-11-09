@@ -4,8 +4,9 @@
 
 local addonName, ns = ...
 
--- Distinct, bright colours, handed out to tracked quests in turn and kept
--- for the session so a quest does not change colour when another is tracked.
+-- Distinct, bright colours. A quest gets one the first time it shows dots
+-- and keeps it while it is in the quest log, saved per character; a new
+-- quest takes the colour fewest other quests in the log have.
 local PALETTE = {
 	{ 1.00, 0.82, 0.00 },
 	{ 0.30, 0.80, 1.00 },
@@ -18,7 +19,7 @@ local PALETTE = {
 }
 
 ns.active = {}
-local colorOf = {}
+local colorOf -- questID -> PALETTE index, the saved ForeverQuestsColors
 
 function ns.Print(text)
 	print("|cffffd100ForeverQuests|r: " .. text)
@@ -33,18 +34,26 @@ function ns.IsActive(questID)
 	return false
 end
 
-local function PickColor(questID, taken)
-	local color = colorOf[questID]
-	if color and not taken[color] then
-		return color
-	end
-	for _, candidate in ipairs(PALETTE) do
-		if not taken[candidate] then
-			colorOf[questID] = candidate
-			return candidate
+local function ColorOf(questID)
+	local index = colorOf[questID]
+	if not PALETTE[index] then
+		local uses = {}
+		for other, otherIndex in pairs(colorOf) do
+			if C_QuestLog.GetLogIndexForQuestID(other) then
+				uses[otherIndex] = (uses[otherIndex] or 0) + 1
+			else
+				colorOf[other] = nil -- abandoned or turned in
+			end
 		end
+		index = 1
+		for candidate = 2, #PALETTE do
+			if (uses[candidate] or 0) < (uses[index] or 0) then
+				index = candidate
+			end
+		end
+		colorOf[questID] = index
 	end
-	return PALETTE[questID % #PALETTE + 1]
+	return PALETTE[index]
 end
 
 local function TrackedQuests()
@@ -70,14 +79,12 @@ function ns.Rebuild()
 		return
 	end
 	wipe(ns.active)
-	local taken = {}
 	local focused = FocusedQuest()
 	for _, questID in ipairs(focused and { focused } or TrackedQuests()) do
 		local quest = ns.Quest(questID)
 		if quest.count > 0 and not C_QuestLog.IsComplete(questID) then
 			ns.UpdateProgress(quest)
-			quest.color = PickColor(questID, taken)
-			taken[quest.color] = true
+			quest.color = ColorOf(questID)
 			ns.active[#ns.active + 1] = quest
 		end
 	end
@@ -109,6 +116,8 @@ local function Start()
 		ns.Print("QuestieDB does not fit: " .. tostring(message))
 		return
 	end
+	ForeverQuestsColors = type(ForeverQuestsColors) == "table" and ForeverQuestsColors or {}
+	colorOf = ForeverQuestsColors
 	ns.ready = true
 	ns.HideMinimapAreas()
 	ns.SetUpMinimap()
