@@ -4,8 +4,10 @@
 local _, ns = ...
 
 local TEXTURE = "Interface\\AddOns\\ForeverQuests\\dot" -- white disc, dark rim; tinted per quest
-local TURN_IN_ATLAS = "QuestTurnin" -- the yellow "?"
-local TURN_IN_SCALE = 1.8 -- times the dot size
+-- The game's own turn-in pin: a dark round button with the "?" on top.
+local TURN_IN_BUTTON = "UI-QuestPoi-QuestNumber"
+local TURN_IN_ICON = "UI-QuestIcon-TurnIn-Normal"
+local TURN_IN_SCALE = 2.2 -- times the dot size
 local MAX_LINES = 5
 
 local function AddUnique(lines, seen, text)
@@ -60,8 +62,10 @@ local function SetPointData(dot, point)
 	if point.target.turnIn then
 		if dot.style ~= "turnIn" then
 			dot.style = "turnIn"
-			dot.texture:SetAtlas(TURN_IN_ATLAS)
+			dot.texture:SetAtlas(TURN_IN_BUTTON)
 			dot.texture:SetVertexColor(1, 1, 1, 1)
+			dot.icon:SetAtlas(TURN_IN_ICON)
+			dot.icon:Show()
 			dot:SetSize(dot.size * TURN_IN_SCALE, dot.size * TURN_IN_SCALE)
 		end
 		return
@@ -70,6 +74,7 @@ local function SetPointData(dot, point)
 		dot.style = "dot"
 		dot.texture:SetTexture(TEXTURE, "CLAMP", "CLAMP", "TRILINEAR")
 		dot.texture:SetTexCoord(0, 1, 0, 1)
+		dot.icon:Hide()
 		dot:SetSize(dot.size, dot.size)
 	end
 	local color = point.target.quest.color or { 0.95, 0.95, 0.95 }
@@ -84,6 +89,9 @@ function ns.CreateDot(parent, size)
 	dot.texture = dot:CreateTexture(nil, "ARTWORK")
 	dot.texture:SetAllPoints()
 	dot.texture:SetTexture(TEXTURE, "CLAMP", "CLAMP", "TRILINEAR")
+	dot.icon = dot:CreateTexture(nil, "OVERLAY")
+	dot.icon:SetAllPoints()
+	dot.icon:Hide()
 	dot:SetMouseClickEnabled(false)
 	dot:SetMouseMotionEnabled(true)
 	dot:SetScript("OnEnter", OnEnter)
