@@ -225,6 +225,31 @@ function ns.PointsOn(mapID)
 	return list
 end
 
+-- Merge points of one quest that fall in the same grid cell of cellX by
+-- cellY map units, so dots that would overlap at the current zoom become
+-- one. A merged point keeps the first point's spot (the dot's identity),
+-- sits at the members' average and lists every target in it.
+function ns.Cluster(points, cellX, cellY)
+	local byCell, list = {}, {}
+	for _, point in ipairs(points) do
+		local key = point.target.quest.questID .. ":" .. math.floor(point.x / cellX) .. ":" .. math.floor(point.y / cellY)
+		local cluster = byCell[key]
+		if not cluster then
+			cluster = { x = 0, y = 0, n = 0, target = point.target, spot = point.spot, targets = {} }
+			byCell[key] = cluster
+			list[#list + 1] = cluster
+		end
+		cluster.x, cluster.y, cluster.n = cluster.x + point.x, cluster.y + point.y, cluster.n + 1
+		if not tContains(cluster.targets, point.target) then
+			cluster.targets[#cluster.targets + 1] = point.target
+		end
+	end
+	for _, cluster in ipairs(list) do
+		cluster.x, cluster.y = cluster.x / cluster.n, cluster.y / cluster.n
+	end
+	return list
+end
+
 function ns.ForgetPoints()
 	wipe(pointsOn)
 end

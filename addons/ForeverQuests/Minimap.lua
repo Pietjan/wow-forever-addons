@@ -5,11 +5,13 @@
 local _, ns = ...
 
 local DOT_SIZE = 8
+local CELL = 11 -- dots of one quest closer than this (pixels) merge
 local INTERVAL = 0.03 -- seconds between position updates
 local EDGE = 0.92 -- keep dots off the round frame's rim
 
 local layer, pool
 local mapID, points, mapWidth, mapHeight
+local clustered, clusteredFor, clusteredCell -- merged points, for which list and cell size
 local elapsedSince = 0
 
 function ns.ResetMinimap()
@@ -34,6 +36,13 @@ local function Update()
 		local radius = C_Minimap.GetViewRadius()
 		local half = Minimap:GetWidth() / 2
 		local limit = (radius * EDGE) ^ 2
+		-- Merge on a grid fixed to the map, so merged dots hold still while
+		-- you move; it only changes when the zoom does.
+		local cell = CELL * radius / half
+		if clusteredFor ~= points or clusteredCell ~= cell then
+			clusteredFor, clusteredCell = points, cell
+			clustered = ns.Cluster(points, cell / mapWidth, cell / mapHeight)
+		end
 		local rotates = GetCVarBool("rotateMinimap") and not C_Minimap.IsRotateMinimapIgnored()
 		local facing = rotates and GetPlayerFacing() or nil
 		local cos, sin = 1, 0
@@ -41,7 +50,7 @@ local function Update()
 			cos, sin = math.cos(facing), math.sin(facing)
 		end
 		if radius > 0 and (facing or not rotates) then
-			for _, point in ipairs(points) do
+			for _, point in ipairs(clustered) do
 				local east = (point.x - px) * mapWidth -- yards
 				local north = (py - point.y) * mapHeight
 				local x, y = east, north

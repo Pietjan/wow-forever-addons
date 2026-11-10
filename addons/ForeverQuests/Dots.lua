@@ -3,32 +3,41 @@
 
 local _, ns = ...
 
-local CIRCLE = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
+local TEXTURE = "Interface\\AddOns\\ForeverQuests\\dot" -- white disc, dark rim; tinted per quest
+local MAX_LINES = 5
 
-local function Masked(dot, layer, sublevel)
-	local texture = dot:CreateTexture(nil, layer, nil, sublevel)
-	local mask = dot:CreateMaskTexture()
-	mask:SetTexture(CIRCLE, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-	mask:SetAllPoints(texture)
-	texture:AddMaskTexture(mask)
-	return texture
+local function AddUnique(lines, seen, text)
+	if text and not seen[text] and #lines < MAX_LINES then
+		seen[text] = true
+		lines[#lines + 1] = text
+	end
 end
 
 local function OnEnter(dot)
-	local target = dot.point and dot.point.target
-	if not target then
+	local point = dot.point
+	if not point then
 		return
 	end
-	local quest = target.quest
+	local quest = point.target.quest
 	local r, g, b = unpack(quest.color or { 1, 0.82, 0 })
 	GameTooltip:SetOwner(dot, "ANCHOR_RIGHT")
 	GameTooltip:SetText(C_QuestLog.GetTitleForQuestID(quest.questID) or ("Quest " .. quest.questID), r, g, b)
-	if target.source then
-		GameTooltip:AddLine(target.source, 1, 1, 1)
+	local sources, objectives, seen = {}, {}, {}
+	for _, target in ipairs(point.targets or { point.target }) do
+		AddUnique(sources, seen, target.source)
+		local detail = target.progress or target.label
+		if detail ~= target.source then
+			AddUnique(objectives, seen, detail)
+		end
 	end
-	local detail = target.progress or target.label
-	if detail and detail ~= target.source then
-		GameTooltip:AddLine(detail, 0.8, 0.8, 0.8, true)
+	for _, text in ipairs(sources) do
+		GameTooltip:AddLine(text, 1, 1, 1)
+	end
+	for _, text in ipairs(objectives) do
+		GameTooltip:AddLine(text, 0.8, 0.8, 0.8, true)
+	end
+	if point.n and point.n > 1 then
+		GameTooltip:AddLine(point.n .. " spawns here", 0.6, 0.6, 0.6)
 	end
 	GameTooltip:Show()
 end
@@ -42,19 +51,15 @@ end
 local function SetPointData(dot, point)
 	dot.point = point
 	local color = point.target.quest.color or { 1, 0.82, 0 }
-	dot.fill:SetColorTexture(color[1], color[2], color[3], 1)
+	dot.texture:SetVertexColor(color[1], color[2], color[3], 1)
 end
 
 function ns.CreateDot(parent, size)
 	local dot = CreateFrame("Frame", nil, parent)
 	dot:SetSize(size, size)
-	dot.rim = Masked(dot, "ARTWORK", 1)
-	dot.rim:SetAllPoints()
-	dot.rim:SetColorTexture(0, 0, 0, 0.85)
-	dot.fill = Masked(dot, "ARTWORK", 2)
-	local inset = math.max(1, size * 0.17)
-	dot.fill:SetPoint("TOPLEFT", inset, -inset)
-	dot.fill:SetPoint("BOTTOMRIGHT", -inset, inset)
+	dot.texture = dot:CreateTexture(nil, "ARTWORK")
+	dot.texture:SetAllPoints()
+	dot.texture:SetTexture(TEXTURE, "CLAMP", "CLAMP", "TRILINEAR")
 	dot:SetMouseClickEnabled(false)
 	dot:SetMouseMotionEnabled(true)
 	dot:SetScript("OnEnter", OnEnter)

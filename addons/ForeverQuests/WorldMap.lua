@@ -6,7 +6,8 @@
 
 local _, ns = ...
 
-local DOT_SIZE = 12
+local DOT_SIZE = 10
+local CELL = 15 -- dots of one quest closer than this (screen units) merge
 
 local pool
 local canvas
@@ -50,7 +51,13 @@ function ns.RefreshWorldMap()
 	local info = mapID and C_Map.GetMapInfo(mapID)
 	if ns.ready and info and info.mapType >= Enum.UIMapType.Zone then
 		local level = FrameLevel()
-		for _, point in ipairs(ns.PointsOn(mapID)) do
+		local width, height = canvas:GetSize()
+		local scale = WorldMapFrame:GetCanvasScale()
+		local points = ns.PointsOn(mapID)
+		if width * scale > 0 and height * scale > 0 then
+			points = ns.Cluster(points, CELL / (width * scale), CELL / (height * scale))
+		end
+		for _, point in ipairs(points) do
 			local dot = pool:Acquire(point)
 			dot:SetFrameLevel(level)
 		end
@@ -67,8 +74,9 @@ function ns.SetUpWorldMap()
 	canvas = WorldMapFrame:GetCanvas()
 	pool = ns.DotPool(canvas, DOT_SIZE)
 	hooksecurefunc(WorldMapFrame, "OnMapChanged", ns.RefreshWorldMap)
-	hooksecurefunc(WorldMapFrame, "OnCanvasScaleChanged", Layout)
-	hooksecurefunc(WorldMapFrame, "OnCanvasSizeChanged", Layout)
+	-- Zooming changes which dots overlap, so merge again.
+	hooksecurefunc(WorldMapFrame, "OnCanvasScaleChanged", ns.RefreshWorldMap)
+	hooksecurefunc(WorldMapFrame, "OnCanvasSizeChanged", ns.RefreshWorldMap)
 	WorldMapFrame:HookScript("OnShow", ns.RefreshWorldMap)
 	-- Opening a quest's details in the map's quest log focuses it.
 	hooksecurefunc(WorldMapFrame, "SetFocusedQuestID", ns.Rebuild)
