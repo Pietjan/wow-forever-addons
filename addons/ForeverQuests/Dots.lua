@@ -7,7 +7,6 @@ local TEXTURE = "Interface\\AddOns\\ForeverQuests\\dot" -- white disc, dark rim;
 -- The game's own turn-in pin: a dark round button with the "?" on top.
 local TURN_IN_BUTTON = "UI-QuestPoi-QuestNumber"
 local TURN_IN_ICON = "UI-QuestIcon-TurnIn-Normal"
-local TURN_IN_SCALE = 2.2 -- times the dot size
 local MAX_LINES = 5
 
 local function AddUnique(lines, seen, text)
@@ -66,7 +65,7 @@ local function SetPointData(dot, point)
 			dot.texture:SetVertexColor(1, 1, 1, 1)
 			dot.icon:SetAtlas(TURN_IN_ICON)
 			dot.icon:Show()
-			dot:SetSize(dot.size * TURN_IN_SCALE, dot.size * TURN_IN_SCALE)
+			dot:SetSize(dot.turnInSize, dot.turnInSize)
 		end
 		return
 	end
@@ -81,9 +80,10 @@ local function SetPointData(dot, point)
 	dot.texture:SetVertexColor(color[1], color[2], color[3], 1)
 end
 
-function ns.CreateDot(parent, size)
+function ns.CreateDot(parent, size, turnInSize)
 	local dot = CreateFrame("Frame", nil, parent)
 	dot.size = size
+	dot.turnInSize = turnInSize or size
 	dot.style = "dot"
 	dot:SetSize(size, size)
 	dot.texture = dot:CreateTexture(nil, "ARTWORK")
@@ -161,7 +161,8 @@ end
 -- are no longer wanted fade out and then go back to the free list.
 local FADE = 0.2 -- seconds
 
-function ns.DotPool(parent, size)
+-- size: dot size; turnInSize: size of the turn-in "?" markers.
+function ns.DotPool(parent, size, turnInSize)
 	local pool = { active = {}, free = {}, fading = {} }
 	local driver = CreateFrame("Frame", nil, parent)
 
@@ -218,7 +219,7 @@ function ns.DotPool(parent, size)
 		local key = point.spot or point
 		local dot = self.active[key]
 		if not dot then
-			dot = table.remove(self.free) or ns.CreateDot(parent, size)
+			dot = table.remove(self.free) or ns.CreateDot(parent, size, turnInSize)
 			dot.key = key
 			dot.wanted = false
 			dot:Hide()

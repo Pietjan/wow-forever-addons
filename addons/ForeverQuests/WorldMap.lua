@@ -7,6 +7,7 @@
 local _, ns = ...
 
 local DOT_SIZE = 10
+local TURN_IN_SIZE = 32 -- the game's quest pins draw at 32
 local CELL = 15 -- dots of one quest closer than this (screen units) merge
 
 local pool
@@ -88,7 +89,7 @@ function ns.SetUpWorldMap()
 	end
 	hooked = true
 	canvas = WorldMapFrame:GetCanvas()
-	pool = ns.DotPool(canvas, DOT_SIZE)
+	pool = ns.DotPool(canvas, DOT_SIZE, TURN_IN_SIZE)
 	hooksecurefunc(WorldMapFrame, "OnMapChanged", ns.RefreshWorldMap)
 	-- Zooming changes which dots overlap, so merge again.
 	hooksecurefunc(WorldMapFrame, "OnCanvasScaleChanged", ns.RefreshWorldMap)
