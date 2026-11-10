@@ -225,29 +225,67 @@ function ns.PointsOn(mapID)
 	return list
 end
 
--- Merge points of one quest that fall in the same grid cell of cellX by
--- cellY map units, so dots that would overlap at the current zoom become
--- one. A merged point keeps the first point's spot (the dot's identity),
--- sits at the members' average and lists every target in it.
+-- Merge points of one quest that lie closer together than cellX (across)
+-- and cellY (down) map units, so no two dots of a quest overlap at the
+-- current zoom. Each pass joins every group with the nearest earlier group
+-- within reach; groups move to their members' average, which can bring
+-- them within reach of another, so passes repeat until nothing changes.
+-- A merged point keeps its first member's spot (the dot's identity) and
+-- lists every target in it.
+local MAX_PASSES = 6
+
+local function MergePass(groups, cellX, cellY)
+	local grid, merged, changed = {}, {}, false
+	for _, group in ipairs(groups) do
+		local ux, uy = group.x / cellX, group.y / cellY -- in cells; reach is 1
+		local gx, gy = math.floor(ux), math.floor(uy)
+		local quest = group.target.quest.questID
+		local best, bestDistance = nil, 1
+		for dx = -1, 1 do
+			for dy = -1, 1 do
+				local bucket = grid[quest .. ":" .. (gx + dx) .. ":" .. (gy + dy)]
+				for _, other in ipairs(bucket or {}) do
+					local distance = (other.x / cellX - ux) ^ 2 + (other.y / cellY - uy) ^ 2
+					if distance < bestDistance then
+						best, bestDistance = other, distance
+					end
+				end
+			end
+		end
+		if best then
+			changed = true
+			local n = best.n + group.n
+			best.x = (best.x * best.n + group.x * group.n) / n
+			best.y = (best.y * best.n + group.y * group.n) / n
+			best.n = n
+			for _, target in ipairs(group.targets) do
+				if not tContains(best.targets, target) then
+					best.targets[#best.targets + 1] = target
+				end
+			end
+		else
+			local key = quest .. ":" .. gx .. ":" .. gy
+			grid[key] = grid[key] or {}
+			table.insert(grid[key], group)
+			merged[#merged + 1] = group
+		end
+	end
+	return merged, changed
+end
+
 function ns.Cluster(points, cellX, cellY)
-	local byCell, list = {}, {}
-	for _, point in ipairs(points) do
-		local key = point.target.quest.questID .. ":" .. math.floor(point.x / cellX) .. ":" .. math.floor(point.y / cellY)
-		local cluster = byCell[key]
-		if not cluster then
-			cluster = { x = 0, y = 0, n = 0, target = point.target, spot = point.spot, targets = {} }
-			byCell[key] = cluster
-			list[#list + 1] = cluster
-		end
-		cluster.x, cluster.y, cluster.n = cluster.x + point.x, cluster.y + point.y, cluster.n + 1
-		if not tContains(cluster.targets, point.target) then
-			cluster.targets[#cluster.targets + 1] = point.target
+	local groups = {}
+	for i, point in ipairs(points) do
+		groups[i] = { x = point.x, y = point.y, n = 1, target = point.target, spot = point.spot, targets = { point.target } }
+	end
+	for _ = 1, MAX_PASSES do
+		local changed
+		groups, changed = MergePass(groups, cellX, cellY)
+		if not changed then
+			break
 		end
 	end
-	for _, cluster in ipairs(list) do
-		cluster.x, cluster.y = cluster.x / cluster.n, cluster.y / cluster.n
-	end
-	return list
+	return groups
 end
 
 function ns.ForgetPoints()
