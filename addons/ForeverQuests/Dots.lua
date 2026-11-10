@@ -19,7 +19,7 @@ local function OnEnter(dot)
 		return
 	end
 	local quest = point.target.quest
-	local r, g, b = unpack(quest.color or { 1, 0.82, 0 })
+	local r, g, b = unpack(quest.color or { 0.95, 0.95, 0.95 })
 	GameTooltip:SetOwner(dot, "ANCHOR_RIGHT")
 	GameTooltip:SetText(C_QuestLog.GetTitleForQuestID(quest.questID) or ("Quest " .. quest.questID), r, g, b)
 	local sources, objectives, seen = {}, {}, {}
@@ -50,7 +50,7 @@ end
 
 local function SetPointData(dot, point)
 	dot.point = point
-	local color = point.target.quest.color or { 1, 0.82, 0 }
+	local color = point.target.quest.color or { 0.95, 0.95, 0.95 }
 	dot.texture:SetVertexColor(color[1], color[2], color[3], 1)
 end
 

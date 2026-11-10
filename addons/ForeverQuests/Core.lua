@@ -8,7 +8,7 @@ local addonName, ns = ...
 -- and keeps it while it is in the quest log, saved per character; a new
 -- quest takes the colour fewest other quests in the log have.
 local PALETTE = {
-	{ 1.00, 0.82, 0.00 },
+	{ 0.95, 0.95, 0.95 }, -- not yellow: the minimap uses that for tracked herbs and ore
 	{ 0.30, 0.80, 1.00 },
 	{ 1.00, 0.35, 0.35 },
 	{ 0.45, 1.00, 0.35 },
