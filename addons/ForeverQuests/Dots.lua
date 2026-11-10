@@ -7,6 +7,8 @@ local TEXTURE = "Interface\\AddOns\\ForeverQuests\\dot" -- white disc, dark rim;
 -- The game's own turn-in pin: a dark round button with the "?" on top.
 local TURN_IN_BUTTON = "UI-QuestPoi-QuestNumber"
 local TURN_IN_ICON = "UI-QuestIcon-TurnIn-Normal"
+-- The plain yellow "?" on its own, for small markers (minimap).
+local TURN_IN_PLAIN = "QuestTurnin"
 local MAX_LINES = 5
 
 local function AddUnique(lines, seen, text)
@@ -61,10 +63,14 @@ local function SetPointData(dot, point)
 	if point.target.turnIn then
 		if dot.style ~= "turnIn" then
 			dot.style = "turnIn"
-			dot.texture:SetAtlas(TURN_IN_BUTTON)
 			dot.texture:SetVertexColor(1, 1, 1, 1)
-			dot.icon:SetAtlas(TURN_IN_ICON)
-			dot.icon:Show()
+			if dot.plainTurnIn then
+				dot.texture:SetAtlas(TURN_IN_PLAIN)
+			else
+				dot.texture:SetAtlas(TURN_IN_BUTTON)
+				dot.icon:SetAtlas(TURN_IN_ICON)
+				dot.icon:Show()
+			end
 			dot:SetSize(dot.turnInSize, dot.turnInSize)
 		end
 		return
@@ -80,10 +86,11 @@ local function SetPointData(dot, point)
 	dot.texture:SetVertexColor(color[1], color[2], color[3], 1)
 end
 
-function ns.CreateDot(parent, size, turnInSize)
+function ns.CreateDot(parent, size, turnInSize, plainTurnIn)
 	local dot = CreateFrame("Frame", nil, parent)
 	dot.size = size
 	dot.turnInSize = turnInSize or size
+	dot.plainTurnIn = plainTurnIn
 	dot.style = "dot"
 	dot:SetSize(size, size)
 	dot.texture = dot:CreateTexture(nil, "ARTWORK")
@@ -104,7 +111,7 @@ end
 -- flashes twice per loop. Played on a turn-in marker when the game pings
 -- its quest.
 local RIPPLE_TEXTURE = "Interface\\Minimap\\UI-Minimap-Ping-Expand"
-local RIPPLE_SIZE = 2 -- times the marker size
+local RIPPLE_SIZE = 1.5 -- times the marker size
 local RIPPLE_LOOPS = 2
 
 local function Alpha(group, target, from, to, delay)
@@ -161,8 +168,9 @@ end
 -- are no longer wanted fade out and then go back to the free list.
 local FADE = 0.2 -- seconds
 
--- size: dot size; turnInSize: size of the turn-in "?" markers.
-function ns.DotPool(parent, size, turnInSize)
+-- size: dot size; turnInSize: size of the turn-in "?" markers; plainTurnIn:
+-- a bare "?" instead of the game's round quest pin.
+function ns.DotPool(parent, size, turnInSize, plainTurnIn)
 	local pool = { active = {}, free = {}, fading = {} }
 	local driver = CreateFrame("Frame", nil, parent)
 
@@ -219,7 +227,7 @@ function ns.DotPool(parent, size, turnInSize)
 		local key = point.spot or point
 		local dot = self.active[key]
 		if not dot then
-			dot = table.remove(self.free) or ns.CreateDot(parent, size, turnInSize)
+			dot = table.remove(self.free) or ns.CreateDot(parent, size, turnInSize, plainTurnIn)
 			dot.key = key
 			dot.wanted = false
 			dot:Hide()

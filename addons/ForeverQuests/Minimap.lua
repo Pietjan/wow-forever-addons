@@ -5,7 +5,7 @@
 local _, ns = ...
 
 local DOT_SIZE = 10
-local TURN_IN_SIZE = 22
+local TURN_IN_SIZE = 18
 local CELL = 14 -- dots of one quest closer than this (pixels) merge
 local INTERVAL = 0.03 -- seconds between position updates
 local EDGE = 0.92 -- keep dots off the round frame's rim
@@ -88,6 +88,6 @@ function ns.SetUpMinimap()
 	layer = CreateFrame("Frame", nil, Minimap)
 	layer:SetAllPoints()
 	layer:SetFrameLevel(Minimap:GetFrameLevel() + 5)
-	pool = ns.DotPool(layer, DOT_SIZE, TURN_IN_SIZE)
+	pool = ns.DotPool(layer, DOT_SIZE, TURN_IN_SIZE, true)
 	layer:SetScript("OnUpdate", OnUpdate)
 end
