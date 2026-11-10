@@ -130,6 +130,7 @@ local function Start()
 	colorOf = ForeverQuestsColors
 	ns.ready = true
 	ns.HideMinimapAreas()
+	ns.HideMinimapAreaTooltips()
 	ns.SetUpMinimap()
 	ns.Rebuild()
 end

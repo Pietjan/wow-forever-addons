@@ -177,3 +177,65 @@ function ns.HideMapIcons()
 	end
 	UpdateQuestIcons(false)
 end
+
+-- The minimap's hover tooltip still lists the quest areas under the cursor
+-- although they are invisible: a quest title line followed by "- 4/5 ..."
+-- objective lines. Blizzard fills it every frame through
+-- GameTooltip:SetMinimapMouseover(); afterwards we rebuild it without those
+-- lines (herbs, ore, people and the rest stay), or hide it if nothing is left.
+
+local function QuestTitles()
+	local titles = {}
+	for i = 1, C_QuestLog.GetNumQuestLogEntries() do
+		local info = C_QuestLog.GetInfo(i)
+		if info and not info.isHeader and info.title then
+			titles[info.title] = true
+		end
+	end
+	return titles
+end
+
+local function StripQuestAreas(tooltip)
+	if not ns.ready then
+		return
+	end
+	local titles = QuestTitles()
+	local dash = QUEST_DASH or "- "
+	local keep, removed, inQuest = {}, false, false
+	for i = 1, tooltip:NumLines() do
+		local line = _G[tooltip:GetName() .. "TextLeft" .. i]
+		local text = line and line:GetText()
+		if text == nil or (issecretvalue and issecretvalue(text)) then
+			return -- leave anything we cannot read alone
+		end
+		if titles[text] then
+			inQuest, removed = true, true
+		elseif inQuest and text:sub(1, #dash) == dash then
+			removed = true
+		else
+			inQuest = false
+			local r, g, b = line:GetTextColor()
+			keep[#keep + 1] = { text, r, g, b }
+		end
+	end
+	if not removed then
+		return
+	end
+	if #keep == 0 then
+		tooltip:Hide()
+		return
+	end
+	tooltip:ClearLines()
+	for _, line in ipairs(keep) do
+		tooltip:AddLine(line[1], line[2], line[3], line[4])
+	end
+	tooltip:Show()
+end
+
+function ns.HideMinimapAreaTooltips()
+	if GameTooltip.SetMinimapMouseover then
+		hooksecurefunc(GameTooltip, "SetMinimapMouseover", function(tooltip)
+			pcall(StripQuestAreas, tooltip)
+		end)
+	end
+end
