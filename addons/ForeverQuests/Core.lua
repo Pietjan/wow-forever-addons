@@ -160,7 +160,14 @@ end)
 -- /fq: what we know about each tracked quest.
 SLASH_FOREVERQUESTS1 = "/fq"
 SLASH_FOREVERQUESTS2 = "/foreverquests"
-SlashCmdList.FOREVERQUESTS = function()
+SlashCmdList.FOREVERQUESTS = function(input)
+	if input and input:match("^%s*tip") then
+		ns.Print("last minimap tooltip, as the game wrote it:")
+		for i, text in ipairs(ns.lastMinimapTip or {}) do
+			print(("  %d: %s"):format(i, (text:gsub("|", "||"):gsub("\n", " \\n "))))
+		end
+		return
+	end
 	if not ns.ready then
 		ns.Print("not running: QuestieDB is missing or does not fit.")
 		return

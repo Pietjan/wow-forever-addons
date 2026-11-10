@@ -195,30 +195,48 @@ local function QuestTitles()
 	return titles
 end
 
+-- One tooltip line can hold several rows joined by line breaks; a quest
+-- area is its title row plus the "- ..." rows after it.
+local function StripRows(text, titles, dash, state)
+	local kept = {}
+	for row in (text .. "\n"):gmatch("(.-)\n") do
+		local plain = row:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+		if titles[plain] then
+			state.inQuest, state.removed = true, true
+		elseif state.inQuest and plain:sub(1, #dash) == dash then
+			state.removed = true
+		else
+			state.inQuest = false
+			kept[#kept + 1] = row
+		end
+	end
+	return table.concat(kept, "\n")
+end
+
 local function StripQuestAreas(tooltip)
 	if not ns.ready then
 		return
 	end
 	local titles = QuestTitles()
 	local dash = QUEST_DASH or "- "
-	local keep, removed, inQuest = {}, false, false
+	local state = { inQuest = false, removed = false }
+	local keep = {}
+	local raw = {}
 	for i = 1, tooltip:NumLines() do
 		local line = _G[tooltip:GetName() .. "TextLeft" .. i]
 		local text = line and line:GetText()
 		if text == nil or (issecretvalue and issecretvalue(text)) then
 			return -- leave anything we cannot read alone
 		end
-		if titles[text] then
-			inQuest, removed = true, true
-		elseif inQuest and text:sub(1, #dash) == dash then
-			removed = true
-		else
-			inQuest = false
+		raw[#raw + 1] = text
+		local rest = StripRows(text, titles, dash, state)
+		if rest ~= "" then
 			local r, g, b = line:GetTextColor()
-			keep[#keep + 1] = { text, r, g, b }
+			keep[#keep + 1] = { rest, r, g, b }
 		end
 	end
-	if not removed then
+	ns.lastMinimapTip = raw
+	if not state.removed then
 		return
 	end
 	if #keep == 0 then
