@@ -4,8 +4,8 @@
 
 local _, ns = ...
 
-local DOT_SIZE = 8
-local CELL = 11 -- dots of one quest closer than this (pixels) merge
+local DOT_SIZE = 10
+local CELL = 14 -- dots of one quest closer than this (pixels) merge
 local INTERVAL = 0.03 -- seconds between position updates
 local EDGE = 0.92 -- keep dots off the round frame's rim
 
