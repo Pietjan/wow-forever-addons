@@ -61,6 +61,8 @@ local function Update()
 				end
 				if x * x + y * y < limit then
 					local dot = pool:Acquire(point)
+					-- Turn-in markers above the dots and other addons' icons.
+					dot:SetFrameLevel(layer:GetFrameLevel() + (point.target.turnIn and 10 or 1))
 					dot:ClearAllPoints()
 					dot:SetPoint("CENTER", layer, "CENTER", x / radius * half, y / radius * half)
 				end

@@ -31,11 +31,13 @@ local function Layout()
 	end
 end
 
-local function FrameLevel()
+-- Dots just above where the quest areas were; turn-in markers where the
+-- game keeps its own quest pins, above other addons' map icons.
+local function FrameLevel(levelType, fallback)
 	local ok, level = pcall(function()
-		return WorldMapFrame:GetPinFrameLevelsManager():GetValidFrameLevel("PIN_FRAME_LEVEL_MAP_HIGHLIGHT")
+		return WorldMapFrame:GetPinFrameLevelsManager():GetValidFrameLevel(levelType)
 	end)
-	return ok and level or canvas:GetFrameLevel() + 1
+	return ok and level or canvas:GetFrameLevel() + fallback
 end
 
 function ns.RefreshWorldMap()
@@ -50,7 +52,8 @@ function ns.RefreshWorldMap()
 	pool:Begin()
 	local info = mapID and C_Map.GetMapInfo(mapID)
 	if ns.ready and info and info.mapType >= Enum.UIMapType.Zone then
-		local level = FrameLevel()
+		local level = FrameLevel("PIN_FRAME_LEVEL_MAP_HIGHLIGHT", 1)
+		local turnInLevel = FrameLevel("PIN_FRAME_LEVEL_ACTIVE_QUEST", 2)
 		local width, height = canvas:GetSize()
 		local scale = WorldMapFrame:GetCanvasScale()
 		local points = ns.PointsOn(mapID)
@@ -59,11 +62,24 @@ function ns.RefreshWorldMap()
 		end
 		for _, point in ipairs(points) do
 			local dot = pool:Acquire(point)
-			dot:SetFrameLevel(point.target.turnIn and level + 1 or level)
+			dot:SetFrameLevel(point.target.turnIn and turnInLevel or level)
 		end
 	end
 	pool:Finish()
 	Layout()
+end
+
+-- The game pings a quest when you open its details or click its tracker
+-- button; ripple its turn-in markers like the game's own pins did.
+local function PingQuest(_, questID)
+	C_Timer.After(0, function()
+		for _, dot in pairs(pool and pool.active or {}) do
+			local target = dot.point and dot.point.target
+			if dot.wanted and target and target.turnIn and target.quest.questID == questID then
+				ns.PlayRipple(dot)
+			end
+		end
+	end)
 end
 
 function ns.SetUpWorldMap()
@@ -90,6 +106,7 @@ function ns.SetUpWorldMap()
 		ns.hovered = nil
 		ns.Rebuild()
 	end)
+	EventRegistry:RegisterCallback("MapCanvas.PingQuestID", PingQuest, ns)
 	ns.HideMapAreas()
 	ns.HideMapIcons()
 	ns.RefreshWorldMap()

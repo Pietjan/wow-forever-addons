@@ -100,6 +100,62 @@ function ns.CreateDot(parent, size)
 	return dot
 end
 
+-- Blizzard's map ping ripple (MapPinPingTemplate): a ring that grows and
+-- flashes twice per loop. Played on a turn-in marker when the game pings
+-- its quest.
+local RIPPLE_TEXTURE = "Interface\\Minimap\\UI-Minimap-Ping-Expand"
+local RIPPLE_SIZE = 2 -- times the marker size
+local RIPPLE_LOOPS = 2
+
+local function Alpha(group, target, from, to, delay)
+	local anim = group:CreateAnimation("Alpha")
+	anim:SetTarget(target)
+	anim:SetFromAlpha(from)
+	anim:SetToAlpha(to)
+	anim:SetStartDelay(delay)
+	anim:SetDuration(0.2)
+	anim:SetOrder(1)
+end
+
+function ns.PlayRipple(dot)
+	local ripple = dot.ripple
+	if not ripple then
+		ripple = dot:CreateTexture(nil, "BACKGROUND")
+		ripple:SetTexture(RIPPLE_TEXTURE)
+		ripple:SetPoint("CENTER")
+		ripple:SetAlpha(0)
+		local driver = dot:CreateAnimationGroup()
+		Alpha(driver, ripple, 0, 1, 0)
+		Alpha(driver, ripple, 1, 0, 0.45)
+		Alpha(driver, ripple, 0, 1, 0.575)
+		Alpha(driver, ripple, 1, 0, 0.95)
+		local grow = dot:CreateAnimationGroup()
+		grow:SetLooping("REPEAT")
+		local scale = grow:CreateAnimation("Scale")
+		scale:SetTarget(ripple)
+		scale:SetScaleFrom(0.5, 0.5)
+		scale:SetScaleTo(1.2, 1.2)
+		scale:SetDuration(0.575)
+		driver:SetScript("OnFinished", function()
+			grow:Stop()
+			dot.rippleLoops = dot.rippleLoops - 1
+			if dot.rippleLoops > 0 then
+				driver:Play()
+				grow:Play()
+			end
+		end)
+		ripple.driver, ripple.grow = driver, grow
+		dot.ripple = ripple
+	end
+	local size = dot:GetWidth() * RIPPLE_SIZE
+	ripple:SetSize(size, size)
+	ripple.driver:Stop()
+	ripple.grow:Stop()
+	dot.rippleLoops = RIPPLE_LOOPS
+	ripple.driver:Play()
+	ripple.grow:Play()
+end
+
 -- The dots on one parent, one per spawn point (point.spot), so a dot that
 -- stays does not flicker when the set changes. New dots fade in, dots that
 -- are no longer wanted fade out and then go back to the free list.
