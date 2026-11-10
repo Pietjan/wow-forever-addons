@@ -18,7 +18,8 @@ local PALETTE = {
 	{ 0.35, 1.00, 0.80 },
 }
 
-ns.active = {}
+ns.active = {} -- quests whose objective dots show
+ns.turnInQuests = {} -- completed quests whose turn-in "?" shows (game's quest POIs off)
 local colorOf -- questID -> PALETTE index, the saved ForeverQuestsColors
 
 function ns.Print(text)
@@ -84,6 +85,10 @@ function ns.Rebuild()
 		return
 	end
 	wipe(ns.active)
+	wipe(ns.turnInQuests)
+	-- With the game's quest POIs switched off it draws no "?" turn-in icons;
+	-- we draw them instead.
+	local ownTurnIns = not GetCVarBool("questPOI")
 	local focused = FocusedQuest()
 	ns.focused = focused
 	local shown = focused and { focused } or TrackedQuests()
@@ -92,7 +97,12 @@ function ns.Rebuild()
 	end
 	for _, questID in ipairs(shown) do
 		local quest = ns.Quest(questID)
-		if quest.count > 0 and not C_QuestLog.IsComplete(questID) then
+		if C_QuestLog.IsComplete(questID) then
+			if ownTurnIns and next(quest.turnIns) then
+				quest.color = ColorOf(questID)
+				ns.turnInQuests[#ns.turnInQuests + 1] = quest
+			end
+		elseif quest.count > 0 then
 			ns.UpdateProgress(quest)
 			quest.color = ColorOf(questID)
 			ns.active[#ns.active + 1] = quest
@@ -142,6 +152,7 @@ events:RegisterEvent("QUEST_WATCH_LIST_CHANGED")
 events:RegisterEvent("QUEST_LOG_UPDATE")
 events:RegisterEvent("QUEST_ACCEPTED")
 events:RegisterEvent("QUEST_REMOVED")
+events:RegisterEvent("CVAR_UPDATE")
 events:SetScript("OnEvent", function(_, event, arg)
 	if event == "PLAYER_LOGIN" then
 		Start()
@@ -151,6 +162,10 @@ events:SetScript("OnEvent", function(_, event, arg)
 	elseif event == "ADDON_LOADED" then
 		if arg == "Blizzard_WorldMap" and IsLoggedIn() then
 			ns.SetUpWorldMap()
+		end
+	elseif event == "CVAR_UPDATE" then
+		if arg == "questPOI" then
+			ScheduleRebuild()
 		end
 	else
 		ScheduleRebuild()
@@ -173,7 +188,8 @@ SlashCmdList.FOREVERQUESTS = function(input)
 		return
 	end
 	local mode = LibQuestieDB.readMode or "?"
-	ns.Print(("QuestieDB %s mode. Tracked quests:"):format(mode))
+	ns.Print(("QuestieDB %s mode. Game quest POIs %s. Tracked quests:"):format(mode,
+		GetCVarBool("questPOI") and "on (we hide theirs)" or "off (we draw turn-in icons)"))
 	for _, questID in ipairs(TrackedQuests()) do
 		local quest = ns.Quest(questID)
 		local title = C_QuestLog.GetTitleForQuestID(questID) or "?"

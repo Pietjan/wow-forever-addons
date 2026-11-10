@@ -59,7 +59,7 @@ function ns.RefreshWorldMap()
 		end
 		for _, point in ipairs(points) do
 			local dot = pool:Acquire(point)
-			dot:SetFrameLevel(level)
+			dot:SetFrameLevel(point.target.turnIn and level + 1 or level)
 		end
 	end
 	pool:Finish()

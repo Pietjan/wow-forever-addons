@@ -4,6 +4,8 @@
 local _, ns = ...
 
 local TEXTURE = "Interface\\AddOns\\ForeverQuests\\dot" -- white disc, dark rim; tinted per quest
+local TURN_IN_ATLAS = "QuestTurnin" -- the yellow "?"
+local TURN_IN_SCALE = 1.8 -- times the dot size
 local MAX_LINES = 5
 
 local function AddUnique(lines, seen, text)
@@ -22,6 +24,11 @@ local function OnEnter(dot)
 	local r, g, b = unpack(quest.color or { 0.95, 0.95, 0.95 })
 	GameTooltip:SetOwner(dot, "ANCHOR_RIGHT")
 	GameTooltip:SetText(C_QuestLog.GetTitleForQuestID(quest.questID) or ("Quest " .. quest.questID), r, g, b)
+	if point.target.turnIn then
+		GameTooltip:AddLine("Turn in: " .. (point.target.source or "?"), 1, 1, 1)
+		GameTooltip:Show()
+		return
+	end
 	local sources, objectives, seen = {}, {}, {}
 	for _, target in ipairs(point.targets or { point.target }) do
 		AddUnique(sources, seen, target.source)
@@ -50,12 +57,29 @@ end
 
 local function SetPointData(dot, point)
 	dot.point = point
+	if point.target.turnIn then
+		if dot.style ~= "turnIn" then
+			dot.style = "turnIn"
+			dot.texture:SetAtlas(TURN_IN_ATLAS)
+			dot.texture:SetVertexColor(1, 1, 1, 1)
+			dot:SetSize(dot.size * TURN_IN_SCALE, dot.size * TURN_IN_SCALE)
+		end
+		return
+	end
+	if dot.style ~= "dot" then
+		dot.style = "dot"
+		dot.texture:SetTexture(TEXTURE, "CLAMP", "CLAMP", "TRILINEAR")
+		dot.texture:SetTexCoord(0, 1, 0, 1)
+		dot:SetSize(dot.size, dot.size)
+	end
 	local color = point.target.quest.color or { 0.95, 0.95, 0.95 }
 	dot.texture:SetVertexColor(color[1], color[2], color[3], 1)
 end
 
 function ns.CreateDot(parent, size)
 	local dot = CreateFrame("Frame", nil, parent)
+	dot.size = size
+	dot.style = "dot"
 	dot:SetSize(size, size)
 	dot.texture = dot:CreateTexture(nil, "ARTWORK")
 	dot.texture:SetAllPoints()

@@ -8,7 +8,7 @@
 
 local _, ns = ...
 
-ns.quests = {} -- questID -> { questID, byMap = { [uiMapID] = { {x, y, target}, ... } }, count }
+ns.quests = {} -- questID -> { questID, byMap = { [uiMapID] = { {x, y, target}, ... } }, count, turnIns }
 
 local areaToUiMap
 
@@ -39,25 +39,29 @@ local function UiMapOfArea(areaID)
 	end
 end
 
--- spawnList: { [areaID] = { {x, y, phase?}, ... } }
-local function AddSpawns(quest, spawnList, target)
+-- spawnList: { [areaID] = { {x, y, phase?}, ... } }. Into quest.byMap
+-- (objectives) unless another byMap is given (quest.turnIns).
+local function AddSpawns(quest, spawnList, target, byMap)
 	if type(spawnList) ~= "table" then
 		return
 	end
+	byMap = byMap or quest.byMap
 	for areaID, points in pairs(spawnList) do
 		local uiMap = UiMapOfArea(areaID)
 		if uiMap and type(points) == "table" then
-			local list = quest.byMap[uiMap]
+			local list = byMap[uiMap]
 			if not list then
 				list = {}
-				quest.byMap[uiMap] = list
+				byMap[uiMap] = list
 			end
 			for _, point in ipairs(points) do
 				local x, y = point[1], point[2]
 				-- -1, -1 marks "somewhere inside an instance".
 				if x and y and x >= 0 and y >= 0 then
 					list[#list + 1] = { x / 100, y / 100, target }
-					quest.count = quest.count + 1
+					if byMap == quest.byMap then
+						quest.count = quest.count + 1
+					end
 				end
 			end
 		end
@@ -72,11 +76,25 @@ local function Target(quest, label, source)
 	return target
 end
 
+-- Where to hand the quest in: the finisher NPCs' and objects' spawns.
+local function AddTurnIns(quest)
+	local finishers = QuestDB.finishedBy(quest.questID) or {}
+	for _, npc in ipairs(finishers[1] or {}) do
+		local name = NpcDB.name(npc)
+		AddSpawns(quest, NpcDB.spawns(npc), { quest = quest, source = name, open = true, turnIn = true }, quest.turnIns)
+	end
+	for _, object in ipairs(finishers[2] or {}) do
+		local name = ObjectDB.name(object)
+		AddSpawns(quest, ObjectDB.spawns(object), { quest = quest, source = name, open = true, turnIn = true }, quest.turnIns)
+	end
+end
+
 local function Build(questID)
-	local quest = { questID = questID, byMap = {}, count = 0, targets = {} }
+	local quest = { questID = questID, byMap = {}, count = 0, targets = {}, turnIns = {} }
 	if not QuestDB.Exists(questID) then
 		return quest
 	end
+	AddTurnIns(quest)
 	local objectives = QuestDB.objectives(questID) or {}
 
 	for _, objective in ipairs(objectives[1] or {}) do -- creatures to kill
@@ -127,7 +145,7 @@ function ns.Quest(questID)
 		local ok, result = pcall(Build, questID)
 		if not ok then
 			ns.Print("could not read quest " .. questID .. " from QuestieDB: " .. tostring(result))
-			result = { questID = questID, byMap = {}, count = 0, targets = {} }
+			result = { questID = questID, byMap = {}, count = 0, targets = {}, turnIns = {} }
 		end
 		quest = result
 		ns.quests[questID] = quest
@@ -205,8 +223,15 @@ function ns.PointsOn(mapID)
 		return list
 	end
 	list = {}
+	local sources = {}
 	for _, quest in ipairs(ns.active or {}) do
-		for fromMap, spots in pairs(quest.byMap) do
+		sources[#sources + 1] = quest.byMap
+	end
+	for _, quest in ipairs(ns.turnInQuests or {}) do
+		sources[#sources + 1] = quest.turnIns
+	end
+	for _, byMap in ipairs(sources) do
+		for fromMap, spots in pairs(byMap) do
 			local ax, bx, ay, by = ns.Transform(fromMap, mapID)
 			if ax then
 				for _, spot in ipairs(spots) do
