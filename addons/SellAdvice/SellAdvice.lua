@@ -1,6 +1,7 @@
 -- SellAdvice: one line in an item's tooltip saying what brings the most
 -- for it: disenchanting, the vendor or the auction house. The options that
--- lost show only while Alt is held.
+-- lost show only while Alt is held. Among quest choices, the one worth the
+-- most gets a gold coin on its icon.
 --
 -- - Vendor: the item's sell price from the client.
 -- - Auction: Auctionator's last scanned price, less the house's 5% cut.
@@ -143,22 +144,15 @@ local function AddDetails(tooltip, options, missing, parts, level)
 	end
 end
 
-local function AddAdvice(tooltip, data)
-	if tooltip ~= GameTooltip and tooltip ~= ItemRefTooltip then
-		return
-	end
-	local ok, _, link = pcall(tooltip.GetItem, tooltip)
-	link = ok and Plain(link)
-	if type(link) ~= "string" then
-		return
-	end
+-- What an item can bring: options sorted best first ({ key, value }),
+-- why the others have no value, the disenchant materials and the item
+-- level. Nil while the item is not cached.
+local function Options(link, data)
 	local _, _, quality, level, _, _, _, _, _, _, sellPrice, classID, _, bindType = C_Item.GetItemInfo(link)
 	if not quality then
-		return -- not cached yet; the tooltip refreshes once it is
+		return nil
 	end
 	local itemID = C_Item.GetItemInfoInstant(link)
-	local details = IsAltKeyDown()
-
 	local options, missing, parts = {}, {}, nil
 	if sellPrice and sellPrice > 0 then
 		options[#options + 1] = { key = "vendor", value = sellPrice }
@@ -189,11 +183,26 @@ local function AddAdvice(tooltip, data)
 	else
 		missing.disenchant = "not uncommon+ armour or weapon"
 	end
-
 	table.sort(options, function(a, b)
 		return a.value > b.value
 	end)
-	if details then
+	return options, missing, parts, level
+end
+
+local function AddAdvice(tooltip, data)
+	if tooltip ~= GameTooltip and tooltip ~= ItemRefTooltip then
+		return
+	end
+	local ok, _, link = pcall(tooltip.GetItem, tooltip)
+	link = ok and Plain(link)
+	if type(link) ~= "string" then
+		return
+	end
+	local options, missing, parts, level = Options(link, data)
+	if not options then
+		return -- not cached yet; the tooltip refreshes once it is
+	end
+	if IsAltKeyDown() then
 		AddDetails(tooltip, options, missing, parts, level)
 		return
 	end
@@ -211,5 +220,71 @@ end
 if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
 	TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tooltip, data)
 		pcall(AddAdvice, tooltip, data)
+	end)
+end
+
+-- Quest choices -------------------------------------------------------------
+
+-- A gold coin on the quest choice worth the most: the best of vendor,
+-- auction and disenchant for each. Textures are kept in our own table; no
+-- field is written on Blizzard's reward buttons.
+local coins = {}
+local retrying = false
+
+local function UpdateQuestChoices()
+	local info = QuestInfoFrame
+	local rewardsFrame = info and info.rewardsFrame
+	local buttons = rewardsFrame and rewardsFrame.RewardButtons
+	if type(buttons) ~= "table" then
+		return
+	end
+	local best, bestValue, choices, pending = nil, 0, 0, false
+	for _, button in ipairs(buttons) do
+		if button:IsShown() and button.objectType == "item" and button.type == "choice" then
+			choices = choices + 1
+			local link
+			if info.questLog then
+				link = GetQuestLogItemLink("choice", button:GetID())
+			else
+				link = GetQuestItemLink("choice", button:GetID())
+			end
+			local options = link and Options(link)
+			if link and not options then
+				pending = true
+			end
+			local value = options and options[1] and options[1].value or 0
+			if value > bestValue then
+				best, bestValue = button, value
+			end
+		end
+	end
+	if choices < 2 then
+		best = nil -- nothing to choose between
+	end
+	for _, button in ipairs(buttons) do
+		local coin = coins[button]
+		if button == best and not coin then
+			coin = button:CreateTexture(nil, "OVERLAY", nil, 7)
+			coin:SetTexture("Interface\\MoneyFrame\\UI-GoldIcon")
+			coin:SetSize(16, 16)
+			coin:SetPoint("TOPLEFT", button.Icon or button.icon or button, "TOPLEFT", -3, 3)
+			coins[button] = coin
+		end
+		if coin then
+			coin:SetShown(button == best)
+		end
+	end
+	if pending and not retrying then
+		retrying = true
+		C_Timer.After(0.5, function()
+			retrying = false
+			pcall(UpdateQuestChoices)
+		end)
+	end
+end
+
+if QuestInfo_Display then
+	hooksecurefunc("QuestInfo_Display", function()
+		pcall(UpdateQuestChoices)
 	end)
 end

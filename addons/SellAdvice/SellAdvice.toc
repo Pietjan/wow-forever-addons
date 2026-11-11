@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: SellAdvice
-## Notes: One line in item tooltips: disenchant, vendor or auction, whichever brings the most, from Auctionator's scanned prices. Hold Alt for the workings.
+## Notes: One line in item tooltips: disenchant, vendor or auction, whichever brings the most, from Auctionator's scanned prices. A gold coin marks the quest choice worth the most. Hold Alt for the workings.
 ## Author: Pietjan
 ## Version: 1.0
 ## OptionalDeps: Auctionator
