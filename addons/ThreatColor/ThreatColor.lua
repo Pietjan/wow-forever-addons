@@ -7,9 +7,12 @@
 -- red to a shade of red. Here, every enemy that is in combat gets a threat
 -- colour, and the scale turns around with your role:
 --
---   not a tank  green: no threat, yellow/orange: about to pull, red: it is on you
+--   not a tank  green: no threat, yellow/orange: about to pull, red: it is on you,
+--               amber: loose on another healer or damage dealer (only in a
+--               group with an assigned tank)
 --   tank        green: you hold it, yellow/orange: someone is catching up,
---               red: you lost it (or never had it)
+--               red: you lost it (or never had it), grey: another tank in
+--               your group holds it (an off-tank or tank swap, not a loss)
 --
 -- These are the game's own threat states (UnitThreatSituation for others,
 -- UnitThreatLeadSituation for tanks, as Blizzard uses them). Enemies out of
@@ -25,17 +28,25 @@
 -- looked at, but whether you are tanking it can be turned into a colour by
 -- the game (C_CurveUtil.EvaluateColorFromBoolean), so the bar drops to two
 -- colours: green and red. If even that is refused, Blizzard's colour stays.
+--
+-- Grey and amber are asked from the group's side: the members with an
+-- assigned role, and whether the threat API says each is tanking this
+-- enemy. (The enemy's own target is identity-restricted on nameplates, so
+-- its role cannot be read.) Secret answers are chained through
+-- C_CurveUtil.EvaluateColorFromBoolean, so the game picks the colour.
 
 local DEFAULTS = {
 	role = "auto", -- "auto", "tank" or "dps"
 }
 
 local COLORS = {
-	[0] = CreateColor(0.20, 0.80, 0.20), -- green
-	[1] = CreateColor(1.00, 0.85, 0.00), -- yellow
-	[2] = CreateColor(1.00, 0.50, 0.00), -- orange
-	[3] = CreateColor(1.00, 0.10, 0.10), -- red
+	[0] = CreateColor(0.20, 0.80, 0.20, 1), -- green
+	[1] = CreateColor(1.00, 0.85, 0.00, 1), -- yellow
+	[2] = CreateColor(1.00, 0.50, 0.00, 1), -- orange
+	[3] = CreateColor(1.00, 0.10, 0.10, 1), -- red
 }
+local GREY = CreateColor(0.55, 0.55, 0.55, 1) -- tank: another tank has it
+local LOOSE = CreateColor(1.00, 0.70, 0.15, 1) -- healer/damage: it is on another healer or damage dealer
 
 local IsSecret = issecretvalue or function() return false end
 
@@ -86,14 +97,75 @@ local function State(unit, tank)
 	return state
 end
 
+-- The other members of your group with an assigned role: the tanks, or
+-- the healers and damage dealers. Also says whether the group has any
+-- assigned tank besides you (without one, nobody can be "loose").
+local function Members(wantTanks)
+	local found, anyTank = {}, false
+	local raid = IsInRaid()
+	local count = raid and GetNumGroupMembers() or GetNumSubgroupMembers()
+	for i = 1, count do
+		local member = (raid and "raid" or "party") .. i
+		local isMe = UnitIsUnit(member, "player")
+		if IsSecret(isMe) then
+			isMe = false -- harmless: only asked about enemies that are not on you
+		end
+		if UnitExists(member) and not isMe then
+			local role = UnitGroupRolesAssigned(member)
+			if not IsSecret(role) then
+				anyTank = anyTank or role == "TANK"
+				if (wantTanks and role == "TANK") or (not wantTanks and (role == "HEALER" or role == "DAMAGER")) then
+					found[#found + 1] = member
+				end
+			end
+		end
+	end
+	return found, anyTank
+end
+
+-- ifHeld when one of these members is tanking the enemy, otherwise the
+-- given colour. Secret answers are chained through the game, so this
+-- works for any number of members in lockdown too.
+local function HeldColor(members, unit, ifHeld, otherwise)
+	local color = otherwise
+	for _, member in ipairs(members) do
+		local isTanking = UnitDetailedThreatSituation(member, unit)
+		if IsSecret(isTanking) then
+			color = C_CurveUtil.EvaluateColorFromBoolean(isTanking, ifHeld, color)
+		elseif isTanking then
+			return ifHeld
+		end
+	end
+	return color
+end
+
+-- Tank: red ("not on you") becomes grey when another tank has it.
+local function LostColor(unit)
+	local ok, color = pcall(HeldColor, (Members(true)), unit, GREY, COLORS[3])
+	return ok and color or COLORS[3]
+end
+
+-- Healer or damage: green ("not on you") becomes amber when it is loose on
+-- another healer or damage dealer, in a group that has a tank.
+local function SafeColor(unit)
+	local ok, color = pcall(function()
+		local others, anyTank = Members(false)
+		if not anyTank then
+			return COLORS[0]
+		end
+		return HeldColor(others, unit, LOOSE, COLORS[0])
+	end)
+	return ok and color or COLORS[0]
+end
+
 -- The colour when the threat state is secret: whether you are tanking it,
 -- turned into a colour by the game.
 local function SecretColor(unit, tank)
 	local isTanking = UnitDetailedThreatSituation("player", unit)
 	if tank then
-		return C_CurveUtil.EvaluateColorFromBoolean(isTanking, COLORS[0], COLORS[3])
+		return C_CurveUtil.EvaluateColorFromBoolean(isTanking, COLORS[0], LostColor(unit))
 	end
-	return C_CurveUtil.EvaluateColorFromBoolean(isTanking, COLORS[3], COLORS[0])
+	return C_CurveUtil.EvaluateColorFromBoolean(isTanking, COLORS[3], SafeColor(unit))
 end
 
 local function Paint(frame)
@@ -113,6 +185,11 @@ local function Paint(frame)
 	local okState, state = pcall(State, unit, tank)
 	if okState and state then
 		local color = COLORS[state] or COLORS[3]
+		if tank and state == 3 then
+			color = LostColor(unit)
+		elseif not tank and state == 0 then
+			color = SafeColor(unit)
+		end
 		healthBar:SetStatusBarColor(color:GetRGB())
 		return
 	end
