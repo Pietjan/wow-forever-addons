@@ -140,7 +140,6 @@ local function AddDetails(tooltip, options, missing, parts, level)
 				price > 0 and Money(amount * price) .. " (" .. Money(price) .. " each)" or "no price",
 				GREY, GREY, GREY, GREY, GREY, GREY)
 		end
-		tooltip:AddLine("  materials less the 5% cut; essences at the better of lesser and greater", GREY, GREY, GREY, true)
 	end
 end
 
