@@ -1,0 +1,14 @@
+## Interface: 16001
+## Title: ForeverChat
+## Notes: The default chat in Forever's own style, with short channel names and one chat setup shared by all your characters. /fchat
+## Author: Pietjan
+## Version: 1.0
+## SavedVariables: ForeverChatDB
+## SavedVariablesPerCharacter: ForeverChatCharDB
+
+Core.lua
+Short.lua
+Skin.lua
+Sync.lua
+History.lua
+Scroll.lua
