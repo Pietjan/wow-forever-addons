@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: PlateTarget
+## Notes: Enemy nameplates show who the enemy is targeting, under the bar (below the cast bar while casting); class colours; YOU when it is you, green for tanks, red otherwise.
+## Author: Pietjan
+## Version: 1.0
+## Dependencies: Blizzard_NamePlates
+
+PlateTarget.lua
