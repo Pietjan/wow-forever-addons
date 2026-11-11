@@ -34,7 +34,9 @@ local STATS = {
 	armor = "RESISTANCE0_NAME",
 	ap = "ITEM_MOD_ATTACK_POWER_SHORT",
 	rap = "ITEM_MOD_RANGED_ATTACK_POWER_SHORT",
-	sp = "ITEM_MOD_SPELL_POWER_SHORT",
+	-- Forever gives "damage and healing" items both stats, so a healer
+	-- weighs heal and not sp, and a damage caster the other way round.
+	sp = { "ITEM_MOD_SPELL_DAMAGE_DONE_SHORT", "ITEM_MOD_SPELL_POWER_SHORT" },
 	heal = "ITEM_MOD_SPELL_HEALING_DONE_SHORT",
 	mp5 = "ITEM_MOD_MANA_REGENERATION_SHORT",
 	hit = "ITEM_MOD_HIT_RATING_SHORT",
@@ -52,8 +54,8 @@ local ORDER = { "str", "agi", "sta", "int", "spi", "armor", "ap", "rap", "sp", "
 	"spellhit", "spellcrit", "defense", "dodge", "parry", "block", "dps", "rdps" }
 
 -- Per class, per role. A class only has the roles it can fill.
-local CASTER = { int = 0.6, spi = 0.4, sta = 0.4, armor = 0.005, sp = 1.2, heal = 0.5, mp5 = 1.2, spellhit = 8, spellcrit = 8, dps = 0, rdps = 0.2 }
-local HEALER = { int = 1, spi = 0.4, sta = 0.3, armor = 0.005, heal = 1, sp = 1, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0 }
+local CASTER = { int = 0.6, spi = 0.4, sta = 0.4, armor = 0.005, sp = 1.2, heal = 0, mp5 = 1.2, spellhit = 8, spellcrit = 8, dps = 0, rdps = 0.2 }
+local HEALER = { int = 1, spi = 0.4, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0 }
 local PLATE_TANK = { sta = 1, str = 0.5, agi = 0.6, armor = 0.05, ap = 0.2, hit = 4, defense = 1.5, dodge = 12, parry = 10, block = 4, dps = 1, rdps = 0.3 }
 local DEFAULTS = {
 	WARRIOR = {
@@ -63,23 +65,23 @@ local DEFAULTS = {
 	PALADIN = {
 		DAMAGER = { str = 1, agi = 0.5, sta = 0.4, int = 0.3, spi = 0.1, armor = 0.02, ap = 0.5, sp = 0.3, mp5 = 0.5, hit = 9, crit = 9, dps = 3, rdps = 0 },
 		TANK = { sta = 1, str = 0.4, agi = 0.4, int = 0.2, armor = 0.05, sp = 0.5, defense = 1.5, dodge = 12, parry = 10, block = 4, hit = 4, dps = 0.5, rdps = 0 },
-		HEALER = { int = 1, spi = 0.2, sta = 0.3, armor = 0.005, heal = 1, sp = 1, mp5 = 2, spellcrit = 10, dps = 0, rdps = 0 },
+		HEALER = { int = 1, spi = 0.2, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, spellcrit = 10, dps = 0, rdps = 0 },
 	},
 	ROGUE = { DAMAGER = { str = 0.5, agi = 1, sta = 0.3, armor = 0.01, ap = 0.5, hit = 12, crit = 10, dodge = 3, dps = 3, rdps = 0.5 } },
 	HUNTER = { DAMAGER = { agi = 1, int = 0.3, sta = 0.4, spi = 0.1, armor = 0.01, ap = 0.2, rap = 0.5, hit = 10, crit = 10, dps = 0.8, rdps = 3.5 } },
 	SHAMAN = {
-		DAMAGER = { str = 1, agi = 0.5, sta = 0.4, int = 0.5, spi = 0.2, armor = 0.01, ap = 0.5, sp = 0.6, heal = 0.2, mp5 = 1, hit = 8, crit = 8, dps = 3, rdps = 0 },
+		DAMAGER = { str = 1, agi = 0.5, sta = 0.4, int = 0.5, spi = 0.2, armor = 0.01, ap = 0.5, sp = 0.6, heal = 0, mp5 = 1, hit = 8, crit = 8, dps = 3, rdps = 0 },
 		HEALER = HEALER,
 	},
 	DRUID = {
 		DAMAGER = { str = 1, agi = 1, sta = 0.4, int = 0.3, spi = 0.1, armor = 0.02, ap = 0.6, hit = 10, crit = 10, dps = 0, rdps = 0 },
 		TANK = { sta = 1, agi = 0.7, str = 0.5, armor = 0.08, ap = 0.2, defense = 1.5, dodge = 12, hit = 4, dps = 0, rdps = 0 },
-		HEALER = { int = 0.8, spi = 0.5, sta = 0.3, armor = 0.005, heal = 1, sp = 1, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0 },
+		HEALER = { int = 0.8, spi = 0.5, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0 },
 	},
 	MAGE = { DAMAGER = CASTER },
 	PRIEST = {
 		DAMAGER = { int = 0.5, spi = 0.5, sta = 0.4, armor = 0.005, sp = 1.2, mp5 = 1, spellhit = 8, spellcrit = 6, dps = 0, rdps = 0.2 },
-		HEALER = { int = 0.8, spi = 0.7, sta = 0.3, armor = 0.005, heal = 1, sp = 1, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0.1 },
+		HEALER = { int = 0.8, spi = 0.7, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0.1 },
 	},
 	WARLOCK = { DAMAGER = { int = 0.4, spi = 0.3, sta = 0.6, armor = 0.005, sp = 1.2, mp5 = 0.8, spellhit = 8, spellcrit = 7, dps = 0, rdps = 0.2 } },
 }
@@ -152,21 +154,50 @@ end
 local weights
 
 -- Score of an item link, and its { stat, amount, points } parts.
+local KNOWN = {} -- GetItemStats key -> short name
+for short, keys in pairs(STATS) do
+	if short ~= "rdps" then
+		for _, key in ipairs(type(keys) == "table" and keys or { keys }) do
+			KNOWN[key] = short
+		end
+	end
+end
+
+-- Score of an item link, and its { stat, amount, points } parts; stats
+-- without a weight come last with the game's own name for them.
 local function Score(link, slot)
 	local ok, stats = pcall(C_Item.GetItemStats, link)
 	if not ok or type(stats) ~= "table" then
 		return 0, {}
 	end
-	local total, parts = 0, {}
-	for _, key in ipairs(ORDER) do
-		local value = stats[STATS[key]]
-		local isDps = key == "dps" or key == "rdps"
-		local applies = not isDps or ((key == "rdps") == (slot == 18))
-		if applies and type(value) == "number" and not IsSecret(value) and value ~= 0 then
-			local points = value * (weights[key] or 0)
-			total = total + points
-			parts[#parts + 1] = { key, value, points }
+	local amounts, unknown = {}, {}
+	for key, value in pairs(stats) do
+		if type(value) == "number" and not IsSecret(value) and value ~= 0 then
+			local short = KNOWN[key]
+			if short == "dps" and slot == 18 then
+				short = "rdps"
+			end
+			if short then
+				amounts[short] = (amounts[short] or 0) + value
+			else
+				unknown[#unknown + 1] = { _G[key] or key, value, 0 }
+			end
 		end
+	end
+	local total, parts = 0, {}
+	for _, short in ipairs(ORDER) do
+		local value = amounts[short]
+		if value then
+			local points = value * (weights[short] or 0)
+			total = total + points
+			parts[#parts + 1] = { short, value, points }
+		end
+	end
+	table.sort(unknown, function(x, y)
+		return x[1] < y[1]
+	end)
+	for _, part in ipairs(unknown) do
+		parts[#parts + 1] = part
 	end
 	return total, parts
 end
