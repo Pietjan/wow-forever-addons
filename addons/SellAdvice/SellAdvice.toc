@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: SellAdvice
+## Notes: One line in item tooltips: disenchant, vendor or auction, whichever brings the most, from Auctionator's scanned prices.
+## Author: Pietjan
+## Version: 1.0
+## OptionalDeps: Auctionator
+
+Data.lua
+SellAdvice.lua
