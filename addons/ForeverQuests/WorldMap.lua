@@ -71,16 +71,55 @@ function ns.RefreshWorldMap()
 end
 
 -- The game pings a quest when you open its details or click its tracker
--- button; ripple its turn-in markers like the game's own pins did.
-local function PingQuest(_, questID)
+-- button; ripple its turn-in markers like the game's own pins did. With
+-- objectives = true (a quest the game has no map for) its objective dots
+-- ripple instead while it is not complete.
+local function PingQuest(_, questID, objectives)
 	C_Timer.After(0, function()
+		local complete = C_QuestLog.IsComplete(questID)
 		for _, dot in pairs(pool and pool.active or {}) do
 			local target = dot.point and dot.point.target
-			if dot.wanted and target and target.turnIn and target.quest.questID == questID then
+			if dot.wanted and target and target.quest.questID == questID
+				and (target.turnIn or (objectives and not complete)) then
 				ns.PlayRipple(dot)
 			end
 		end
 	end)
+end
+
+-- The map with the most of a quest's points: its turn-in once complete,
+-- else its objectives.
+local function BestMap(questID)
+	local quest = ns.Quest(questID)
+	local byMap = C_QuestLog.IsComplete(questID) and quest.turnIns or quest.byMap
+	local best, most = nil, 0
+	for uiMap, points in pairs(byMap or {}) do
+		if #points > most then
+			best, most = uiMap, #points
+		end
+	end
+	return best
+end
+
+-- Opening a quest's details moves the map to the quest's map, but only
+-- when the game knows one (GetQuestUiMapID is not 0). For a quest it does
+-- not know, such as one handed in at an object on another continent, the
+-- map stayed where it was; go to where QuestieDB puts it instead.
+local switching = false
+local function OnShowQuestDetails(questID)
+	if switching or not questID or GetQuestUiMapID(questID) ~= 0 then
+		return
+	end
+	local uiMap = BestMap(questID)
+	if not uiMap then
+		return
+	end
+	if WorldMapFrame:GetMapID() ~= uiMap then
+		switching = true
+		WorldMapFrame:SetMapID(uiMap)
+		switching = false
+	end
+	PingQuest(nil, questID, true)
 end
 
 function ns.SetUpWorldMap()
@@ -108,6 +147,15 @@ function ns.SetUpWorldMap()
 		ns.Rebuild()
 	end)
 	EventRegistry:RegisterCallback("MapCanvas.PingQuestID", PingQuest, ns)
+	if QuestMapFrame_ShowQuestDetails then
+		hooksecurefunc("QuestMapFrame_ShowQuestDetails", function(questID)
+			local ok, message = pcall(OnShowQuestDetails, questID)
+			if not ok then
+				switching = false
+				ns.Print("could not open the quest's map: " .. tostring(message))
+			end
+		end)
+	end
 	ns.HideMapAreas()
 	ns.HideMapIcons()
 	ns.RefreshWorldMap()
