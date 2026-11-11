@@ -8,9 +8,11 @@
 -- - nothing in the tooltip, unless Alt is held: then both scores and the
 --   stats behind them.
 --
--- Rings, trinkets and (when you dual wield) one-handers are compared with
--- the weaker of the two you wear; a two-hander with main and off hand
--- together. An empty slot makes anything usable an upgrade. Only items you
+-- What it is compared with is Blizzard's choice, as in its comparison
+-- tooltips (C_TooltipComparison.GetItemComparisonInfo): rings, trinkets
+-- and dual-wielded one-handers against the weaker of the two you wear, a
+-- two-hander against main and off hand together. An empty slot makes
+-- anything usable an upgrade. Only items you
 -- can use now count: your class and skills (C_PlayerInfo.CanUseItem) and
 -- your level.
 --
@@ -91,15 +93,14 @@ local ROLE_ORDER = { "TANK", "HEALER", "DAMAGER" }
 local ROLE_NAME = { TANK = "Tank", HEALER = "Healer", DAMAGER = "Damage" }
 local ROLE_ARG = { tank = "TANK", healer = "HEALER", heal = "HEALER", damage = "DAMAGER", dps = "DAMAGER", damager = "DAMAGER" }
 
--- Equip location -> the slots it can go in.
-local SLOTS = {
-	INVTYPE_HEAD = { 1 }, INVTYPE_NECK = { 2 }, INVTYPE_SHOULDER = { 3 }, INVTYPE_CHEST = { 5 }, INVTYPE_ROBE = { 5 },
-	INVTYPE_WAIST = { 6 }, INVTYPE_LEGS = { 7 }, INVTYPE_FEET = { 8 }, INVTYPE_WRIST = { 9 }, INVTYPE_HAND = { 10 },
-	INVTYPE_FINGER = { 11, 12 }, INVTYPE_TRINKET = { 13, 14 }, INVTYPE_CLOAK = { 15 },
-	INVTYPE_WEAPON = { 16, 17 }, INVTYPE_2HWEAPON = { 16 }, INVTYPE_WEAPONMAINHAND = { 16 },
-	INVTYPE_WEAPONOFFHAND = { 17 }, INVTYPE_SHIELD = { 17 }, INVTYPE_HOLDABLE = { 17 },
-	INVTYPE_RANGED = { 18 }, INVTYPE_RANGEDRIGHT = { 18 }, INVTYPE_THROWN = { 18 }, INVTYPE_RELIC = { 18 },
-}
+-- Which equipped item an item is compared with comes from Blizzard
+-- (C_TooltipComparison.GetItemComparisonInfo), as in its own comparison
+-- tooltips. These are only what that does not say:
+local RANGED = { INVTYPE_RANGED = true, INVTYPE_RANGEDRIGHT = true, INVTYPE_THROWN = true, INVTYPE_RELIC = true }
+local NOT_GEAR = { INVTYPE_BODY = true, INVTYPE_TABARD = true, INVTYPE_AMMO = true, INVTYPE_BAG = true,
+	INVTYPE_QUIVER = true, INVTYPE_NON_EQUIP_IGNORE = true, [""] = true }
+-- Slots that come in pairs, where an empty second one beats anything.
+local PAIRED = { INVTYPE_FINGER = { 11, 12 }, INVTYPE_TRINKET = { 13, 14 } }
 
 local db
 local cache = {} -- link -> { upgrade, score, against, againstName }
@@ -204,12 +205,41 @@ local function Score(link, slot)
 	return total, parts
 end
 
-local function EquippedScore(slot)
-	local link = GetInventoryItemLink("player", slot)
-	if not link then
-		return 0, nil
+local function Plain(v)
+	if v == nil or IsSecret(v) then
+		return nil
 	end
-	return (Score(link, slot)), link
+	return v
+end
+
+-- A TooltipComparisonItem's link.
+local function LinkOf(item)
+	if type(item) ~= "table" then
+		return nil
+	end
+	local link = Plain(item.hyperlink)
+	if not link and item.guid and C_Item.GetItemLinkByGUID then
+		local ok, found = pcall(C_Item.GetItemLinkByGUID, item.guid)
+		link = ok and Plain(found) or nil
+	end
+	return type(link) == "string" and link or nil
+end
+
+-- True when one of the slots the item could go in is empty.
+local function EmptySlot(equipLoc)
+	local slots = PAIRED[equipLoc]
+	if equipLoc == "INVTYPE_WEAPON" and CanDualWield and CanDualWield() then
+		local main = GetInventoryItemLink("player", 16)
+		if not (main and select(9, C_Item.GetItemInfo(main)) == "INVTYPE_2HWEAPON") then
+			slots = { 16, 17 }
+		end
+	end
+	for _, slot in ipairs(slots or {}) do
+		if not GetInventoryItemLink("player", slot) then
+			return true
+		end
+	end
+	return false
 end
 
 local function Usable(link, itemID, reqLevel)
@@ -239,49 +269,67 @@ local function Evaluate(link)
 		return nil
 	end
 	local result = { upgrade = false }
-	local slots = SLOTS[equipLoc]
 	local itemID = C_Item.GetItemInfoInstant(link)
-	if not slots or not itemID or not Usable(link, itemID, reqLevel) then
+	local equippable = not C_Item.IsEquippableItem or C_Item.IsEquippableItem(link)
+	if not itemID or NOT_GEAR[equipLoc] or not equippable or not Usable(link, itemID, reqLevel) then
 		cache[link] = result
 		return result
 	end
-	if equipLoc == "INVTYPE_WEAPON" and not (CanDualWield and CanDualWield()) then
-		slots = { 16 }
+	local slot = RANGED[equipLoc] and 18 or nil
+	local function ScoreOf(l)
+		return (Score(l, slot))
 	end
-	local slot = slots[1] == 18 and 18 or slots[1]
-	local score = Score(link, slot)
-	result.score = score
+	result.score = ScoreOf(link)
 
-	-- What it would replace.
-	local against, againstLink
-	if equipLoc == "INVTYPE_2HWEAPON" then
-		local main, mainLink = EquippedScore(16)
-		local off = EquippedScore(17)
-		against, againstLink = main + off, mainLink or GetInventoryItemLink("player", 17)
+	-- What Blizzard compares it with.
+	local info
+	if C_TooltipComparison and C_TooltipComparison.GetItemComparisonInfo then
+		local ok, found = pcall(C_TooltipComparison.GetItemComparisonInfo, { hyperlink = link })
+		info = ok and type(found) == "table" and found or nil
+	end
+	local methods = Enum.TooltipComparisonMethod or {}
+	local method = info and info.method
+	local equipped = LinkOf(info and info.item)
+	local others = {}
+	for _, item in ipairs(info and info.additionalItems or {}) do
+		others[#others + 1] = LinkOf(item)
+	end
+
+	local against, links = 0, {}
+	if not equipped or EmptySlot(equipLoc) then
+		result.empty = true
+	elseif method == methods.WithBothHands then
+		-- A two-hander against main and off hand together.
+		against, links = ScoreOf(equipped), { equipped }
+		if others[1] then
+			against = against + ScoreOf(others[1])
+			links[2] = others[1]
+		end
+	elseif method == methods.WithBagMainHandItem or method == methods.WithBagOffHandItem then
+		-- A one-hander against the two-hander you hold (Blizzard pairs it
+		-- with a bag item; that one is not counted here).
+		against, links = ScoreOf(equipped), { equipped }
 	else
-		local mainLink = GetInventoryItemLink("player", 16)
-		local mainEquip = mainLink and select(9, C_Item.GetItemInfo(mainLink))
-		if slots[1] == 17 and mainEquip == "INVTYPE_2HWEAPON" then
-			cache[link] = result -- an off hand while you hold a two-hander
+		-- One item, and for rings, trinkets and dual wielding the other one
+		-- too: the weaker of them is the one to replace.
+		against, links = ScoreOf(equipped), { equipped }
+		for _, other in ipairs(others) do
+			local value = ScoreOf(other)
+			if value < against then
+				against, links = value, { other }
+			end
+		end
+	end
+	for _, l in ipairs(links) do
+		if C_Item.GetItemInfoInstant(l) == itemID then
+			cache[link] = result -- you already wear one
 			return result
 		end
-		for _, s in ipairs(slots) do
-			local equippedLink = GetInventoryItemLink("player", s)
-			if equippedLink and C_Item.GetItemInfoInstant(equippedLink) == itemID then
-				cache[link] = result -- you already wear one
-				return result
-			end
-			local value = EquippedScore(s)
-			if not against or value < against then
-				against, againstLink = value, equippedLink
-			end
-		end
 	end
-	result.against = against or 0
-	result.againstLink = againstLink
+	result.against = against
+	result.againstLinks = links
 	-- Anything you can use beats an empty slot, even with no weighted stats.
-	result.empty = againstLink == nil
-	result.upgrade = result.empty or (score > 0 and score > result.against + 0.01)
+	result.upgrade = result.empty or (result.score > 0 and result.score > against + 0.01)
 	cache[link] = result
 	return result
 end
@@ -349,13 +397,12 @@ local function AddTooltip(tooltip, data)
 	else
 		tooltip:AddDoubleLine("Not an upgrade" .. roleText, ("%.1f vs %.1f"):format(result.score, result.against or 0), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
 	end
-	local slot = SLOTS[select(9, C_Item.GetItemInfo(link)) or ""]
-	local _, parts = Score(link, slot and slot[1])
+	local _, parts = Score(link, RANGED[select(9, C_Item.GetItemInfo(link)) or ""] and 18 or nil)
 	for _, part in ipairs(parts) do
 		tooltip:AddDoubleLine(("  %g %s x %g"):format(part[2], part[1], weights[part[1]] or 0), ("%.1f"):format(part[3]), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
 	end
-	if result.againstLink then
-		tooltip:AddLine("  vs " .. result.againstLink, 0.6, 0.6, 0.6)
+	for _, against in ipairs(result.againstLinks or {}) do
+		tooltip:AddLine("  vs " .. against, 0.6, 0.6, 0.6)
 	end
 end
 
