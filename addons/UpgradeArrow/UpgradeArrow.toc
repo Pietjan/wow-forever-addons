@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: UpgradeArrow
+## Notes: Pawn lite: a green arrow on items that would be an upgrade for your class, in Baganator's bags, on LootRolls bars and in the tooltip. /upgradearrow
+## Author: Pietjan
+## Version: 1.0
+## OptionalDeps: Baganator
+## SavedVariables: UpgradeArrowDB
+
+UpgradeArrow.lua
