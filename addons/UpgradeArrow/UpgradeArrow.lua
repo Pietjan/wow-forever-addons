@@ -12,10 +12,14 @@
 -- can use now count: your class and skills (C_PlayerInfo.CanUseItem) and
 -- your level.
 --
--- The weights are a rough leveling guess per class, in points per stat
--- (Strength 1 for a warrior). /upgradearrow shows yours; /upgradearrow
--- <stat> <weight> changes one for this character, /upgradearrow reset
--- puts them back.
+-- The weights are a rough leveling guess per class and role (tank, healer,
+-- damage), in points per stat (Strength 1 for a damage warrior). The role
+-- is the one you were given in your group, else the one ticked in the
+-- group finder, else damage; Forever's classes have one spec each, all
+-- marked damage, so the spec cannot tell. /upgradearrow shows the role
+-- and its weights; /upgradearrow role tank|healer|damage|auto fixes it;
+-- /upgradearrow <stat> <weight> changes one for this character and role,
+-- /upgradearrow reset puts them back.
 
 local ADDON = ...
 local IsSecret = issecretvalue or function() return false end
@@ -47,18 +51,41 @@ local STATS = {
 local ORDER = { "str", "agi", "sta", "int", "spi", "armor", "ap", "rap", "sp", "heal", "mp5", "hit", "crit",
 	"spellhit", "spellcrit", "defense", "dodge", "parry", "block", "dps", "rdps" }
 
+-- Per class, per role. A class only has the roles it can fill.
 local CASTER = { int = 0.6, spi = 0.4, sta = 0.4, armor = 0.005, sp = 1.2, heal = 0.5, mp5 = 1.2, spellhit = 8, spellcrit = 8, dps = 0, rdps = 0.2 }
+local HEALER = { int = 1, spi = 0.4, sta = 0.3, armor = 0.005, heal = 1, sp = 1, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0 }
+local PLATE_TANK = { sta = 1, str = 0.5, agi = 0.6, armor = 0.05, ap = 0.2, hit = 4, defense = 1.5, dodge = 12, parry = 10, block = 4, dps = 1, rdps = 0.3 }
 local DEFAULTS = {
-	WARRIOR = { str = 1, agi = 0.6, sta = 0.5, armor = 0.02, ap = 0.5, hit = 10, crit = 10, defense = 0.5, dodge = 5, parry = 5, block = 2, dps = 3.5, rdps = 0.5 },
-	PALADIN = { str = 1, agi = 0.5, sta = 0.4, int = 0.4, spi = 0.1, armor = 0.02, ap = 0.5, sp = 0.5, heal = 0.3, mp5 = 0.8, hit = 9, crit = 9, dps = 3, rdps = 0 },
-	ROGUE = { str = 0.5, agi = 1, sta = 0.3, armor = 0.01, ap = 0.5, hit = 12, crit = 10, dodge = 3, dps = 3, rdps = 0.5 },
-	HUNTER = { agi = 1, int = 0.3, sta = 0.4, spi = 0.1, armor = 0.01, ap = 0.2, rap = 0.5, hit = 10, crit = 10, dps = 0.8, rdps = 3.5 },
-	SHAMAN = { str = 1, agi = 0.5, sta = 0.4, int = 0.5, spi = 0.2, armor = 0.01, ap = 0.5, sp = 0.6, heal = 0.3, mp5 = 1, hit = 8, crit = 8, dps = 3, rdps = 0 },
-	DRUID = { str = 1, agi = 0.8, sta = 0.5, int = 0.4, spi = 0.2, armor = 0.03, ap = 0.5, sp = 0.4, heal = 0.3, mp5 = 0.8, hit = 8, crit = 8, dodge = 3, dps = 0, rdps = 0 },
-	MAGE = CASTER,
-	PRIEST = { int = 0.6, spi = 0.6, sta = 0.4, armor = 0.005, sp = 1.1, heal = 0.8, mp5 = 1.3, spellhit = 6, spellcrit = 7, dps = 0, rdps = 0.2 },
-	WARLOCK = { int = 0.4, spi = 0.3, sta = 0.6, armor = 0.005, sp = 1.2, mp5 = 0.8, spellhit = 8, spellcrit = 7, dps = 0, rdps = 0.2 },
+	WARRIOR = {
+		DAMAGER = { str = 1, agi = 0.6, sta = 0.5, armor = 0.02, ap = 0.5, hit = 10, crit = 10, dps = 3.5, rdps = 0.5 },
+		TANK = PLATE_TANK,
+	},
+	PALADIN = {
+		DAMAGER = { str = 1, agi = 0.5, sta = 0.4, int = 0.3, spi = 0.1, armor = 0.02, ap = 0.5, sp = 0.3, mp5 = 0.5, hit = 9, crit = 9, dps = 3, rdps = 0 },
+		TANK = { sta = 1, str = 0.4, agi = 0.4, int = 0.2, armor = 0.05, sp = 0.5, defense = 1.5, dodge = 12, parry = 10, block = 4, hit = 4, dps = 0.5, rdps = 0 },
+		HEALER = { int = 1, spi = 0.2, sta = 0.3, armor = 0.005, heal = 1, sp = 1, mp5 = 2, spellcrit = 10, dps = 0, rdps = 0 },
+	},
+	ROGUE = { DAMAGER = { str = 0.5, agi = 1, sta = 0.3, armor = 0.01, ap = 0.5, hit = 12, crit = 10, dodge = 3, dps = 3, rdps = 0.5 } },
+	HUNTER = { DAMAGER = { agi = 1, int = 0.3, sta = 0.4, spi = 0.1, armor = 0.01, ap = 0.2, rap = 0.5, hit = 10, crit = 10, dps = 0.8, rdps = 3.5 } },
+	SHAMAN = {
+		DAMAGER = { str = 1, agi = 0.5, sta = 0.4, int = 0.5, spi = 0.2, armor = 0.01, ap = 0.5, sp = 0.6, heal = 0.2, mp5 = 1, hit = 8, crit = 8, dps = 3, rdps = 0 },
+		HEALER = HEALER,
+	},
+	DRUID = {
+		DAMAGER = { str = 1, agi = 1, sta = 0.4, int = 0.3, spi = 0.1, armor = 0.02, ap = 0.6, hit = 10, crit = 10, dps = 0, rdps = 0 },
+		TANK = { sta = 1, agi = 0.7, str = 0.5, armor = 0.08, ap = 0.2, defense = 1.5, dodge = 12, hit = 4, dps = 0, rdps = 0 },
+		HEALER = { int = 0.8, spi = 0.5, sta = 0.3, armor = 0.005, heal = 1, sp = 1, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0 },
+	},
+	MAGE = { DAMAGER = CASTER },
+	PRIEST = {
+		DAMAGER = { int = 0.5, spi = 0.5, sta = 0.4, armor = 0.005, sp = 1.2, mp5 = 1, spellhit = 8, spellcrit = 6, dps = 0, rdps = 0.2 },
+		HEALER = { int = 0.8, spi = 0.7, sta = 0.3, armor = 0.005, heal = 1, sp = 1, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0.1 },
+	},
+	WARLOCK = { DAMAGER = { int = 0.4, spi = 0.3, sta = 0.6, armor = 0.005, sp = 1.2, mp5 = 0.8, spellhit = 8, spellcrit = 7, dps = 0, rdps = 0.2 } },
 }
+local ROLE_ORDER = { "TANK", "HEALER", "DAMAGER" }
+local ROLE_NAME = { TANK = "Tank", HEALER = "Healer", DAMAGER = "Damage" }
+local ROLE_ARG = { tank = "TANK", healer = "HEALER", heal = "HEALER", damage = "DAMAGER", dps = "DAMAGER", damager = "DAMAGER" }
 
 -- Equip location -> the slots it can go in.
 local SLOTS = {
@@ -73,13 +100,51 @@ local SLOTS = {
 local db
 local cache = {} -- link -> { upgrade, score, against, againstName }
 
-local function Weights()
+local function ClassRoles()
 	local _, class = UnitClass("player")
+	return DEFAULTS[class] or { DAMAGER = CASTER }
+end
+
+-- The role to score for: /upgradearrow role if set, else the role you
+-- were given in your group, else the one role ticked in the group finder
+-- (tank before healer before damage when several are), else damage.
+local function CurrentRole()
+	local roles = ClassRoles()
+	if db and db.role and roles[db.role] then
+		return db.role, "set with /upgradearrow role"
+	end
+	local ok, assigned = pcall(UnitGroupRolesAssigned, "player")
+	if ok and type(assigned) == "string" and not IsSecret(assigned) and roles[assigned] then
+		return assigned, "your group role"
+	end
+	local finder = C_LFGListRoles and C_LFGListRoles.GetRoles
+	local okRoles, picked = false, nil
+	if finder then
+		okRoles, picked = pcall(finder)
+	end
+	if okRoles and type(picked) == "table" then
+		local flags = { TANK = picked.tank, HEALER = picked.healer, DAMAGER = picked.dps }
+		for _, role in ipairs(ROLE_ORDER) do
+			if flags[role] and roles[role] then
+				return role, "ticked in the group finder"
+			end
+		end
+	end
+	if roles.DAMAGER then
+		return "DAMAGER", "default"
+	end
+	return next(roles), "default"
+end
+
+local role, roleSource
+
+local function Weights()
+	role, roleSource = CurrentRole()
 	local weights = {}
-	for key, value in pairs(DEFAULTS[class] or CASTER) do
+	for key, value in pairs(ClassRoles()[role]) do
 		weights[key] = value
 	end
-	for key, value in pairs(db and db.weights or {}) do
+	for key, value in pairs(db and db.weights and db.weights[role] or {}) do
 		weights[key] = value
 	end
 	return weights
@@ -237,11 +302,12 @@ local function AddTooltip(tooltip, data)
 		return
 	end
 	local alt = IsAltKeyDown()
+	local roleText = " (" .. ROLE_NAME[role] .. ")"
 	if result.upgrade then
 		local gain = result.against > 0 and ("+%d%%"):format((result.score / result.against - 1) * 100 + 0.5) or "empty slot"
-		tooltip:AddDoubleLine("|cff40c040Upgrade|r " .. gain, ("%.1f vs %.1f"):format(result.score, result.against), 1, 1, 1, 0.6, 0.6, 0.6)
+		tooltip:AddDoubleLine("|cff40c040Upgrade|r " .. gain .. roleText, ("%.1f vs %.1f"):format(result.score, result.against), 1, 1, 1, 0.6, 0.6, 0.6)
 	elseif alt then
-		tooltip:AddDoubleLine("Not an upgrade", ("%.1f vs %.1f"):format(result.score, result.against or 0), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
+		tooltip:AddDoubleLine("Not an upgrade" .. roleText, ("%.1f vs %.1f"):format(result.score, result.against or 0), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
 	end
 	if alt then
 		local slot = SLOTS[select(9, C_Item.GetItemInfo(link)) or ""]
@@ -297,6 +363,10 @@ events:SetScript("OnEvent", function(self, event, name)
 		local key = UnitName("player") .. "-" .. GetRealmName()
 		db[key] = db[key] or {}
 		db = db[key]
+		-- Weights from before roles: they were damage weights.
+		if db.weights and type(select(2, next(db.weights))) == "number" then
+			db.weights = { DAMAGER = db.weights }
+		end
 		weights = Weights()
 		RegisterBaganator()
 		if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
@@ -308,6 +378,14 @@ events:SetScript("OnEvent", function(self, event, name)
 		self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 		self:RegisterEvent("PLAYER_LEVEL_UP")
 		self:RegisterEvent("SKILL_LINES_CHANGED")
+		for _, e in ipairs({ "PLAYER_ROLES_ASSIGNED", "GROUP_ROSTER_UPDATE", "LFG_LIST_ROLE_UPDATE", "LFG_ROLE_UPDATE" }) do
+			pcall(self.RegisterEvent, self, e)
+		end
+	elseif event == "PLAYER_ROLES_ASSIGNED" or event == "GROUP_ROSTER_UPDATE"
+		or event == "LFG_LIST_ROLE_UPDATE" or event == "LFG_ROLE_UPDATE" then
+		if CurrentRole() ~= role then
+			Invalidate()
+		end
 	else
 		Invalidate()
 	end
@@ -316,15 +394,36 @@ end)
 SLASH_UPGRADEARROW1 = "/upgradearrow"
 SlashCmdList.UPGRADEARROW = function(msg)
 	local stat, value = (msg or ""):lower():match("^%s*(%S*)%s*(%S*)")
-	if stat == "reset" then
-		db.weights = nil
+	local prefix = "|cff40c040UpgradeArrow|r: "
+	if stat == "role" then
+		if value == "auto" then
+			db.role = nil
+		elseif ROLE_ARG[value] and ClassRoles()[ROLE_ARG[value]] then
+			db.role = ROLE_ARG[value]
+		else
+			local names = {}
+			for _, r in ipairs(ROLE_ORDER) do
+				if ClassRoles()[r] then
+					names[#names + 1] = ROLE_NAME[r]:lower()
+				end
+			end
+			print(prefix .. "/upgradearrow role " .. table.concat(names, " | ") .. " | auto")
+			return
+		end
 		Invalidate()
-		print("|cff40c040UpgradeArrow|r: weights back to the class defaults")
+		print(prefix .. "scoring as " .. ROLE_NAME[role] .. " (" .. roleSource .. ")")
+	elseif stat == "reset" then
+		if db.weights then
+			db.weights[role] = nil
+		end
+		Invalidate()
+		print(prefix .. ROLE_NAME[role] .. " weights back to the class defaults")
 	elseif STATS[stat] and tonumber(value) then
 		db.weights = db.weights or {}
-		db.weights[stat] = tonumber(value)
+		db.weights[role] = db.weights[role] or {}
+		db.weights[role][stat] = tonumber(value)
 		Invalidate()
-		print(("|cff40c040UpgradeArrow|r: %s = %g"):format(stat, tonumber(value)))
+		print(("%s%s %s = %g"):format(prefix, ROLE_NAME[role], stat, tonumber(value)))
 	else
 		local list = {}
 		for _, key in ipairs(ORDER) do
@@ -332,7 +431,7 @@ SlashCmdList.UPGRADEARROW = function(msg)
 				list[#list + 1] = ("%s %g"):format(key, weights[key])
 			end
 		end
-		print("|cff40c040UpgradeArrow|r weights: " .. table.concat(list, ", "))
-		print("  /upgradearrow <stat> <weight>  |  /upgradearrow reset   (stats: " .. table.concat(ORDER, " ") .. ")")
+		print(prefix .. ROLE_NAME[role] .. " (" .. roleSource .. "): " .. table.concat(list, ", "))
+		print("  /upgradearrow <stat> <weight>  |  reset  |  role <role|auto>   (stats: " .. table.concat(ORDER, " ") .. ")")
 	end
 end
