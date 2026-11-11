@@ -1,6 +1,6 @@
 -- SellAdvice: one line in an item's tooltip saying what brings the most
--- for it: disenchanting, the vendor or the auction house, and a dim line
--- with the other two to compare.
+-- for it: disenchanting, the vendor or the auction house. The options that
+-- lost show only while Alt is held.
 --
 -- - Vendor: the item's sell price from the client.
 -- - Auction: Auctionator's last scanned price, less the house's 5% cut.
@@ -206,11 +206,6 @@ local function AddAdvice(tooltip, data)
 		label = label .. " (on an enchanter)"
 	end
 	tooltip:AddDoubleLine("|cff40c040" .. label .. "|r", Money(best.value), 1, 1, 1, 1, 1, 1)
-	local others = {}
-	for i = 2, #options do
-		others[#others + 1] = LABEL[options[i].key]:lower() .. " " .. Money(options[i].value)
-	end
-	tooltip:AddLine(table.concat(others, "  ·  "), GREY, GREY, GREY)
 end
 
 if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
