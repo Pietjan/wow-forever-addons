@@ -10,7 +10,8 @@
 --   scripts/sell-advice-data.py) at Auctionator's prices, less the 5% cut
 --   for selling them. A lesser essence counts as a third of a greater one
 --   when that is worth more, and the other way round. Characters without
---   Disenchant see it too, marked "on an enchanter".
+--   Disenchant see it too, marked "on an enchanter", unless the item is
+--   bound (binds on pickup, quest item or soulbound) and so cannot be sent.
 --
 -- Hold Alt for every option, why one has no value, and the disenchant
 -- materials with their prices.
@@ -160,9 +161,10 @@ local function Options(link, data)
 		missing.vendor = "cannot be sold"
 	end
 	-- 1 binds on pickup, 4 is a quest item.
+	local bound = bindType == 1 or bindType == 4 or IsBound(data)
 	if bindType == 1 or bindType == 4 then
 		missing.auction = bindType == 1 and "binds on pickup" or "quest item"
-	elseif IsBound(data) then
+	elseif bound then
 		missing.auction = "soulbound"
 	else
 		local price = AuctionPrice(link)
@@ -172,7 +174,11 @@ local function Options(link, data)
 			missing.auction = Auctionator and "no price scanned" or "Auctionator not loaded"
 		end
 	end
-	if (classID == 2 or classID == 4) and quality >= 2 and quality <= 4 and itemID then
+	local canDisenchant = IsPlayerSpell and IsPlayerSpell(DISENCHANT_SPELL)
+	if bound and not canDisenchant then
+		-- It cannot be sent to an enchanter.
+		missing.disenchant = "bound, and you cannot disenchant"
+	elseif (classID == 2 or classID == 4) and quality >= 2 and quality <= 4 and itemID then
 		local value, why
 		value, why, parts = DisenchantValue(itemID, classID, quality, level or 0)
 		if value then
