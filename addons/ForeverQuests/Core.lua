@@ -19,7 +19,7 @@ local PALETTE = {
 }
 
 ns.active = {} -- quests whose objective dots show
-ns.turnInQuests = {} -- completed quests whose turn-in "?" shows (game's quest POIs off)
+ns.turnInQuests = {} -- completed quests whose turn-in "?" we draw (the game draws none)
 local colorOf -- questID -> PALETTE index, the saved ForeverQuestsColors
 
 function ns.Print(text)
@@ -80,15 +80,32 @@ function ns.ShowsTurnIn(questID)
 	return questID == ns.focused or questID == ns.hovered or C_QuestLog.GetQuestWatchType(questID) ~= nil
 end
 
+-- Whether the game draws a "?" for this quest on one of the maps its
+-- turn-in is on. It does not for every quest: one handed in at an object
+-- on another continent gets none.
+local function GameShowsTurnIn(quest)
+	if not (C_QuestLog.GetQuestsOnMap and GetCVarBool("questPOI")) then
+		return false
+	end
+	for uiMap in pairs(quest.turnIns) do
+		local ok, onMap = pcall(C_QuestLog.GetQuestsOnMap, uiMap)
+		for _, info in ipairs(ok and type(onMap) == "table" and onMap or {}) do
+			if info.questID == quest.questID then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 function ns.Rebuild()
 	if not ns.ready then
 		return
 	end
 	wipe(ns.active)
 	wipe(ns.turnInQuests)
-	-- With the game's quest POIs switched off it draws no "?" turn-in icons;
-	-- we draw them instead.
-	local ownTurnIns = not GetCVarBool("questPOI")
+	-- Where the game draws no "?" turn-in icon (its quest POIs switched off,
+	-- or none for this quest) we draw one.
 	local focused = FocusedQuest()
 	ns.focused = focused
 	local shown = focused and { focused } or TrackedQuests()
@@ -98,7 +115,7 @@ function ns.Rebuild()
 	for _, questID in ipairs(shown) do
 		local quest = ns.Quest(questID)
 		if C_QuestLog.IsComplete(questID) then
-			if ownTurnIns and next(quest.turnIns) then
+			if next(quest.turnIns) and not GameShowsTurnIn(quest) then
 				quest.color = ColorOf(questID)
 				ns.turnInQuests[#ns.turnInQuests + 1] = quest
 			end
