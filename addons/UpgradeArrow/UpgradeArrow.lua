@@ -5,7 +5,8 @@
 -- - in Baganator's bags and bank, as an icon corner widget (top right);
 -- - on LootRolls bars (it asks UpgradeArrow.IsUpgrade);
 -- - on quest reward and choice items, in the quest frame and quest log;
--- - in the item tooltip, with both scores. Hold Alt for the stats behind them.
+-- - nothing in the tooltip, unless Alt is held: then both scores and the
+--   stats behind them.
 --
 -- Rings, trinkets and (when you dual wield) one-handers are compared with
 -- the weaker of the two you wear; a two-hander with main and off hand
@@ -337,23 +338,24 @@ local function AddTooltip(tooltip, data)
 	if not result or not result.score then
 		return
 	end
-	local alt = IsAltKeyDown()
+	-- Only while Alt is held: the scores and the stats behind them.
+	if not IsAltKeyDown() then
+		return
+	end
 	local roleText = " (" .. ROLE_NAME[role] .. ")"
 	if result.upgrade then
 		local gain = not result.empty and result.against > 0 and ("+%d%%"):format((result.score / result.against - 1) * 100 + 0.5) or "empty slot"
 		tooltip:AddDoubleLine("|cff40c040Upgrade|r " .. gain .. roleText, ("%.1f vs %.1f"):format(result.score, result.against), 1, 1, 1, 0.6, 0.6, 0.6)
-	elseif alt then
+	else
 		tooltip:AddDoubleLine("Not an upgrade" .. roleText, ("%.1f vs %.1f"):format(result.score, result.against or 0), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
 	end
-	if alt then
-		local slot = SLOTS[select(9, C_Item.GetItemInfo(link)) or ""]
-		local _, parts = Score(link, slot and slot[1])
-		for _, part in ipairs(parts) do
-			tooltip:AddDoubleLine(("  %g %s x %g"):format(part[2], part[1], weights[part[1]] or 0), ("%.1f"):format(part[3]), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
-		end
-		if result.againstLink then
-			tooltip:AddLine("  vs " .. result.againstLink, 0.6, 0.6, 0.6)
-		end
+	local slot = SLOTS[select(9, C_Item.GetItemInfo(link)) or ""]
+	local _, parts = Score(link, slot and slot[1])
+	for _, part in ipairs(parts) do
+		tooltip:AddDoubleLine(("  %g %s x %g"):format(part[2], part[1], weights[part[1]] or 0), ("%.1f"):format(part[3]), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
+	end
+	if result.againstLink then
+		tooltip:AddLine("  vs " .. result.againstLink, 0.6, 0.6, 0.6)
 	end
 end
 
