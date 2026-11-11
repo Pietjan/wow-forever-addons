@@ -4,6 +4,7 @@
 --
 -- - in Baganator's bags and bank, as an icon corner widget (top right);
 -- - on LootRolls bars (it asks UpgradeArrow.IsUpgrade);
+-- - on quest reward and choice items, in the quest frame and quest log;
 -- - in the item tooltip, with both scores. Hold Alt for the stats behind them.
 --
 -- Rings, trinkets and (when you dual wield) one-handers are compared with
@@ -255,7 +256,7 @@ local function Evaluate(link)
 	if equipLoc == "INVTYPE_2HWEAPON" then
 		local main, mainLink = EquippedScore(16)
 		local off = EquippedScore(17)
-		against, againstLink = main + off, mainLink
+		against, againstLink = main + off, mainLink or GetInventoryItemLink("player", 17)
 	else
 		local mainLink = GetInventoryItemLink("player", 16)
 		local mainEquip = mainLink and select(9, C_Item.GetItemInfo(mainLink))
@@ -277,12 +278,16 @@ local function Evaluate(link)
 	end
 	result.against = against or 0
 	result.againstLink = againstLink
-	result.upgrade = score > 0 and score > result.against + 0.01
+	-- Anything you can use beats an empty slot, even with no weighted stats.
+	result.empty = againstLink == nil
+	result.upgrade = result.empty or (score > 0 and score > result.against + 0.01)
 	cache[link] = result
 	return result
 end
 
 -- The arrow --------------------------------------------------------------
+
+local ARROW_SIZE = 20
 
 local function SetArrow(texture)
 	if C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("bags-greenarrow") then
@@ -305,8 +310,8 @@ end
 function UpgradeArrow.CreateArrow(frame)
 	local arrow = frame:CreateTexture(nil, "OVERLAY", nil, 7)
 	SetArrow(arrow)
-	arrow:SetSize(14, 14)
-	arrow:SetPoint("TOPRIGHT", 2, 2)
+	arrow:SetSize(ARROW_SIZE, ARROW_SIZE)
+	arrow:SetPoint("TOPRIGHT", 3, 3)
 	arrow:Hide()
 	return arrow
 end
@@ -335,7 +340,7 @@ local function AddTooltip(tooltip, data)
 	local alt = IsAltKeyDown()
 	local roleText = " (" .. ROLE_NAME[role] .. ")"
 	if result.upgrade then
-		local gain = result.against > 0 and ("+%d%%"):format((result.score / result.against - 1) * 100 + 0.5) or "empty slot"
+		local gain = not result.empty and result.against > 0 and ("+%d%%"):format((result.score / result.against - 1) * 100 + 0.5) or "empty slot"
 		tooltip:AddDoubleLine("|cff40c040Upgrade|r " .. gain .. roleText, ("%.1f vs %.1f"):format(result.score, result.against), 1, 1, 1, 0.6, 0.6, 0.6)
 	elseif alt then
 		tooltip:AddDoubleLine("Not an upgrade" .. roleText, ("%.1f vs %.1f"):format(result.score, result.against or 0), 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
@@ -367,9 +372,69 @@ local function RegisterBaganator()
 	end, function(itemButton)
 		local arrow = itemButton:CreateTexture(nil, "OVERLAY")
 		SetArrow(arrow)
-		arrow:SetSize(14, 14)
+		arrow:SetSize(ARROW_SIZE, ARROW_SIZE)
 		return arrow
 	end, { corner = "top_right", priority = 1 })
+end
+
+-- Quest rewards ----------------------------------------------------------
+
+-- Our arrows on Blizzard's reward buttons, kept in our own table: no field
+-- is written on their frames.
+local questArrows = {}
+local questRetry = false
+
+local function UpdateQuestRewards()
+	local info = QuestInfoFrame
+	local rewardsFrame = info and info.rewardsFrame
+	local buttons = rewardsFrame and rewardsFrame.RewardButtons
+	if type(buttons) ~= "table" then
+		return
+	end
+	local pending = false
+	for _, button in ipairs(buttons) do
+		local arrow = questArrows[button]
+		local show = false
+		if button:IsShown() and button.objectType == "item" and (button.type == "choice" or button.type == "reward") then
+			local link
+			if info.questLog then
+				link = GetQuestLogItemLink(button.type, button:GetID())
+			else
+				link = GetQuestItemLink(button.type, button:GetID())
+			end
+			local result = link and Evaluate(link)
+			if link and not result then
+				pending = true -- item not cached yet
+			end
+			show = result and result.upgrade or false
+		end
+		if show and not arrow then
+			local icon = button.Icon or button.icon
+			arrow = button:CreateTexture(nil, "OVERLAY", nil, 7)
+			SetArrow(arrow)
+			arrow:SetSize(ARROW_SIZE, ARROW_SIZE)
+			arrow:SetPoint("TOPRIGHT", icon or button, "TOPRIGHT", 3, 3)
+			questArrows[button] = arrow
+		end
+		if arrow then
+			arrow:SetShown(show)
+		end
+	end
+	if pending and not questRetry then
+		questRetry = true
+		C_Timer.After(0.5, function()
+			questRetry = false
+			UpdateQuestRewards()
+		end)
+	end
+end
+
+local function HookQuestRewards()
+	if QuestInfo_Display then
+		hooksecurefunc("QuestInfo_Display", function()
+			pcall(UpdateQuestRewards)
+		end)
+	end
 end
 
 -- Events -----------------------------------------------------------------
@@ -377,6 +442,7 @@ end
 local function Invalidate()
 	wipe(cache)
 	weights = Weights()
+	pcall(UpdateQuestRewards)
 	if Baganator and Baganator.API and Baganator.API.RequestItemButtonsRefresh then
 		Baganator.API.RequestItemButtonsRefresh()
 	end
@@ -400,6 +466,7 @@ events:SetScript("OnEvent", function(self, event, name)
 		end
 		weights = Weights()
 		RegisterBaganator()
+		HookQuestRewards()
 		if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
 			TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tooltip, data)
 				pcall(AddTooltip, tooltip, data)
