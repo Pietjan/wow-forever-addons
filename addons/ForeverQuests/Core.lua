@@ -230,6 +230,18 @@ SlashCmdList.FOREVERQUESTS = function(input)
 				questID, title, quest.count, table.concat(maps, ", "), open, #quest.targets,
 				C_QuestLog.IsComplete(questID) and ", complete" or ""))
 		end
+		if QuestDB.Exists(questID) then
+			local turnIns = {}
+			for uiMap, spots in pairs(quest.turnIns) do
+				local info = C_Map.GetMapInfo(uiMap)
+				turnIns[#turnIns + 1] = ("%s %d"):format(info and info.name or uiMap, #spots)
+			end
+			local gameMap = GetQuestUiMapID and GetQuestUiMapID(questID) or 0
+			local gameInfo = gameMap ~= 0 and C_Map.GetMapInfo(gameMap)
+			print(("      turn-in: %s; the game's map for it: %s"):format(
+				#turnIns > 0 and table.concat(turnIns, ", ") or "none known",
+				gameInfo and gameInfo.name or tostring(gameMap)))
+		end
 	end
 	local mapID = C_Map.GetBestMapForUnit("player")
 	print(("  %d dots on your current map."):format(#ns.PointsOn(mapID)))

@@ -101,13 +101,30 @@ local function BestMap(questID)
 	return best
 end
 
--- Opening a quest's details moves the map to the quest's map, but only
--- when the game knows one (GetQuestUiMapID is not 0). For a quest it does
--- not know, such as one handed in at an object on another continent, the
--- map stayed where it was; go to where QuestieDB puts it instead.
+-- Opening a quest's details moves the map to the map the game gives the
+-- quest (GetQuestUiMapID). For some quests that map has nothing on it:
+-- "... and that note you found" opens on the Barrens, where it was picked
+-- up, while it is handed in at an object in Westfall. When the map shown
+-- has neither a game marker for the quest nor any of our points, go to
+-- where QuestieDB puts it instead.
+local function ShownHere(questID, uiMap)
+	local quest = ns.Quest(questID)
+	local byMap = C_QuestLog.IsComplete(questID) and quest.turnIns or quest.byMap
+	if byMap and byMap[uiMap] and #byMap[uiMap] > 0 then
+		return true
+	end
+	local ok, onMap = pcall(C_QuestLog.GetQuestsOnMap, uiMap)
+	for _, info in ipairs(ok and type(onMap) == "table" and onMap or {}) do
+		if info.questID == questID then
+			return true
+		end
+	end
+	return false
+end
+
 local switching = false
 local function OnShowQuestDetails(questID)
-	if switching or not questID or GetQuestUiMapID(questID) ~= 0 then
+	if switching or not questID or ShownHere(questID, WorldMapFrame:GetMapID()) then
 		return
 	end
 	local uiMap = BestMap(questID)
