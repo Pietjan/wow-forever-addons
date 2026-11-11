@@ -3,6 +3,7 @@
 ## Notes: Movable group loot roll bars in the XLoot layout: icon, timer bar with the item name, Need/Greed/Pass with how many chose each and who (hover). /lootrolls
 ## Author: Pietjan
 ## Version: 1.0
+## OptionalDeps: UpgradeArrow
 ## SavedVariables: LootRollsDB
 
 LootRolls.lua

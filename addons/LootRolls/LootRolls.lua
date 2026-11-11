@@ -382,6 +382,10 @@ local function CreateRow()
 	icon.border:SetPoint("CENTER")
 	icon.count = icon:CreateFontString(nil, "OVERLAY", Font("NumberFontNormal", "GameFontHighlight"))
 	icon.count:SetPoint("BOTTOMRIGHT", -3, 2)
+	-- UpgradeArrow's green arrow when the item is an upgrade for you.
+	if UpgradeArrow and UpgradeArrow.CreateArrow then
+		icon.upgrade = UpgradeArrow.CreateArrow(icon)
+	end
 	icon:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_LEFT")
 		if row.fake then
@@ -666,6 +670,9 @@ local function ShowRow(rollID, duration, info, fake)
 		row.icon.border:SetAtlas(border)
 	end
 	row.icon.count:SetText((info.count or 1) > 1 and info.count or "")
+	if row.icon.upgrade then
+		row.icon.upgrade:SetShown(info.link and UpgradeArrow.IsUpgrade(info.link) or false)
+	end
 	row.name:SetText(info.name or "")
 	row.name:SetTextColor(r, g, b)
 	row.bop:SetShown(info.bop and true or false)
@@ -929,6 +936,7 @@ end
 -- Blizzard's frames ---------------------------------------------------------
 
 local muted = {}
+local events = CreateFrame("Frame") -- ours: START_LOOT_ROLL stays registered here
 
 local function MuteBlizzard(on)
 	if on then
@@ -939,7 +947,7 @@ local function MuteBlizzard(on)
 			return
 		end
 		for _, frame in ipairs(frames) do
-			if frame ~= anchor and not muted[frame] then
+			if frame ~= events and not muted[frame] then
 				if pcall(frame.UnregisterEvent, frame, "START_LOOT_ROLL") then
 					muted[frame] = true
 				end
@@ -997,7 +1005,6 @@ end
 
 -- Events and commands ---------------------------------------------------
 
-local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
 events:SetScript("OnEvent", function(self, event, ...)
 	if event == "ADDON_LOADED" then
