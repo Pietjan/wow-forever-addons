@@ -5,3 +5,6 @@ addons/ForeverGuide/Guides/
 # Working notes, test harnesses and a checkout of the game's UI source.
 scratchpad/
 __pycache__/
+
+# Zips and notes made by `make package/<addon>` and `make release/<addon>`.
+dist/

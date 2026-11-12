@@ -81,13 +81,25 @@ Without this step ForeverGuide does not load.
 
 ## Working on them
 
-    make check      # compile every addon, catch locals used before definition (needs luac 5.1)
+    make audit                # compile every addon, catch locals used before definition (needs luac 5.1)
     make guides
-    make install    # check, then have ../wow-addons copy everything into the game
+    make install              # audit, then have ../wow-addons copy everything into the game
+    make versions             # every addon's version, and whether it is released
+    make package/<addon>      # zip one addon's committed files into dist/
+    make release/<addon>      # publish that zip as a GitHub release (needs the gh CLI)
 
 `make install` relies on a second, private repo of mine that vendors other
 people's addons and copies both sets into the game. Without it, copy the
 folders by hand.
+
+Each addon is released on its own. Its version is the `## Version:` line of
+its `.toc`; `make release/<addon>` publishes that version as the tag
+`<addon>-v<version>` with `<addon>-<version>.zip` attached, and asks before
+it does. It refuses when the addon has uncommitted changes, when the current
+commit is not on GitHub yet, or when that version is already released: raise
+the version in the `.toc` first. The notes list the commits that touched the
+addon since its previous release. ForeverGuide's zip has no guide files, for
+the reason given above.
 
 `scripts/` holds the generators for files that are committed:
 `sell-advice-data.py` (SellAdvice's `Data.lua`), `make-dot-tga.py`
