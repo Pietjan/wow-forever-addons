@@ -1,0 +1,7 @@
+# Guide files copied in by `make guides`: other people's work under
+# non-commercial licences, not for redistribution.
+addons/ForeverGuide/Guides/
+
+# Working notes, test harnesses and a checkout of the game's UI source.
+scratchpad/
+__pycache__/

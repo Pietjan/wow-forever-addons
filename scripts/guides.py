@@ -7,18 +7,20 @@ them. This script takes the WoW Forever leveling guides from both
 projects' GitHub repositories and puts unmodified copies under
 addons/ForeverGuide/Guides, with a guides.xml that lists them.
 
-RestedXP: when the RestedXP Guides addon itself is vendored here
-(addons/RXPGuides), its guide files are used, because the released addon
-carries more guides (levels 1-60) than the GitHub repository (1-22).
+RestedXP: when the released RestedXP Guides addon is at hand (RXPGUIDES_DIR,
+by default ../wow-addons/addons/RXPGuides next to this repository), its
+guide files are used, because the released addon carries more guides
+(levels 1-60) than the GitHub repository (1-22).
 
 Dungeon guides are left out. Both guide sets are licensed for
 non-commercial use (RestedXP: CC BY-NC-SA 4.0, WoW-Pro: CC BY-NC-ND 3.0);
-they are here for personal use, not for redistribution.
+the copies are for personal use and are kept out of git.
 
 usage: guides.py            fetch both
        guides.py rxp        only RestedXP
        guides.py wowpro     only WoW-Pro
 """
+import os
 import re
 import shutil
 import subprocess
@@ -28,6 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEST = ROOT / "addons" / "ForeverGuide" / "Guides"
+RXPGUIDES = Path(os.environ.get("RXPGUIDES_DIR") or ROOT.parent / "wow-addons" / "addons" / "RXPGuides")
 
 SOURCES = {
     "rxp": {
@@ -98,7 +101,7 @@ def main():
     for key in wanted:
         source = SOURCES[key]
         dest = DEST / source["folder"]
-        local = ROOT / "addons" / "RXPGuides"
+        local = RXPGUIDES
         if key == "rxp" and (local / "Guides" / "GuideList-forever.xml").is_file():
             fresh = dest.with_name(dest.name + ".new")
             if fresh.exists():
@@ -106,7 +109,7 @@ def main():
             fresh.mkdir()
             files = take_rxp(local, fresh)
             version = re.search(r"^## Version:\s*(\S+)", (local / "RXPGuides.toc").read_text(errors="replace"), re.M)
-            origin = f"addons/RXPGuides {version.group(1) if version else ''}".strip()
+            origin = f"RXPGuides addon {version.group(1) if version else ''}".strip()
             if dest.exists():
                 shutil.rmtree(dest)
             fresh.rename(dest)
