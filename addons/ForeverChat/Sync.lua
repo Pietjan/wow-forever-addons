@@ -348,6 +348,52 @@ local function ApplyChannelColors(profile, joined, only)
 	return count
 end
 
+-- The game keeps a channel's colour under the channel's number, and the
+-- numbers move: a channel is left and the ones after it shift up, a channel
+-- is rejoined, the list is dragged into another order. The colour then
+-- stays behind on the number, under whatever channel sits there next. So
+-- for the length of a session the colours are held by channel name
+-- (`colors`: name -> colour) and put back on every change of the list.
+--
+-- A channel that has no colour on record, in the session or in the shared
+-- setup, has never been coloured by the player: it gets the game's own
+-- channel colour instead of what the number last carried.
+local DEFAULT_CHANNEL_COLOR = { r = 1, g = 192 / 255, b = 192 / 255 }
+
+local function FollowChannels(profile, joined, colors)
+	local count = 0
+	for name, id in pairs(joined) do
+		local wanted = colors[name] or (profile.channelColors and profile.channelColors[name]) or DEFAULT_CHANNEL_COLOR
+		colors[name] = wanted
+		if ApplyColor("CHANNEL" .. id, wanted) then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+-- The player picks another colour for a channel, or switches its class
+-- colours: that is the channel's colour from now on. `change` is
+-- { r, g, b } or { class = flag }.
+local function NoteChannelColor(chatType, change, joined, colors)
+	local id = type(chatType) == "string" and tonumber(chatType:match("^CHANNEL(%d+)$"))
+	if not id then
+		return
+	end
+	for name, number in pairs(joined) do
+		if number == id then
+			local known = colors[name] or ReadColor(chatType) or DEFAULT_CHANNEL_COLOR
+			local color = { r = known.r, g = known.g, b = known.b, class = known.class }
+			if change.class ~= nil then
+				color.class = change.class
+			else
+				color.r, color.g, color.b = change.r, change.g, change.b
+			end
+			colors[name] = color
+		end
+	end
+end
+
 local function ApplyColors(profile, joined)
 	local count = 0
 	for chatType, wanted in pairs(profile.colors or {}) do
@@ -412,6 +458,7 @@ local state = {
 	changes = {}, -- what was written this session
 	joined = {},
 	seen = {}, -- channels already dealt with this session
+	colors = {}, -- channel name -> its colour this session (see FollowChannels)
 	verified = false,
 	timer = false,
 }
@@ -501,6 +548,7 @@ local function Verify()
 	end
 	Write(state.joined)
 	ApplyColors(profile, state.joined)
+	FollowChannels(profile, state.joined, state.colors)
 	if state.unread then
 		OfferReload(state.changes)
 	else
@@ -511,9 +559,10 @@ end
 
 -- Channels are joined some seconds after login, and Trade and the like
 -- come and go with the zone. A channel seen for the first time this
--- session gets its colour (kept by name) and its place in the windows.
--- Nothing else is touched after login: from then on the settings are the
--- player's to change, and logout saves what they made of them.
+-- session gets its place in the windows, and every channel gets its colour
+-- back (kept by name) in case its number moved. Nothing else is touched
+-- after login: from then on the settings are the player's to change, and
+-- logout saves what they made of them.
 local function OnChannelsChanged()
 	state.timer = false
 	local profile = Profile()
@@ -529,10 +578,14 @@ local function OnChannelsChanged()
 			fresh[name] = true
 		end
 	end
-	if not fresh or not profile or not Sync.IsEnabled() then
+	if not profile or not Sync.IsEnabled() then
 		return
 	end
-	ApplyChannelColors(profile, state.joined, fresh)
+	-- Every channel, not only the new ones: the numbers may have moved.
+	FollowChannels(profile, state.joined, state.colors)
+	if not fresh then
+		return
+	end
 	local changes = Write(state.joined, fresh)
 	if #changes > 0 then
 		OfferReload(state.changes)
@@ -572,7 +625,9 @@ function Sync.Load()
 		state.seen[name] = true
 	end
 	local changes = Write(state.joined)
+	state.colors = {}
 	local colors = ApplyColors(profile, state.joined)
+	colors = colors + FollowChannels(profile, state.joined, state.colors)
 	if #changes > 0 or state.unread then
 		OfferReload(state.changes, true)
 	elseif colors > 0 then
@@ -769,6 +824,25 @@ function Sync.Status()
 end
 
 function Sync.Init()
+	-- What the player changes in the chat settings, by channel name. These
+	-- run after Blizzard's functions and read only their arguments.
+	if type(hooksecurefunc) == "function" then
+		if type(_G.ChangeChatColor) == "function" then
+			hooksecurefunc("ChangeChatColor", function(chatType, r, g, b)
+				if state.ready and type(r) == "number" and type(g) == "number" and type(b) == "number" then
+					NoteChannelColor(chatType, { r = r, g = g, b = b }, state.joined, state.colors)
+				end
+			end)
+		end
+		if type(_G.SetChatColorNameByClass) == "function" then
+			hooksecurefunc("SetChatColorNameByClass", function(chatType, flag)
+				if state.ready then
+					NoteChannelColor(chatType, { class = Flag(flag) }, state.joined, state.colors)
+				end
+			end)
+		end
+	end
+
 	local events = CreateFrame("Frame")
 	events:RegisterEvent("UPDATE_CHAT_WINDOWS")
 	events:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -811,3 +885,5 @@ Sync.BuildLayout = BuildLayout
 Sync.Capture = Capture
 Sync.ApplyWindows = ApplyWindows
 Sync.ApplyColors = ApplyColors
+Sync.FollowChannels = FollowChannels
+Sync.NoteChannelColor = NoteChannelColor
