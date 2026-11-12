@@ -345,17 +345,12 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		SLASH_NAMEONLY2 = "/nonly"
 		SlashCmdList.NAMEONLY = Command
 	elseif event == "PLAYER_LOGIN" then
-		-- Quiet unless something had to change; the first login says it all.
-		local first = not db.setupDone
-		db.setupDone = true
+		-- Quiet unless something had to change.
 		if db.release and not InCombatLockdown() then
 			db.release = nil
 			ReleaseCVars()
 		end
 		Setup(true)
-		if first then
-			Print("Friendly player names are now nameplates with just the name. /nameonly to style them.")
-		end
 	elseif event == "PLAYER_ENTERING_WORLD" then
 		-- Per-character options can load after PLAYER_LOGIN and undo what
 		-- was set there; apply again once the world is up (harmless when

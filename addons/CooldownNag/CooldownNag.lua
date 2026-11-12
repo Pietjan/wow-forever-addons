@@ -1235,9 +1235,6 @@ loader:SetScript("OnEvent", function(self, event, arg, _, spellID)
 		Rebuild()
 		ApplyLayout()
 		HookSettings()
-		if #watched == 0 then
-			Print("nothing watched yet: /cdn to pick abilities")
-		end
 	elseif event == "SPELLS_CHANGED" or event == "COOLDOWN_VIEWER_DATA_LOADED" then
 		Rebuild()
 	elseif event == "UNIT_SPELLCAST_SUCCEEDED" then

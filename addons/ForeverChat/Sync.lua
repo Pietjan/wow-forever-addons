@@ -489,7 +489,6 @@ local function Verify()
 	local profile = Profile()
 	if not profile then
 		state.ready = true
-		ns.Print("no shared chat setup yet. On the character whose chat you like, type |cffffd100/fchat save|r.")
 		return
 	end
 	if not Sync.IsEnabled() then
@@ -501,14 +500,11 @@ local function Verify()
 		state.seen[name] = true
 	end
 	Write(state.joined)
-	local colors = ApplyColors(profile, state.joined)
+	ApplyColors(profile, state.joined)
 	if state.unread then
 		OfferReload(state.changes)
 	else
 		ns.charDB.asked, ns.charDB.refused = nil, nil
-		if #state.changes > 0 or colors > 0 then
-			ns.Print("chat set up as saved from %s.", profile.savedBy or "another character")
-		end
 	end
 	state.ready = true
 end
