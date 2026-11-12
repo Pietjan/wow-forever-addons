@@ -25,6 +25,48 @@ is one addon: copy it into the game's `Interface/AddOns` and `/reload`.
 Some of them build on other addons (QuestieDB, Auctionator, Baganator, the
 Cooldown Manager); each addon's `.toc` names what it needs or can use.
 
+## What they look like
+
+These are mock-ups, not screenshots: drawn outside the game from the game's own
+art and font at the sizes the addon code uses. The background, the numbers and
+the names in them are stand-ins.
+
+**SimpleRaidTargetIcons.** The radial menu. The target already has the cross, so that slot shows the pass sign.
+
+<img src="docs/mockups/simpleraidtargeticons-menu.png" width="220" alt="SimpleRaidTargetIcons mock-up">
+
+**ForeverGuide.** The guide as a section of the quest tracker, with its progress bar.
+
+<img src="docs/mockups/foreverguide-tracker.png" width="320" alt="ForeverGuide mock-up">
+
+**ForeverChat.** The chat window, tabs and input box in Forever's style, with short channel names.
+
+<img src="docs/mockups/foreverchat-window.png" width="580" alt="ForeverChat mock-up">
+
+**ForeverQuests.** Spawn dots of three tracked quests on the map, and a turn-in marker.
+
+<img src="docs/mockups/foreverquests-map.png" width="440" alt="ForeverQuests mock-up">
+
+**BuffNag.** A buff missing on you, one missing on three of the party, one running out, and the pause button.
+
+<img src="docs/mockups/buffnag-icons.png" width="260" alt="BuffNag mock-up">
+
+**CooldownNag.** Two abilities seconds from ready and one that is ready.
+
+<img src="docs/mockups/cooldownnag-icons.png" width="230" alt="CooldownNag mock-up">
+
+**SellAdvice.** The advice line in an item tooltip, and the workings with Alt held.
+
+<img src="docs/mockups/selladvice-tooltip.png" width="672" alt="SellAdvice mock-up">
+
+**UpgradeArrow.** The green arrow on two items in a row of bag slots.
+
+<img src="docs/mockups/upgradearrow-bag-items.png" width="371" alt="UpgradeArrow mock-up">
+
+**LootRolls.** Three roll bars with how many chose need, greed and pass.
+
+<img src="docs/mockups/lootrolls-bars.png" width="374" alt="LootRolls mock-up">
+
 ## ForeverGuide needs guide files
 
 ForeverGuide has no guides of its own. It loads the guide files of RestedXP
