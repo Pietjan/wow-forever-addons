@@ -1,0 +1,29 @@
+## Interface: 16001
+## Title: ForeverGuide
+## Notes: Leveling guides inside the quest tracker. Reads RestedXP and WoW-Pro guides, tracks the quests of the current step, points an arrow and sets the map pin. /fg
+## Author: Pietjan
+## Version: 1.0
+## OptionalDeps: QuestieDB
+## SavedVariables: ForeverGuideDB
+## SavedVariablesPerCharacter: ForeverGuideCharDB
+
+Core.lua
+Text.lua
+Maps.lua
+State.lua
+ParserRXP.lua
+ParserWoWPro.lua
+Registry.lua
+
+Guides\guides.xml
+
+RegistryEnd.lua
+Engine.lua
+Watches.lua
+Auto.lua
+Cleanup.lua
+Navigation.lua
+Arrow.lua
+Tracker.lua
+Tracker.xml
+Menu.lua
