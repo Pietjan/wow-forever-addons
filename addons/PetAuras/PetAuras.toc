@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: PetAuras
+## Notes: Your pet's buffs and debuffs as small icons under the pet frame, drawn by the game's own aura buttons.
+## Author: Pietjan
+## Version: 1.0
+## Dependencies: Blizzard_UnitFrame
+
+PetAuras.lua
