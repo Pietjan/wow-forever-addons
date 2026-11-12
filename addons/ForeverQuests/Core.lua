@@ -17,6 +17,10 @@ local PALETTE = {
 	{ 0.98, 0.44, 0.52 }, -- rose
 	{ 0.91, 0.47, 0.98 }, -- orchid
 	{ 0.38, 0.65, 0.98 }, -- cornflower
+	{ 1.00, 0.73, 0.35 }, -- peach
+	{ 0.35, 0.35, 1.00 }, -- periwinkle
+	{ 0.95, 0.49, 0.33 }, -- coral
+	{ 0.35, 1.00, 0.35 }, -- mint
 }
 
 ns.active = {} -- quests whose objective dots show
