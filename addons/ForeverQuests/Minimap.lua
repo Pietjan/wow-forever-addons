@@ -4,7 +4,7 @@
 
 local _, ns = ...
 
-local DOT_SIZE = 10
+local DOT_SIZE = 8
 local TURN_IN_SIZE = 18
 local CELL = 14 -- dots of one quest closer than this (pixels) merge
 local INTERVAL = 0.03 -- seconds between position updates

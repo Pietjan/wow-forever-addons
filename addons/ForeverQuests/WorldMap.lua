@@ -6,7 +6,7 @@
 
 local _, ns = ...
 
-local DOT_SIZE = 10
+local DOT_SIZE = 8
 local TURN_IN_SIZE = 32 -- the game's quest pins draw at 32
 local CELL = 15 -- dots of one quest closer than this (screen units) merge
 

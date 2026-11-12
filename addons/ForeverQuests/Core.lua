@@ -4,18 +4,18 @@
 
 local addonName, ns = ...
 
--- Distinct, bright colours. A quest gets one the first time it shows dots
--- and keeps it while it is in the quest log, saved per character; a new
--- quest takes the colour fewest other quests in the log have.
+-- Distinct, saturated colours, picked to stay far from every class colour
+-- (party members are class-coloured dots on the map) and from the yellow
+-- the minimap uses for tracked herbs and ore. A quest gets one the first
+-- time it shows dots and keeps it while it is in the quest log, saved per
+-- character; a new quest takes the colour fewest other quests in the log have.
 local PALETTE = {
-	{ 0.95, 0.95, 0.95 }, -- not yellow: the minimap uses that for tracked herbs and ore
-	{ 0.30, 0.80, 1.00 },
-	{ 1.00, 0.35, 0.35 },
-	{ 0.45, 1.00, 0.35 },
-	{ 1.00, 0.45, 1.00 },
-	{ 1.00, 0.60, 0.15 },
-	{ 0.60, 0.55, 1.00 },
-	{ 0.35, 1.00, 0.80 },
+	{ 0.58, 1.00, 0.00 }, -- lime
+	{ 1.00, 0.00, 0.67 }, -- hot pink
+	{ 0.00, 1.00, 0.92 }, -- cyan
+	{ 1.00, 0.00, 0.08 }, -- red
+	{ 1.00, 0.00, 1.00 }, -- magenta
+	{ 0.15, 0.36, 1.00 }, -- royal blue
 }
 
 ns.active = {} -- quests whose objective dots show
