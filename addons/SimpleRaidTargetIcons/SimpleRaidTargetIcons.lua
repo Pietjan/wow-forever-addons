@@ -12,7 +12,6 @@
 
 local ADDON_NAME = ...
 
-local ICON_TEXTURE = "Interface\\TargetingFrame\\UI-RaidTargetingIcons"
 local ICON_NAMES = { "Star", "Circle", "Diamond", "Triangle", "Moon", "Square", "Cross", "Skull" }
 
 local DEFAULTS = {
@@ -26,11 +25,20 @@ local DEFAULTS = {
 }
 
 -- Menu geometry in the menu's own (scaled) pixels, measured from its centre.
-local RADIUS, ICON_SIZE, HIT_SIZE = 36, 18, 34
-local LINGER_RADIUS = 60  -- beyond this the menu closes after LINGER_TIME
+local RADIUS, ICON_SIZE, HIT_SIZE = 44, 26, 32
+local PORTRAIT_SIZE = 40
+local RIM = 1.5           -- width of the bronze edge around a disc
+local LINGER_RADIUS = 75  -- beyond this the menu closes after LINGER_TIME
 local CANCEL_RADIUS = 200 -- beyond this it closes at once
 local LINGER_TIME = 0.75
-local FADE_TIME = 0.1
+local FADE_TIME = 0.12
+
+-- Forever's interface colours: near-black panels with a bronze edge, gold
+-- for whatever is selected.
+local PANEL = { 0.06, 0.05, 0.04 }
+local BRONZE = { 0.55, 0.42, 0.22 }
+local GOLD = { 1, 0.82, 0.2 }
+local CIRCLE_MASK = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
 
 local IsSecret = issecretvalue or function() return false end
 
@@ -61,14 +69,6 @@ local function GUID(unit)
 	if guid and not IsSecret(guid) then
 		return guid
 	end
-end
-
-local function MarkOf(unit)
-	local index = GetRaidTargetIndex(unit)
-	if IsSecret(index) then
-		return nil
-	end
-	return index or 0
 end
 
 ------------------------------------------------------------------------------
@@ -106,21 +106,39 @@ menu:SetClampedToScreen(true)
 menu:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 menu:Hide()
 
-menu.backdrop = menu:CreateTexture(nil, "BACKGROUND")
-menu.backdrop:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
-menu.backdrop:SetVertexColor(0, 0, 0, 0.7)
-menu.backdrop:SetSize(56, 56)
-menu.backdrop:SetPoint("CENTER")
+-- A flat disc in one colour: a white texture cut round by a mask, tinted.
+local function Disc(parent, sublevel, color)
+	local disc = parent:CreateTexture(nil, "BACKGROUND", nil, sublevel)
+	disc:SetColorTexture(1, 1, 1)
+	disc:SetVertexColor(color[1], color[2], color[3])
+	local mask = parent:CreateMaskTexture()
+	mask:SetTexture(CIRCLE_MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+	mask:SetAllPoints(disc)
+	disc:AddMaskTexture(mask)
+	return disc
+end
+
+-- A dark disc with a thin coloured edge: the rim disc shows around the fill.
+local function Socket(parent, size)
+	local rim = Disc(parent, 0, BRONZE)
+	rim:SetSize(size, size)
+	local fill = Disc(parent, 1, PANEL)
+	fill:SetPoint("TOPLEFT", rim, "TOPLEFT", RIM, -RIM)
+	fill:SetPoint("BOTTOMRIGHT", rim, "BOTTOMRIGHT", -RIM, RIM)
+	return rim
+end
 
 -- The centre shows the unit; right-clicking it removes the icon.
 menu.center = NewMarkButton("SRTIRadialMenuCenter", menu, nil)
-menu.center:SetSize(40, 40)
+menu.center:SetSize(PORTRAIT_SIZE, PORTRAIT_SIZE)
 menu.center:SetPoint("CENTER")
+menu.ring = Socket(menu.center, PORTRAIT_SIZE + 6)
+menu.ring:SetPoint("CENTER")
 menu.portrait = menu.center:CreateTexture(nil, "ARTWORK")
 menu.portrait:SetAllPoints()
 do
 	local mask = menu.center:CreateMaskTexture()
-	mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+	mask:SetTexture(CIRCLE_MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
 	mask:SetAllPoints(menu.portrait)
 	menu.portrait:AddMaskTexture(mask)
 end
@@ -130,6 +148,15 @@ local function IconAngle(index)
 	return math.rad(90 - (index - 1) * 45)
 end
 
+-- Which icon a unit has is secret to addon code here: the number can be
+-- neither read nor compared, only handed on to the game. To still show the
+-- "pass" sign of the loot roll window in place of the icon the unit already
+-- has (picking that icon removes it), every icon is a 4x4 sprite sheet of its
+-- own: each cell is the icon, except that cell i of icon i is the sign, and
+-- the game picks the cell from the unit's number. Cell 9 is the icon again,
+-- for a unit without one. See scripts/icon_sheets.py.
+local NO_MARK = 9
+
 menu.buttons = {}
 for i = 1, 8 do
 	local button = NewMarkButton("SRTIRadialMenuIcon" .. i, menu, i)
@@ -137,16 +164,27 @@ for i = 1, 8 do
 	local angle = IconAngle(i)
 	button:SetPoint("CENTER", menu, "CENTER", RADIUS * math.cos(angle), RADIUS * math.sin(angle))
 	button.icon = button:CreateTexture(nil, "ARTWORK")
-	button.icon:SetTexture(ICON_TEXTURE)
-	SetRaidTargetIconTexture(button.icon, i)
+	button.icon:SetTexture("Interface\\AddOns\\" .. ADDON_NAME .. "\\Icon" .. i)
+	button.icon:SetSpriteSheetCell(NO_MARK, 4, 4)
 	button.icon:SetPoint("CENTER")
+	-- A soft dark fade behind the icon, so it reads on bright ground.
+	button.shade = menu:CreateTexture(nil, "BACKGROUND", nil, 0)
+	button.shade:SetTexture("Interface\\AddOns\\" .. ADDON_NAME .. "\\Shade")
+	button.shade:SetVertexColor(0, 0, 0, 0.7)
+	button.shade:SetPoint("CENTER", button.icon)
 	menu.buttons[i] = button
 end
 
--- A cross over the icon the unit already has: picking it removes the icon.
-menu.remove = menu:CreateTexture(nil, "OVERLAY")
-menu.remove:SetTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
-menu.remove:Hide()
+local function ShowCurrentMark()
+	local index = GetRaidTargetIndex("target")
+	-- With no icon the number is nil, which the call refuses.
+	local marked = IsSecret(index) or index ~= nil
+	for _, button in ipairs(menu.buttons) do
+		if not (marked and pcall(button.icon.SetSpriteSheetCell, button.icon, index, 4, 4)) then
+			button.icon:SetSpriteSheetCell(NO_MARK, 4, 4)
+		end
+	end
+end
 
 local function Close(sound)
 	if not menu:IsShown() or menu.state == "hiding" then
@@ -160,24 +198,19 @@ local function Close(sound)
 end
 
 -- Draw the icons at a fraction (0..1) of their final distance and size. Only
--- the textures move; the buttons under them stay where they are.
+-- the textures move; the buttons under them stay where they are. The icon
+-- under the cursor grows.
 local function Layout(progress)
+	progress = 1 - (1 - progress) ^ 2 -- ease out
 	local radius = RADIUS * (0.45 + 0.55 * progress)
-	local size = ICON_SIZE * (0.5 + 0.5 * progress)
+	local grow = 0.5 + 0.5 * progress
 	for i, button in ipairs(menu.buttons) do
 		local angle = IconAngle(i)
-		local scale = (i == menu.selected) and 1.4 or 1
-		button.icon:SetPoint("CENTER", menu, "CENTER", radius * math.cos(angle), radius * math.sin(angle))
-		button.icon:SetSize(size * scale, size * scale)
-		button.icon:SetAlpha(i == menu.selected and 1 or 0.6)
-	end
-	if menu.current and menu.current > 0 then
-		local icon = menu.buttons[menu.current].icon
-		menu.remove:SetPoint("CENTER", icon)
-		menu.remove:SetSize(icon:GetSize())
-		menu.remove:Show()
-	else
-		menu.remove:Hide()
+		local x, y = radius * math.cos(angle), radius * math.sin(angle)
+		local size = ICON_SIZE * grow * (i == menu.selected and 1.3 or 1)
+		button.icon:SetPoint("CENTER", menu, "CENTER", x, y)
+		button.icon:SetSize(size, size)
+		button.shade:SetSize(size * 2.2, size * 2.2)
 	end
 end
 
@@ -219,7 +252,7 @@ function SRTI.Open()
 	end
 
 	menu.guid = GUID("target")
-	menu.current = MarkOf("target")
+	ShowCurrentMark()
 	menu.selected = nil
 	menu.state = "showing"
 	menu.stateSince = GetTime()
@@ -278,7 +311,7 @@ menu:SetScript("OnUpdate", function(self)
 	end
 
 	self.selected = SelectedIcon()
-	self.current = MarkOf("target")
+	ShowCurrentMark()
 	Layout(self.state == "open" and 1 or progress)
 end)
 
@@ -337,6 +370,11 @@ local function UnitUnderCursor()
 	for _, focus in ipairs(FramesUnderCursor()) do
 		local frame = focus
 		while frame and frame ~= UIParent and frame ~= WorldFrame do
+			-- Protected Blizzard frames (the community invite box, say) are
+			-- forbidden to addon code: any method call on them is an error.
+			if frame.IsForbidden and frame:IsForbidden() then
+				return nil, nil
+			end
 			if frame == menu or (frame.GetParent and frame:GetParent() == menu) then
 				return nil, frame
 			end
@@ -350,7 +388,11 @@ local function UnitUnderCursor()
 			frame = frame:GetParent()
 		end
 	end
-	return nil, FramesUnderCursor()[1]
+	local top = FramesUnderCursor()[1]
+	if top and top.IsForbidden and top:IsForbidden() then
+		top = nil
+	end
+	return nil, top
 end
 
 local lastClick = { time = 0, x = 0, y = 0, guid = nil }
