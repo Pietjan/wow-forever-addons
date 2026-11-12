@@ -18,6 +18,7 @@ ns.defaults = {
     pauseInDungeon = true, -- set the guide aside inside dungeons, raids and battlegrounds
     autoQuest = true,   -- accept and turn in the quests of the current steps
     cleanup = true,     -- offer to abandon leftover quests when a guide is finished
+    progress = true,    -- progress bar at the top of the guide in the tracker
 }
 
 -- Who is playing; guide files are filtered on this while they load.

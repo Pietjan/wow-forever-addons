@@ -12,4 +12,43 @@
 			<OnLeave method="OnLeave"/>
 		</Scripts>
 	</Button>
+	<!-- How far along the guide is: a thin gold bar above the steps. The
+	     plain border and track here are what shows if the game art that
+	     OnLoad puts on is missing. -->
+	<Frame name="ForeverGuideProgressBarTemplate" mixin="ForeverGuideProgressBarMixin" virtual="true" hidden="true" enableMouse="true">
+		<Size x="232" y="15"/>
+		<Frames>
+			<StatusBar parentKey="Bar" minValue="0" maxValue="100" defaultValue="0">
+				<Size y="6"/>
+				<Anchors>
+					<Anchor point="LEFT" x="4"/>
+					<Anchor point="RIGHT" x="-4"/>
+				</Anchors>
+				<Layers>
+					<!-- A one pixel border in dimmed gold around a dark track. -->
+					<Layer level="BACKGROUND" textureSubLevel="-2">
+						<Texture parentKey="Border">
+							<Anchors>
+								<Anchor point="TOPLEFT" x="-1" y="1"/>
+								<Anchor point="BOTTOMRIGHT" x="1" y="-1"/>
+							</Anchors>
+							<Color r="0.55" g="0.43" b="0.12"/>
+						</Texture>
+					</Layer>
+					<Layer level="BACKGROUND" textureSubLevel="-1">
+						<Texture parentKey="Track" setAllPoints="true">
+							<Color r="0.06" g="0.04" b="0.02" a="0.9"/>
+						</Texture>
+					</Layer>
+				</Layers>
+				<BarTexture file="Interface\Buttons\WHITE8X8"/>
+				<BarColor r="1" g="0.82" b="0"/>
+			</StatusBar>
+		</Frames>
+		<Scripts>
+			<OnLoad method="OnLoad"/>
+			<OnEnter method="OnEnter"/>
+			<OnLeave method="OnLeave"/>
+		</Scripts>
+	</Frame>
 </Ui>

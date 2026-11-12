@@ -38,11 +38,85 @@ function ForeverGuideStepButtonMixin:OnLeave()
 end
 
 ---------------------------------------------------------------------------
+-- The progress line above the steps. (Template in Tracker.xml.)
+---------------------------------------------------------------------------
+ForeverGuideProgressBarMixin = {}
+
+-- Forever's own art for a small bar: the bronze frame with cut corners
+-- (131 x 26 with its shadow, around a 117 x 12 bar), drawn at half size.
+-- The frame is one fixed picture, so it is laid out as two end caps and a
+-- stretched middle to fit the tracker's width.
+local FRAME, FRAME_W, FRAME_H, CAP, SCALE = "legacy-progressbar-frame", 131, 26, 16, 0.5
+
+local function art(name)
+    for _, try in ipairs({ name .. "-c60", name }) do
+        local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(try)
+        if info then
+            return try, info
+        end
+    end
+end
+
+function ForeverGuideProgressBarMixin:OnLoad()
+    local bar = self.Bar
+    local _, info = art(FRAME)
+    if info and info.file and info.leftTexCoord then
+        local l, r, t, b = info.leftTexCoord, info.rightTexCoord, info.topTexCoord, info.bottomTexCoord
+        local cap = (r - l) * CAP / FRAME_W
+        local function piece(from, to)
+            local texture = bar:CreateTexture(nil, "OVERLAY")
+            texture:SetTexture(info.file)
+            texture:SetTexCoord(from, to, t, b)
+            texture:SetHeight(FRAME_H * SCALE)
+            return texture
+        end
+        local left, mid, right = piece(l, l + cap), piece(l + cap, r - cap), piece(r - cap, r)
+        left:SetWidth(CAP * SCALE)
+        left:SetPoint("LEFT", self, "LEFT", 0, 0)
+        right:SetWidth(CAP * SCALE)
+        right:SetPoint("RIGHT", self, "RIGHT", 0, 0)
+        mid:SetPoint("LEFT", left, "RIGHT")
+        mid:SetPoint("RIGHT", right, "LEFT")
+        bar.Border:Hide()
+    end
+    local track = art("legacy-progressbar-bg")
+    if track then
+        bar.Track:SetAtlas(track)
+    end
+    local fill = art("common-stat-bar-white")
+    if fill then
+        bar:SetStatusBarTexture(fill)
+        bar:SetStatusBarColor(1, 0.82, 0)
+    end
+end
+
+function ForeverGuideProgressBarMixin:SetPercent(percent)
+    self.percent = percent
+    self.Bar:SetValue(percent)
+end
+
+function ForeverGuideProgressBarMixin:OnEnter()
+    local view = Engine.view
+    GameTooltip:SetOwner(self, "ANCHOR_NONE")
+    GameTooltip:SetPoint("TOPRIGHT", self, "TOPLEFT", -8, 0)
+    GameTooltip:SetText(view.name or "Guide")
+    if view.step and view.count then
+        GameTooltip:AddLine(("Step %d of %d (%d%%)"):format(view.step, view.count, self.percent or 0), 1, 1, 1)
+    end
+    GameTooltip:Show()
+end
+
+function ForeverGuideProgressBarMixin:OnLeave()
+    GameTooltip:Hide()
+end
+
+---------------------------------------------------------------------------
 -- The module
 ---------------------------------------------------------------------------
 local Module = {
     blockTemplate = "ObjectiveTrackerAnimBlockTemplate",
     lineTemplate = "ObjectiveTrackerAnimLineTemplate",
+    progressBarTemplate = "ForeverGuideProgressBarTemplate",
     rightEdgeFrameSpacing = 2,
     stepButtonSettings = {
         template = "ForeverGuideStepButtonTemplate",
@@ -51,8 +125,38 @@ local Module = {
     },
 }
 
+-- How far along the guide is: a thin gold line in a block of its own above
+-- the steps (template in Tracker.xml). block:AddProgressBar hangs a bar
+-- under a text line; this block has none, so the same few steps are done
+-- here against the block itself.
+function Module:LayoutProgress()
+    local view = Engine.view
+    local first = view.blocks[1]
+    if not (ns.db and ns.db.progress and view.step and view.count and view.count > 0) or (first and first.placeholder) then
+        return true
+    end
+    local block = self:GetBlock("progress")
+    block.foreverGuide = nil
+    local bar = self:GetProgressBar(block)
+    bar:ClearAllPoints()
+    bar:SetPoint("TOPLEFT", block, "TOPLEFT", 0, 0)
+    local width = block:GetWidth()
+    if width and width > 0 then
+        bar:SetWidth(width)
+    end
+    bar:SetPercent(math.floor((view.step - 1) / view.count * 100))
+    bar.parentLine = nil
+    block.height = bar.height
+    block.lastRegion = bar
+    block:OnAddedRegion(bar, true)
+    return self:LayoutBlock(block)
+end
+
 function Module:LayoutContents()
     local State = ObjectiveTrackerAnimLineState
+    if not self:LayoutProgress() then
+        return
+    end
     for _, data in ipairs(Engine.view.blocks) do
         local block = self:GetBlock(data.id)
         block.foreverGuide = data
@@ -229,3 +333,8 @@ end)
 -- the changed sections and skips the rest (ObjectiveTrackerModuleMixin:Update),
 -- so no other section's code runs because of it.
 ns.Listen("Updated", update)
+ns.Listen("Setting", function(key)
+    if key == "progress" then
+        update()
+    end
+end)
