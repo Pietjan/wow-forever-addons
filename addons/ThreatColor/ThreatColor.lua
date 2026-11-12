@@ -18,6 +18,17 @@
 -- UnitThreatLeadSituation for tanks, as Blizzard uses them). Enemies out of
 -- combat, players, tapped and dead units keep Blizzard's colour.
 --
+-- Only your own fights are coloured. An enemy that has you on no threat
+-- list is coloured when it is coming for you (its target is you: a body
+-- pull before the first hit) or when your pet or someone in your group is
+-- on its list. An enemy that strangers are fighting keeps Blizzard's colour.
+--
+-- Blizzard only recolours a bar when its own colour changes, and not always
+-- when an enemy drops out of combat, so a bar this addon painted is put
+-- back by hand once the enemy is no longer wanted: on the unit's flag and
+-- threat events, when you leave combat, and on a slow sweep for what has
+-- no event.
+--
 -- How: CompactUnitFrame_UpdateHealthColor is post-hooked, so the colour
 -- goes on right after Blizzard sets its own, whenever it does (health,
 -- threat, faction updates). Only SetStatusBarColor is called: no Blizzard
@@ -79,7 +90,9 @@ local function Wanted(unit)
 end
 
 -- Threat state 0-3 on the green-to-red scale, or nil when the game keeps
--- it secret.
+-- it secret. The second value says whether you are on the enemy's threat
+-- list at all; off the list the state is "no threat", which a tank should
+-- fix.
 local function State(unit, tank)
 	local state
 	if tank then
@@ -88,13 +101,64 @@ local function State(unit, tank)
 		state = UnitThreatSituation("player", unit)
 	end
 	if IsSecret(state) then
-		return nil
+		return nil, true
 	end
 	if state == nil then
-		-- Not on its threat list: no threat at all, which a tank should fix.
-		return tank and 3 or 0
+		return tank and 3 or 0, false
 	end
-	return state
+	return state, true
+end
+
+-- Whether the enemy's target is you: true, false, or a secret boolean that
+-- only the game can turn into a colour (see Pick).
+local function OnMe(unit)
+	local target = unit .. "target"
+	local exists = UnitExists(target)
+	if not IsSecret(exists) and not exists then
+		return false
+	end
+	return UnitIsUnit(target, "player")
+end
+
+-- Whether your pet or someone in your group is on the enemy's threat list.
+local function GroupOnList(unit)
+	local function listed(member)
+		if not UnitExists(member) then
+			return false
+		end
+		local state = UnitThreatSituation(member, unit)
+		return IsSecret(state) or state ~= nil
+	end
+	if listed("pet") then
+		return true
+	end
+	local raid = IsInRaid()
+	local count = raid and GetNumGroupMembers() or GetNumSubgroupMembers()
+	for i = 1, count do
+		if listed((raid and "raid" or "party") .. i) or listed((raid and "raidpet" or "partypet") .. i) then
+			return true
+		end
+	end
+	return false
+end
+
+-- Blizzard's colour for an enemy nameplate, as CompactUnitFrame_UpdateHealthColor
+-- works it out for a unit this addon colours (alive, attackable, not a player).
+local function BaseColor(frame, unit)
+	if UnitIsTapDenied(unit) then
+		return CreateColor(0.9, 0.9, 0.9, 1)
+	end
+	local options = frame.optionTable
+	local r, g, b = UnitSelectionColor(unit, type(options) == "table" and options.colorHealthWithExtendedColors or false)
+	return CreateColor(r, g, b, 1)
+end
+
+-- ifTrue or ifFalse by a flag that may be secret.
+local function Pick(flag, ifTrue, ifFalse)
+	if IsSecret(flag) then
+		return C_CurveUtil.EvaluateColorFromBoolean(flag, ifTrue, ifFalse)
+	end
+	return flag and ifTrue or ifFalse
 end
 
 -- The other members of your group with an assigned role: the tanks, or
@@ -168,7 +232,51 @@ local function SecretColor(unit, tank)
 	return C_CurveUtil.EvaluateColorFromBoolean(isTanking, COLORS[3], SafeColor(unit))
 end
 
-local function Paint(frame)
+local painted = setmetatable({}, { __mode = "k" }) -- unit frames whose bar carries our colour
+
+-- Put Blizzard's colour back on a bar we painted. From the hook Blizzard
+-- has just done that itself.
+local function Release(frame, unit, fromHook)
+	if not painted[frame] then
+		return
+	end
+	painted[frame] = nil
+	if fromHook or not frame.healthBar then
+		return
+	end
+	pcall(function()
+		if UnitExists(unit) then
+			frame.healthBar:SetStatusBarColor(BaseColor(frame, unit):GetRGB())
+		end
+	end)
+end
+
+-- The colour for an enemy in combat, or nil when the fight is not yours.
+local function ColorFor(frame, unit, tank)
+	local state, listed = State(unit, tank)
+	if state == nil then
+		return SecretColor(unit, tank)
+	end
+	local onMe = OnMe(unit)
+	local mine = tank and COLORS[0] or COLORS[3] -- the colour of "it is on you"
+	if not listed then
+		local group = GroupOnList(unit)
+		if not group and not IsSecret(onMe) and not onMe then
+			return nil
+		end
+		local other = group and (tank and LostColor(unit) or SafeColor(unit)) or BaseColor(frame, unit)
+		return Pick(onMe, mine, other)
+	end
+	if tank then
+		return state == 3 and LostColor(unit) or COLORS[state] or COLORS[3]
+	elseif state == 0 then
+		-- No threat to speak of, but it may be heading for you all the same.
+		return Pick(onMe, mine, SafeColor(unit))
+	end
+	return COLORS[state] or COLORS[3]
+end
+
+local function Paint(frame, fromHook)
 	local unit = frame.unit
 	if type(unit) ~= "string" or IsSecret(unit) or not unit:find("^nameplate") then
 		return
@@ -179,24 +287,21 @@ local function Paint(frame)
 	end
 	local ok, wanted = pcall(Wanted, unit)
 	if not ok or not wanted then
+		Release(frame, unit, fromHook)
 		return
 	end
-	local tank = IsTank()
-	local okState, state = pcall(State, unit, tank)
-	if okState and state then
-		local color = COLORS[state] or COLORS[3]
-		if tank and state == 3 then
-			color = LostColor(unit)
-		elseif not tank and state == 0 then
-			color = SafeColor(unit)
-		end
-		healthBar:SetStatusBarColor(color:GetRGB())
+	local okColor, color = pcall(ColorFor, frame, unit, IsTank())
+	if not okColor or not color then
+		Release(frame, unit, fromHook)
 		return
 	end
-	pcall(function()
-		local color = SecretColor(unit, tank)
-		healthBar:SetStatusBarColor(color:GetRGB())
-	end)
+	if pcall(function() healthBar:SetStatusBarColor(color:GetRGB()) end) then
+		painted[frame] = true
+	end
+end
+
+local function PaintHook(frame)
+	Paint(frame, true)
 end
 
 local function PaintAll()
@@ -224,9 +329,15 @@ local function Command(msg)
 		IsTank() and "you hold threat" or "no threat on you"))
 	local unit = UnitExists("target") and "target"
 	if unit and UnitCanAttack("player", unit) then
-		local ok, state = pcall(State, unit, IsTank())
-		Print(("target: in combat %s, threat state %s"):format(tostring(UnitAffectingCombat(unit)),
-			not ok and "error" or state == nil and "secret" or tostring(state)))
+		local ok, state, listed = pcall(State, unit, IsTank())
+		local okMe, onMe = pcall(OnMe, unit)
+		local okGroup, group = pcall(GroupOnList, unit)
+		Print(("target: in combat %s, threat state %s, you are on its list %s, it targets you %s, pet or group on its list %s"):format(
+			tostring(UnitAffectingCombat(unit)),
+			not ok and "error" or state == nil and "secret" or tostring(state),
+			not ok and "?" or tostring(listed),
+			not okMe and "error" or IsSecret(onMe) and "secret" or tostring(onMe),
+			not okGroup and "error" or tostring(group)))
 	end
 end
 
@@ -237,6 +348,10 @@ loader:RegisterEvent("PLAYER_ROLES_ASSIGNED")
 loader:RegisterEvent("GROUP_ROSTER_UPDATE")
 loader:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
 loader:RegisterEvent("PLAYER_TALENT_UPDATE")
+loader:RegisterEvent("PLAYER_REGEN_ENABLED")
+loader:RegisterEvent("UNIT_FLAGS")
+loader:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
+loader:RegisterEvent("UNIT_TARGET")
 loader:SetScript("OnEvent", function(_, event, arg)
 	if event == "ADDON_LOADED" then
 		if arg == "ThreatColor" then
@@ -252,8 +367,18 @@ loader:SetScript("OnEvent", function(_, event, arg)
 			SlashCmdList.THREATCOLOR = Command
 		end
 	elseif event == "PLAYER_LOGIN" then
-		hooksecurefunc("CompactUnitFrame_UpdateHealthColor", Paint)
+		hooksecurefunc("CompactUnitFrame_UpdateHealthColor", PaintHook)
 		PaintAll()
+		-- An enemy changing target or leaving combat does not always come
+		-- with an event for its nameplate.
+		C_Timer.NewTicker(0.5, PaintAll)
+	elseif event == "UNIT_FLAGS" or event == "UNIT_THREAT_LIST_UPDATE" or event == "UNIT_TARGET" then
+		if db and type(arg) == "string" and not IsSecret(arg) and arg:find("^nameplate") then
+			local plate = C_NamePlate.GetNamePlateForUnit(arg)
+			if plate and plate.UnitFrame then
+				Paint(plate.UnitFrame)
+			end
+		end
 	else
 		PaintAll() -- the role may have changed
 	end
