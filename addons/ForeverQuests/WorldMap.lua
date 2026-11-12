@@ -74,7 +74,19 @@ end
 -- button; ripple its turn-in markers like the game's own pins did. With
 -- objectives = true (a quest the game has no map for) its objective dots
 -- ripple instead while it is not complete.
+-- The quest log re-opens the open quest on every quest log update, which
+-- pings again; ripple once per opening.
+local pingedOpen, pingedObjectives
+
 local function PingQuest(_, questID, objectives)
+	local open = QuestMapFrame_GetFocusedQuestID and QuestMapFrame_GetFocusedQuestID()
+	if open and open == questID then
+		if pingedOpen == questID and (pingedObjectives or not objectives) then
+			return
+		end
+		pingedOpen = questID
+		pingedObjectives = pingedObjectives or objectives
+	end
 	C_Timer.After(0, function()
 		local complete = C_QuestLog.IsComplete(questID)
 		for _, dot in pairs(pool and pool.active or {}) do
@@ -104,9 +116,9 @@ end
 -- Opening a quest's details moves the map to the map the game gives the
 -- quest (GetQuestUiMapID). For some quests that map has nothing on it:
 -- "... and that note you found" opens on the Barrens, where it was picked
--- up, while it is handed in at an object in Westfall. When the map shown
--- has neither a game marker for the quest nor any of our points, go to
--- where QuestieDB puts it instead.
+-- up, while it is handed in at an object in Westfall; others get no map at
+-- all (0). When the game's map has neither a game marker for the quest nor
+-- any of our points, the map is where QuestieDB puts it instead.
 local function ShownHere(questID, uiMap)
 	local quest = ns.Quest(questID)
 	local byMap = C_QuestLog.IsComplete(questID) and quest.turnIns or quest.byMap
@@ -122,21 +134,40 @@ local function ShownHere(questID, uiMap)
 	return false
 end
 
-local switching = false
-local function OnShowQuestDetails(questID)
-	if switching or not questID or ShownHere(questID, WorldMapFrame:GetMapID()) then
+local function BetterMap(questID, gameMap)
+	if not ns.ready or not questID then
+		return nil
+	end
+	if gameMap and gameMap ~= 0 and ShownHere(questID, gameMap) then
+		return nil
+	end
+	return BestMap(questID)
+end
+
+-- The quest log asks GetQuestUiMapID by name each time it opens a quest's
+-- details, and again on every quest log update, then sets the map and
+-- remembers it as the quest's map (closing the details if the map ever
+-- differs). Switching the map afterwards would close the details, so the
+-- answer itself is ours for such quests: Blizzard then opens the details
+-- on that map, keeps them open, and Back returns to the map shown before.
+-- Replacing the global taints the quest log paths that call it; the quest
+-- log has no protected actions.
+local overridden = {} -- questID -> true while we chose its map
+local function InstallQuestMapOverride()
+	local original = GetQuestUiMapID
+	if type(original) ~= "function" then
 		return
 	end
-	local uiMap = BestMap(questID)
-	if not uiMap then
-		return
+	GetQuestUiMapID = function(questID, ...)
+		local gameMap = original(questID, ...)
+		local ok, better = pcall(BetterMap, questID, gameMap)
+		if ok and better then
+			overridden[questID] = true
+			return better
+		end
+		overridden[questID] = nil
+		return gameMap
 	end
-	if WorldMapFrame:GetMapID() ~= uiMap then
-		switching = true
-		WorldMapFrame:SetMapID(uiMap)
-		switching = false
-	end
-	PingQuest(nil, questID, true)
 end
 
 function ns.SetUpWorldMap()
@@ -153,7 +184,10 @@ function ns.SetUpWorldMap()
 	WorldMapFrame:HookScript("OnShow", ns.RefreshWorldMap)
 	-- Opening a quest's details in the map's quest log focuses it.
 	hooksecurefunc(WorldMapFrame, "SetFocusedQuestID", ns.Rebuild)
-	hooksecurefunc(WorldMapFrame, "ClearFocusedQuestID", ns.Rebuild)
+	hooksecurefunc(WorldMapFrame, "ClearFocusedQuestID", function()
+		pingedOpen, pingedObjectives = nil, nil
+		ns.Rebuild()
+	end)
 	-- Hovering a quest in that log highlights it.
 	hooksecurefunc(WorldMapFrame, "SetHighlightedQuestID", function(_, questID)
 		ns.hovered = questID
@@ -164,12 +198,13 @@ function ns.SetUpWorldMap()
 		ns.Rebuild()
 	end)
 	EventRegistry:RegisterCallback("MapCanvas.PingQuestID", PingQuest, ns)
+	InstallQuestMapOverride()
 	if QuestMapFrame_ShowQuestDetails then
+		-- On a map we chose, ripple the quest's markers (objective dots too):
+		-- the game's own ping only finds its own pins.
 		hooksecurefunc("QuestMapFrame_ShowQuestDetails", function(questID)
-			local ok, message = pcall(OnShowQuestDetails, questID)
-			if not ok then
-				switching = false
-				ns.Print("could not open the quest's map: " .. tostring(message))
+			if overridden[questID] then
+				PingQuest(nil, questID, true)
 			end
 		end)
 	end
