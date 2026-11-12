@@ -9,18 +9,19 @@ local addonName, ns = ...
 -- the yellow the minimap uses for tracked herbs and ore. A quest gets one
 -- the first time it shows dots and keeps it while it is in the quest log,
 -- saved per character; a new quest takes the colour fewest other quests in
--- the log have.
+-- the log have, the first in list order on a tie, so neighbours in the
+-- list are far apart.
 local PALETTE = {
 	{ 0.64, 0.90, 0.21 }, -- lime
-	{ 0.43, 0.91, 0.72 }, -- emerald
-	{ 0.85, 0.71, 1.00 }, -- lavender
+	{ 0.35, 0.35, 1.00 }, -- periwinkle
 	{ 0.98, 0.44, 0.52 }, -- rose
-	{ 0.91, 0.47, 0.98 }, -- orchid
+	{ 0.43, 0.91, 0.72 }, -- emerald
 	{ 0.38, 0.65, 0.98 }, -- cornflower
 	{ 1.00, 0.73, 0.35 }, -- peach
-	{ 0.35, 0.35, 1.00 }, -- periwinkle
+	{ 0.91, 0.47, 0.98 }, -- orchid
 	{ 0.95, 0.49, 0.33 }, -- coral
 	{ 0.35, 1.00, 0.35 }, -- mint
+	{ 0.85, 0.71, 1.00 }, -- lavender
 }
 
 ns.active = {} -- quests whose objective dots show
