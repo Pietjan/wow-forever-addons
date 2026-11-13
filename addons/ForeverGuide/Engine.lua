@@ -585,10 +585,12 @@ local function addLines(lines, index, j, el, step)
                     -- game. It stays here when that section does not show it:
                     -- watching is off, or the guide sets a lower target.
                     local line = o.text
-                    if ns.db.watches and not el.atLeast then
+                    local plain = ns.db.watches and not el.atLeast
+                    if plain then
                         line = withoutCount(line)
                     end
-                    lines[#lines + 1] = { key = key .. "." .. n, text = line, done = done or o.finished or false, obj = el.obj }
+                    -- `plain`: says nothing the Quests section does not (see buildBlock).
+                    lines[#lines + 1] = { key = key .. "." .. n, text = line, done = done or o.finished or false, obj = el.obj, plain = plain or nil }
                     shownAny = true
                 end
             end
@@ -646,6 +648,23 @@ local function buildBlock(index, isMain)
         local plain = el.kind == "text" and el.text and ns.Text.Plain(el.text):lower():gsub("%.$", "")
         if plain ~= echo then
             addLines(block.lines, index, j, el, step)
+        end
+    end
+    -- A step that says what to do in words needs no bare objective names
+    -- under it: those, with their counts, are in the Quests section. A step
+    -- without words keeps them, or it would be a title and nothing else.
+    local worded = false
+    for _, line in ipairs(block.lines) do
+        if not line.obj and line.text and line.text ~= "" then
+            worded = true
+            break
+        end
+    end
+    if worded then
+        for i = #block.lines, 1, -1 do
+            if block.lines[i].plain then
+                table.remove(block.lines, i)
+            end
         end
     end
     return block
