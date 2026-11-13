@@ -1421,6 +1421,19 @@ local function Missing(entry, choice)
 	return missing
 end
 
+-- A spell the player has not got the mana, rage or energy for right now.
+-- Its icon still shows, greyed, and it does not sound: there is nothing to
+-- do about it yet. The game says so itself (the second value of
+-- C_Spell.IsSpellUsable); the bar is looked at again every few seconds, so
+-- the icon wakes up once the power is there. Items are not judged here.
+local function CannotAfford(spell)
+	if not (spell and C_Spell and C_Spell.IsSpellUsable) then
+		return false
+	end
+	local ok, _, short = pcall(C_Spell.IsSpellUsable, spell)
+	return ok and not IsSecret(short) and short == true
+end
+
 function Refresh()
 	refreshPending = false
 	if InCombatLockdown() then
@@ -1443,11 +1456,14 @@ function Refresh()
 			local missing = previewing and { "player" } or Missing(entry, choice)
 			if #missing > 0 then
 				count = count + 1
-				if not entry.expiring then
+				local fixKind = entry.fix and entry.fix.kind
+				local short = not previewing and (fixKind == "cast" or fixKind == "spell") and CannotAfford(entry.fix.value)
+				if not entry.expiring and not short then
 					anyMissing = true
 				end
 				local button = BarIcon(count)
 				button.entry = entry
+				button.Icon:SetDesaturated(short)
 				local manyChoices = entry.candidates and #entry.candidates > 1
 				button.Icon:SetTexture((entry.fix and (manyChoices or entry.fix.kind ~= "cast") and entry.fix.icon) or entry.icon or QUESTION_MARK)
 				local shown = (entry.fix and entry.fix.count) or #missing
