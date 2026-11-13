@@ -3,6 +3,8 @@
 Addons I wrote for WoW Forever (interface 16001). Each folder under `addons/`
 is one addon: copy it into the game's `Interface/AddOns` and `/reload`.
 
+Downloads, one zip per addon: https://pietjan.github.io/wow-forever-addons/
+
 | Addon | What it does |
 | --- | --- |
 | BuffNag | Shows an icon, and pings, while a buff you chose is missing on you or your party. Configured from a tab in the Cooldown Manager's settings. /bn |
@@ -88,6 +90,7 @@ Without this step ForeverGuide does not load.
     make versions             # every addon's version, and whether it is released
     make package/<addon>      # zip one addon's committed files into dist/
     make release/<addon>      # publish that zip as a GitHub release (needs the gh CLI)
+    make site                 # write docs/index.html, the downloads page (commit it after a release)
 
 `make install` relies on a second, private repo of mine that vendors other
 people's addons and copies both sets into the game. Without it, copy the

@@ -74,6 +74,12 @@ versions:
 		echo "$$name:$$version:$$state"; \
 	done | column -t -s ':'
 
+## site: write docs/index.html, the page with every addon and its download
+.PHONY: site
+site:
+	@git fetch --quiet --tags origin
+	@python3 -I scripts/site.py "$(github_repo)"
+
 ## package/<addon>: zip the committed files of one addon into dist/
 package/%: audit
 	@test -n "$(version)" || { echo "No addon '$*' with a version in $(addons_dir)/$*/$*.toc."; exit 1; }
@@ -100,3 +106,4 @@ release/%: no-unpushed package/%
 	@$(MAKE) --no-print-directory confirm
 	@gh release create "$(tag)" "$(zip)" --repo "$(github_repo)" --target "$$(git rev-parse HEAD)" \
 		--title "$* $(version)" --notes-file "$(dist_dir)/$(tag).md"
+	@echo "Run 'make site' and commit docs/index.html so the page links to $(tag)."
