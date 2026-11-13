@@ -235,16 +235,18 @@ local function Options(link, data)
 	-- The auction has to pay for its risk: a listing that does not sell
 	-- costs the deposit.
 	local count = StackCount(data)
+	local ruledOut = false
 	if options[1] and options[1].key == "auction" then
 		local other = options[2] and options[2].value or 0
 		local gain = (options[1].value - other) * count
 		local deposit = Deposit(itemID, count, sellPrice)
 		if gain <= deposit then
 			table.remove(options, 1)
+			ruledOut = true
 			missing.auction = ("%s more than %s, deposit %s"):format(Money(gain), other > 0 and LABEL[options[1].key]:lower() or "nothing", Money(deposit))
 		end
 	end
-	return options, missing, parts, level, count
+	return options, missing, parts, level, count, ruledOut
 end
 
 local function AddAdvice(tooltip, data)
@@ -256,7 +258,7 @@ local function AddAdvice(tooltip, data)
 	if type(link) ~= "string" then
 		return
 	end
-	local options, missing, parts, level, count = Options(link, data)
+	local options, missing, parts, level, count, ruledOut = Options(link, data)
 	if not options then
 		return -- not cached yet; the tooltip refreshes once it is
 	end
@@ -264,8 +266,10 @@ local function AddAdvice(tooltip, data)
 		AddDetails(tooltip, options, missing, parts, level, count)
 		return
 	end
-	if #options < 2 then
-		return -- nothing to choose between
+	-- One option and no other was weighed: nothing to choose between. An
+	-- auction that was ruled out for its deposit was a choice, so say what won.
+	if #options < 1 or (#options < 2 and not ruledOut) then
+		return
 	end
 	local best = options[1]
 	local label = LABEL[best.key]
