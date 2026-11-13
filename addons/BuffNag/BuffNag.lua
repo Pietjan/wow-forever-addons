@@ -766,6 +766,21 @@ local function ItemLook(itemID)
 	return okIcon and icon or nil, okName and name or ("item " .. itemID)
 end
 
+-- An item the character is too low to use is no fix: a level 1 with both
+-- Rough and Coarse Sharpening Stones can only apply the Rough one. The
+-- required level is the game's (the fifth value of GetItemInfo); an item
+-- the client has no data for yet is taken as usable.
+local function TooHigh(itemID)
+	local ok, _, _, _, _, minLevel = pcall(function()
+		return (C_Item and C_Item.GetItemInfo or GetItemInfo)(itemID)
+	end)
+	if not ok or type(minLevel) ~= "number" or IsSecret(minLevel) then
+		return false
+	end
+	local level = UnitLevel("player")
+	return type(level) == "number" and not IsSecret(level) and minLevel > level
+end
+
 -- Calls fn(itemID) for every item in the bags, until it returns true.
 local function EachBagItem(fn)
 	local numSlots = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
@@ -809,7 +824,7 @@ local function WeaponCandidates(slot)
 	local seen = {}
 	EachBagItem(function(bagItem)
 		local mask = WEAPON_ITEMS[bagItem]
-		if mask and not seen[bagItem] and (mask == 0 or bit.band(mask, bitOf) ~= 0) then
+		if mask and not seen[bagItem] and (mask == 0 or bit.band(mask, bitOf) ~= 0) and not TooHigh(bagItem) then
 			seen[bagItem] = true
 			local icon, name = ItemLook(bagItem)
 			list[#list + 1] = { kind = "item", value = bagItem, icon = icon, text = name, slot = slot }
@@ -836,7 +851,7 @@ local function FoodCandidates(entry)
 	end
 	local seen = {}
 	EachBagItem(function(itemID)
-		if FOODS[itemID] and not seen[itemID] then
+		if FOODS[itemID] and not seen[itemID] and not TooHigh(itemID) then
 			seen[itemID] = true
 			local icon, name = ItemLook(itemID)
 			list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name, eat = true }
@@ -900,7 +915,7 @@ local function FlaskCandidates(entry)
 	end
 	local seen = {}
 	EachBagItem(function(itemID)
-		if FLASKS[itemID] and not seen[itemID] then
+		if FLASKS[itemID] and not seen[itemID] and not TooHigh(itemID) then
 			seen[itemID] = true
 			local icon, name = ItemLook(itemID)
 			list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name }
@@ -919,7 +934,7 @@ local function FamilyCandidates(entry, items, familyNames, blockerNames, mark)
 	local allExpiring = true
 	EachBagItem(function(itemID)
 		local item = items[itemID]
-		if item and not families[item[2]] then
+		if item and not families[item[2]] and not TooHigh(itemID) then
 			local names = familyNames[item[2]]
 			local blockers = blockerNames and blockerNames[item[2]]
 			if blockers and UnitHas("player", blockers, 0) ~= false then
