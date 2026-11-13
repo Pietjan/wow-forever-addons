@@ -1,0 +1,7 @@
+## Interface: 16001
+## Title: CompactTip
+## Notes: Unit tooltips you can read at a glance: one line per quest objective naming only who still needs it, names in class colour, and item and spell IDs while Alt is held.
+## Author: Pietjan
+## Version: 1.0
+
+CompactTip.lua
