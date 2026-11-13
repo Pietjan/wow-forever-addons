@@ -100,6 +100,9 @@ function Cleanup.Leftovers()
 end
 
 local function abandon(list)
+    if not ns.Guard("abandon") then
+        return
+    end
     if not (QL.SetSelectedQuest and QL.SetAbandonQuest and QL.AbandonQuest) then
         ns.Print("this client does not let an addon abandon quests.")
         return
@@ -150,7 +153,7 @@ function Cleanup.Offer()
     if #list == 0 then
         return false
     end
-    if InCombatLockdown() then
+    if not ns.Quiet() then
         ns.Print("the quest log clean-up waits until you are out of combat.")
         ns.AfterCombat("cleanup", Cleanup.Offer)
         return true
@@ -180,7 +183,7 @@ ns.Listen("Finished", function(finished)
     end
     offeredFor = finished.key
     C_Timer.After(1.5, function()
-        if ns.db.cleanup and Engine:Current() and not Engine:Paused() and not InCombatLockdown() then
+        if ns.db.cleanup and Engine:Current() and not Engine:Paused() then
             Cleanup.Offer()
         end
     end)

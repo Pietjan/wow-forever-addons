@@ -25,10 +25,11 @@ local function samePin(p)
     return math.abs(current.position.x * 100 - p.x) < 0.05 and math.abs(current.position.y * 100 - p.y) < 0.05
 end
 
--- The pin is only touched out of combat; Nav:Update comes by again a few
--- times a second, so a change that was held back is made right after.
+-- The pin is only touched when it is quiet (see the gate in Core.lua);
+-- Nav:Update comes by again a few times a second, so a change that was
+-- held back is made then.
 local function clearPin()
-    if pinned and not InCombatLockdown() then
+    if pinned and ns.Quiet() then
         -- Leave a pin alone that the player has since placed elsewhere.
         if samePin(pinned) then
             C_Map.ClearUserWaypoint()
@@ -41,7 +42,7 @@ local function setPin(p)
     if not (ns.db.pin and p) then
         return clearPin()
     end
-    if p == pinned or InCombatLockdown() then
+    if p == pinned or not ns.Quiet() then
         return
     end
     if not (Maps.Resolve(p) and p.x and p.x >= 0 and p.x <= 100 and p.y >= 0 and p.y <= 100) then

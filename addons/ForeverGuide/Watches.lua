@@ -12,6 +12,9 @@ local syncing = false
 local managed = {} -- the quests the current steps had us track
 
 local function sync()
+    if not ns.Guard("watches") then
+        return
+    end
     if syncing or not (ns.db and ns.db.watches) or not Engine:Current() then
         return
     end

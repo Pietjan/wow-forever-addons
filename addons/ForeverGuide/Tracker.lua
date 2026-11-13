@@ -197,7 +197,7 @@ function Module:OnBlockHeaderClick(block, mouseButton)
         ns.Menu.Open(self:GetContextMenuParent())
     elseif data.placeholder then
         Engine:Start(Engine.view.nextKey)
-    elseif not InCombatLockdown() then
+    elseif ns.Quiet() then
         -- Show where this step is.
         local target = ns.Nav.target
         if target and target.map then
@@ -235,8 +235,8 @@ end
 local module
 local lastMain
 
-local function update()
-    if not module then
+local function apply()
+    if not module or not ns.Guard("tracker") then
         return
     end
     local view = Engine.view
@@ -249,6 +249,15 @@ local function update()
     end
     lastMain = main or false
     module:MarkDirty()
+end
+
+-- Through the gate: marking the section as changed makes the tracker redraw
+-- on the next frame, and that is Blizzard code running for us. So during a
+-- fight the section keeps what it showed and catches up afterwards.
+local function update()
+    if module then
+        ns.AfterCombat("tracker", apply)
+    end
 end
 
 -- Puts the section into the tracker's list, right before Quests.
@@ -314,12 +323,12 @@ local function join()
     local manager = ObjectiveTrackerManager
     -- Only once the game has put its own sections in and sorted them.
     local frame = ObjectiveTrackerFrame
-    if not InCombatLockdown() and manager and frame and manager.containers[frame] and not frame.needsSorting then
+    if ns.Quiet() and manager and frame and manager.containers[frame] and not frame.needsSorting then
         create()
         return
     end
     tries = tries + 1
-    if tries < 40 or InCombatLockdown() then
+    if tries < 40 or not ns.Quiet() then
         C_Timer.After(0.5, join)
     end
 end
@@ -328,10 +337,6 @@ ns.On("PLAYER_ENTERING_WORLD", function()
     C_Timer.After(0, join)
 end)
 
--- Also in combat, so a count that goes up shows at once, as it does under
--- Quests. This only marks our section as changed: the tracker then redraws
--- the changed sections and skips the rest (ObjectiveTrackerModuleMixin:Update),
--- so no other section's code runs because of it.
 ns.Listen("Updated", update)
 ns.Listen("Setting", function(key)
     if key == "progress" then

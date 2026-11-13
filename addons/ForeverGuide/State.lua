@@ -259,7 +259,7 @@ end
 
 function State.HasAura(spellID)
     -- Auras are hidden in combat; do not even ask.
-    if InCombatLockdown() or not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then
+    if not ns.Quiet() or not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then
         return nil
     end
     local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
@@ -272,7 +272,7 @@ end
 -- Seconds left on an item or spell cooldown; nil when it cannot be read
 -- (the numbers are secret in combat).
 function State.CooldownLeft(kind, id)
-    if InCombatLockdown() then
+    if not ns.Quiet() then
         return nil
     end
     local ok, start, duration = pcall(function()

@@ -8,7 +8,7 @@ local _, ns = ...
 local Engine = ns.Engine
 
 local function ready()
-    if not (ns.db and ns.db.autoQuest) or not Engine:Current() or IsShiftKeyDown() or InCombatLockdown() then
+    if not (ns.db and ns.db.autoQuest) or not Engine:Current() or IsShiftKeyDown() or ns.InCombat() then
         return false
     end
     -- The step may have moved on with the quest that was just handed in.

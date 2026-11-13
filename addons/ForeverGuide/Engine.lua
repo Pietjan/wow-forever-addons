@@ -1133,7 +1133,7 @@ end)
 
 -- Cooldowns and buffs have no cheap event; look again now and then.
 C_Timer.NewTicker(3, function()
-    if guide and not InCombatLockdown() then
+    if guide and ns.Quiet() then
         Engine:Queue()
     end
 end)
