@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: ToastAnchor
+## Notes: Puts the game's alert popups (loot you won, achievements and the like) where you want them. /toastanchor
+## Author: Pietjan
+## Version: 1.0
+## SavedVariables: ToastAnchorDB
+
+ToastAnchor.lua

@@ -23,6 +23,7 @@ Downloads, one zip per addon: https://pietjan.github.io/wow-forever-addons/
 | SellAdvice | One line in item tooltips: disenchant, vendor or auction, whichever brings the most, from Auctionator's scanned prices. A gold coin marks the quest choice worth the most. Hold Alt for the workings. |
 | SimpleRaidTargetIcons | Modifier-click or double-click a unit to pick its raid target icon from a radial menu around the cursor. Out of combat only; key bindings work in combat. |
 | ThreatColor | Enemy nameplate bars coloured by your threat: green, yellow, orange, red. /threatcolor |
+| ToastAnchor | Puts the game's alert popups (loot you won, achievements and the like) where you want them. /toastanchor |
 | TrackSwap | Alternates minimap tracking between Find Herbs and Find Minerals every few seconds, so both kinds of node show up. /ts |
 | UpgradeArrow | Pawn lite: a green arrow on items that would be an upgrade for your class and role, in Baganator's bags, quest rewards and LootRolls bars. /upgradearrow |
 
