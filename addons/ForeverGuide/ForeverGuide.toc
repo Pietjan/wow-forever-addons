@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: ForeverGuide
-## Notes: Leveling guides inside the quest tracker. Reads RestedXP and WoW-Pro guides, tracks the quests of the current step, points an arrow and sets the map pin. /fg
+## Notes: Leveling guides under the quest tracker. Reads RestedXP and WoW-Pro guides, tracks the quests of the current step, points an arrow and sets the map pin. /fg
 ## Author: Pietjan
 ## Version: 1.0
 ## OptionalDeps: QuestieDB

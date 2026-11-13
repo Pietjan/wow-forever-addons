@@ -66,9 +66,10 @@ end)
 ---------------------------------------------------------------------------
 -- In combat the game hides ("secret") values such as auras from code that
 -- runs on an addon's behalf. That includes the game's own code when one of
--- our calls sets it off: tracking a quest, setting the map pin or asking
--- the tracker to redraw all make Blizzard code run for us, and part of it
--- only runs a frame or an event later.
+-- our calls sets it off: tracking a quest or setting the map pin makes
+-- Blizzard code run for us, and part of it only runs a frame or an event
+-- later. (The guide's section itself is a frame of our own and needs no
+-- gate; see Tracker.lua.)
 --
 -- The rules, with no exceptions:
 --

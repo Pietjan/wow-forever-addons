@@ -9,7 +9,7 @@ is one addon: copy it into the game's `Interface/AddOns` and `/reload`.
 | CooldownNag | An icon pops up a few seconds before an ability you chose comes off cooldown, and stays a moment once it is ready. Configured from a tab in the Cooldown Manager's settings. /cdn |
 | FishClick | With a fishing pole equipped, double-click into the world to cast your line. /fish |
 | ForeverChat | The default chat in Forever's own style, with short channel names and one chat setup shared by all your characters. /fchat |
-| ForeverGuide | Leveling guides inside the quest tracker. Reads RestedXP and WoW-Pro guides, tracks the quests of the current step, points an arrow and sets the map pin. /fg |
+| ForeverGuide | Leveling guides under the quest tracker. Reads RestedXP and WoW-Pro guides, tracks the quests of the current step, points an arrow and sets the map pin. /fg |
 | ForeverQuests | Quest log and tracking tweaks. Spawn dots for tracked quests on the map and minimap instead of the quest areas and in-progress icons. /fq |
 | LootRolls | Movable group loot roll bars in the XLoot layout: icon, timer bar with the item name, Need/Greed/Pass with how many chose each and who (hover). /lootrolls |
 | NameOnly | Friendly player nameplates show just the name: your font, size and position. /nameonly |
@@ -36,7 +36,7 @@ the names in them are stand-ins.
 
 <img src="docs/mockups/simpleraidtargeticons-menu.png" width="220" alt="SimpleRaidTargetIcons mock-up">
 
-**ForeverGuide.** The guide as a section of the quest tracker, with its progress bar.
+**ForeverGuide.** The guide, drawn like a section of the quest tracker and placed under it, with its progress bar.
 
 <img src="docs/mockups/foreverguide-tracker.png" width="320" alt="ForeverGuide mock-up">
 
