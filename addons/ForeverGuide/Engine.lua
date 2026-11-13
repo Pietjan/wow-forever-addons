@@ -546,6 +546,14 @@ local DEFAULTS = {
     manual = "Continue", destroy = "Destroy the item", equip = "Equip the item", aura = "Get the buff",
 }
 
+-- A quest objective as the game words it, without its count ("3/8 Feather"
+-- or "Feather: 3/8" becomes "Feather").
+local function withoutCount(text)
+    local bare = text:gsub("^%s*%d+/%d+%s+", "")
+    bare = bare:gsub("%s*:?%s*%d+/%d+%s*$", "")
+    return bare ~= "" and bare or text
+end
+
 local function addLines(lines, index, j, el, step)
     local key = "e" .. j
     local done = el.obj and elementDone(index, j, el) or false
@@ -572,7 +580,15 @@ local function addLines(lines, index, j, el, step)
                     end
                 end
                 if use and o.text and o.text ~= "" then
-                    lines[#lines + 1] = { key = key .. "." .. n, text = o.text, done = done or o.finished or false, obj = el.obj }
+                    -- The guide tracks the quests of its steps, so the count is
+                    -- right below in the Quests section, kept current by the
+                    -- game. It stays here when that section does not show it:
+                    -- watching is off, or the guide sets a lower target.
+                    local line = o.text
+                    if ns.db.watches and not el.atLeast then
+                        line = withoutCount(line)
+                    end
+                    lines[#lines + 1] = { key = key .. "." .. n, text = line, done = done or o.finished or false, obj = el.obj }
                     shownAny = true
                 end
             end
