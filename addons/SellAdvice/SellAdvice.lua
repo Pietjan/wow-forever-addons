@@ -6,12 +6,17 @@
 -- - Vendor: the item's sell price from the client.
 -- - Auction: Auctionator's last scanned price, less the house's 5% cut.
 --   Not for items that bind on pickup, are quest items, or are bound.
+--   And only when it pays: what the stack brings over the next best option
+--   has to be more than the deposit, which is lost when it does not sell.
+--   The deposit is the game's own figure for the longest listing.
 -- - Disenchant: the average materials (Data.lua, made by
 --   scripts/sell-advice-data.py) at Auctionator's prices, less the 5% cut
 --   for selling them. A lesser essence counts as a third of a greater one
 --   when that is worth more, and the other way round. Characters without
 --   Disenchant see it too, marked "on an enchanter", unless the item is
 --   bound (binds on pickup, quest item or soulbound) and so cannot be sent.
+--
+-- Amounts are for the stack the tooltip is about.
 --
 -- Hold Alt for every option, why one has no value, and the disenchant
 -- materials with their prices.
@@ -104,6 +109,40 @@ local function IsBound(data)
 	return ok and bound == true
 end
 
+-- How many the tooltip is about: the stack in the bag, else one.
+local function StackCount(data)
+	local guid = data and Plain(data.guid)
+	if not guid or not (C_Item.GetItemLocation and C_Item.GetStackCount) then
+		return 1
+	end
+	local ok, count = pcall(function()
+		local location = C_Item.GetItemLocation(guid)
+		return location and location:IsValid() and C_Item.GetStackCount(location)
+	end)
+	count = ok and Plain(count)
+	return type(count) == "number" and count >= 1 and count or 1
+end
+
+-- What listing `count` of an item costs up front, for the longest listing.
+-- The game works it out (C_AuctionHouse.CalculateCommodityDeposit answers
+-- away from the auction house too). Where it gives nothing, the rule that
+-- its answers for a 5 copper item fit: 60% of the vendor price, at least
+-- one silver.
+local LONGEST = 3
+local MIN_DEPOSIT = 100
+
+local function Deposit(itemID, count, sellPrice)
+	local calculate = C_AuctionHouse and C_AuctionHouse.CalculateCommodityDeposit
+	if calculate and itemID then
+		local ok, deposit = pcall(calculate, itemID, LONGEST, count)
+		deposit = ok and Plain(deposit)
+		if type(deposit) == "number" and deposit > 0 then
+			return deposit
+		end
+	end
+	return math.max(MIN_DEPOSIT, math.floor((sellPrice or 0) * count * 0.6))
+end
+
 local function Money(copper)
 	copper = math.floor(copper + 0.5)
 	if copper <= 0 then
@@ -124,11 +163,11 @@ local GREY = 0.6
 
 -- Alt held: every option with its value or why it has none, and the
 -- disenchant materials with their amounts and prices.
-local function AddDetails(tooltip, options, missing, parts, level)
-	tooltip:AddLine("SellAdvice" .. (level and (" (item level " .. level .. ")") or ""), 1, 0.82, 0)
+local function AddDetails(tooltip, options, missing, parts, level, count)
+	tooltip:AddLine("SellAdvice" .. (level and (" (item level " .. level .. ")") or "") .. (count > 1 and (" x" .. count) or ""), 1, 0.82, 0)
 	for i, option in ipairs(options) do
 		local color = i == 1 and "|cff40c040" or "|cffffffff"
-		tooltip:AddDoubleLine(color .. LABEL[option.key] .. "|r", Money(option.value), 1, 1, 1, 1, 1, 1)
+		tooltip:AddDoubleLine(color .. LABEL[option.key] .. "|r", Money(option.value * count), 1, 1, 1, 1, 1, 1)
 	end
 	for _, key in ipairs({ "disenchant", "auction", "vendor" }) do
 		if missing[key] then
@@ -145,9 +184,10 @@ local function AddDetails(tooltip, options, missing, parts, level)
 	end
 end
 
--- What an item can bring: options sorted best first ({ key, value }),
--- why the others have no value, the disenchant materials and the item
--- level. Nil while the item is not cached.
+-- What an item can bring: options sorted best first ({ key, value }, the
+-- value for one item), why the others have no value, the disenchant
+-- materials, the item level and how many the tooltip is about. Nil while
+-- the item is not cached.
 local function Options(link, data)
 	local _, _, quality, level, _, _, _, _, _, _, sellPrice, classID, _, bindType = C_Item.GetItemInfo(link)
 	if not quality then
@@ -192,7 +232,19 @@ local function Options(link, data)
 	table.sort(options, function(a, b)
 		return a.value > b.value
 	end)
-	return options, missing, parts, level
+	-- The auction has to pay for its risk: a listing that does not sell
+	-- costs the deposit.
+	local count = StackCount(data)
+	if options[1] and options[1].key == "auction" then
+		local other = options[2] and options[2].value or 0
+		local gain = (options[1].value - other) * count
+		local deposit = Deposit(itemID, count, sellPrice)
+		if gain <= deposit then
+			table.remove(options, 1)
+			missing.auction = ("%s more than %s, deposit %s"):format(Money(gain), other > 0 and LABEL[options[1].key]:lower() or "nothing", Money(deposit))
+		end
+	end
+	return options, missing, parts, level, count
 end
 
 local function AddAdvice(tooltip, data)
@@ -204,12 +256,12 @@ local function AddAdvice(tooltip, data)
 	if type(link) ~= "string" then
 		return
 	end
-	local options, missing, parts, level = Options(link, data)
+	local options, missing, parts, level, count = Options(link, data)
 	if not options then
 		return -- not cached yet; the tooltip refreshes once it is
 	end
 	if IsAltKeyDown() then
-		AddDetails(tooltip, options, missing, parts, level)
+		AddDetails(tooltip, options, missing, parts, level, count)
 		return
 	end
 	if #options < 2 then
@@ -220,7 +272,7 @@ local function AddAdvice(tooltip, data)
 	if best.key == "disenchant" and not (IsPlayerSpell and IsPlayerSpell(DISENCHANT_SPELL)) then
 		label = label .. " (on an enchanter)"
 	end
-	tooltip:AddDoubleLine("|cff40c040" .. label .. "|r", Money(best.value), 1, 1, 1, 1, 1, 1)
+	tooltip:AddDoubleLine("|cff40c040" .. label .. "|r", Money(best.value * count), 1, 1, 1, 1, 1, 1)
 end
 
 if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
