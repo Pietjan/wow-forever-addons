@@ -6,6 +6,7 @@ is one addon: copy it into the game's `Interface/AddOns` and `/reload`.
 | Addon | What it does |
 | --- | --- |
 | BuffNag | Shows an icon, and pings, while a buff you chose is missing on you or your party. Configured from a tab in the Cooldown Manager's settings. /bn |
+| BulkInbox | A list beside the inbox of every item and sum of money in your mail: take all, the money, or the rows you mark. One take at a time, C.O.D. never paid, stops cleanly on full bags. /bulkinbox |
 | CooldownNag | An icon pops up a few seconds before an ability you chose comes off cooldown, and stays a moment once it is ready. Configured from a tab in the Cooldown Manager's settings. /cdn |
 | FishClick | With a fishing pole equipped, double-click into the world to cast your line. /fish |
 | ForeverChat | The default chat in Forever's own style, with short channel names and one chat setup shared by all your characters. /fchat |

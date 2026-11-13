@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: BulkInbox
+## Notes: A list beside the inbox of every item and sum of money in your mail: take all, the money, or the rows you mark. One take at a time, C.O.D. never paid, stops cleanly on full bags. /bulkinbox
+## Author: Pietjan
+## Version: 1.0
+## SavedVariables: BulkInboxDB
+
+Core.lua
+BulkInbox.lua
