@@ -136,12 +136,15 @@ function Nav:Update()
     local target = choose(inst, px, py)
     if target ~= Nav.target then
         Nav.target = target
-        -- The pin goes on a real destination, not on a point along a route.
+        -- The pin goes on a real destination, not on a point along a route:
+        -- the first place the step names that may carry one. A place the
+        -- arrow is not meant to point at still counts; on a step with a
+        -- patrol route it is where the map should show the goal.
         local pin = target
         if pin and pin.noPin then
             pin = nil
             for _, p in ipairs(points) do
-                if not p.noPin and not p.noArrow then
+                if not p.noPin then
                     pin = p
                     break
                 end
