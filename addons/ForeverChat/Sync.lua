@@ -128,7 +128,9 @@ end
 ---------------------------------------------------------------------------
 -- Saving: the character's settings become the shared setup
 
-local function Capture(previous, joined)
+-- `held`, when given, is the colour of each joined channel by name (see
+-- HeldColors): what the channel's number carries is then not read.
+local function Capture(previous, joined, held)
 	previous = previous or {}
 	local profile = {
 		version = PROFILE_VERSION,
@@ -181,7 +183,7 @@ local function Capture(previous, joined)
 		end
 	end
 	for name, id in pairs(joined) do
-		local color = ReadColor("CHANNEL" .. id)
+		local color = held and held[name] or ReadColor("CHANNEL" .. id)
 		if color then
 			profile.channelColors[name] = color
 		end
@@ -370,6 +372,18 @@ local function FollowChannels(profile, joined, colors)
 		end
 	end
 	return count
+end
+
+-- The colour of each joined channel by name, for saving. The numbers are
+-- only put right a moment after the list changes (see OnChannelsChanged),
+-- so a save in that moment must not read them: a channel takes what the
+-- session holds for it, else what the shared setup had, else the default.
+local function HeldColors(profile, joined, colors)
+	local held = {}
+	for name in pairs(joined) do
+		held[name] = colors[name] or (profile.channelColors and profile.channelColors[name]) or DEFAULT_CHANNEL_COLOR
+	end
+	return held
 end
 
 -- The player picks another colour for a channel, or switches its class
@@ -592,12 +606,43 @@ local function OnChannelsChanged()
 	end
 end
 
+-- The game does not always say when the numbers move. At login an addon's
+-- channel can be joined first and hold number 1 for a moment, with every
+-- other channel one higher; when they settle no CHANNEL_UI_UPDATE follows.
+-- So the list is looked at every couple of seconds, and a list that moved
+-- is treated as a change.
+local function SameList(a, b)
+	for name, id in pairs(a) do
+		if b[name] ~= id then
+			return false
+		end
+	end
+	for name in pairs(b) do
+		if a[name] == nil then
+			return false
+		end
+	end
+	return true
+end
+
+local function Recheck()
+	if not state.ready or state.timer or SameList(ReadJoined(), state.joined) then
+		return
+	end
+	OnChannelsChanged()
+end
+
 local function Save()
 	local joined = ReadJoined()
 	if next(joined) == nil then
 		joined = state.joined
 	end
-	ns.db.profile = Capture(Profile(), joined)
+	local profile = Profile()
+	-- A character that follows the shared setup has its channel colours
+	-- held by name; one that does not (the first save, or sharing switched
+	-- off) has them only on the numbers.
+	local held = profile and Sync.IsEnabled() and HeldColors(profile, joined, state.colors) or nil
+	ns.db.profile = Capture(profile, joined, held)
 end
 
 function Sync.Save()
@@ -605,13 +650,7 @@ function Sync.Save()
 	ns.charDB.sync = true
 	ns.charDB.asked, ns.charDB.refused = nil, nil
 	state.ready = true
-	local windows = 0
-	for _, window in pairs(ns.db.profile.windows) do
-		if window.shown or window.docked then
-			windows = windows + 1
-		end
-	end
-	ns.Print("saved. This character's chat (%d windows, their messages, channels and colours) is now the setup every character gets at login.", windows)
+	ns.Print("saved.")
 end
 
 function Sync.Load()
@@ -830,17 +869,21 @@ function Sync.Init()
 		if type(_G.ChangeChatColor) == "function" then
 			hooksecurefunc("ChangeChatColor", function(chatType, r, g, b)
 				if state.ready and type(r) == "number" and type(g) == "number" and type(b) == "number" then
-					NoteChannelColor(chatType, { r = r, g = g, b = b }, state.joined, state.colors)
+					NoteChannelColor(chatType, { r = r, g = g, b = b }, ReadJoined(), state.colors)
 				end
 			end)
 		end
 		if type(_G.SetChatColorNameByClass) == "function" then
 			hooksecurefunc("SetChatColorNameByClass", function(chatType, flag)
 				if state.ready then
-					NoteChannelColor(chatType, { class = Flag(flag) }, state.joined, state.colors)
+					NoteChannelColor(chatType, { class = Flag(flag) }, ReadJoined(), state.colors)
 				end
 			end)
 		end
+	end
+
+	if type(C_Timer) == "table" and type(C_Timer.NewTicker) == "function" then
+		C_Timer.NewTicker(2, Recheck)
 	end
 
 	local events = CreateFrame("Frame")
@@ -887,3 +930,5 @@ Sync.ApplyWindows = ApplyWindows
 Sync.ApplyColors = ApplyColors
 Sync.FollowChannels = FollowChannels
 Sync.NoteChannelColor = NoteChannelColor
+Sync.HeldColors = HeldColors
+Sync.Recheck = Recheck
