@@ -25,11 +25,17 @@ local function samePin(p)
     return math.abs(current.position.x * 100 - p.x) < 0.05 and math.abs(current.position.y * 100 - p.y) < 0.05
 end
 
--- The pin is only touched when it is quiet (see the gate in Core.lua);
--- Nav:Update comes by again a few times a second, so a change that was
--- held back is made then.
+-- The pin is only touched when it is quiet (see the gate in Core.lua).
+-- So what the pin should be on is kept apart from what it is on: setPin
+-- only notes the wish, and syncPin, which Nav:Update runs a few times a
+-- second, carries it out once it is quiet. A step that changes during a
+-- fight or right after it (the kill that finishes a quest) gets its pin
+-- then, not never.
+local wanted        -- the point the pin should be on, or nil for none
+local handled = true -- whether `wanted` has been carried out
+
 local function clearPin()
-    if pinned and ns.Quiet() then
+    if pinned then
         -- Leave a pin alone that the player has since placed elsewhere.
         if samePin(pinned) then
             C_Map.ClearUserWaypoint()
@@ -38,11 +44,16 @@ local function clearPin()
     end
 end
 
-local function setPin(p)
-    if not (ns.db.pin and p) then
+local function syncPin()
+    if handled or not ns.Quiet() then
+        return
+    end
+    handled = true
+    local p = ns.db.pin and wanted or nil
+    if not p then
         return clearPin()
     end
-    if p == pinned or not ns.Quiet() then
+    if p == pinned then
         return
     end
     if not (Maps.Resolve(p) and p.x and p.x >= 0 and p.x <= 100 and p.y >= 0 and p.y <= 100) then
@@ -54,6 +65,12 @@ local function setPin(p)
     C_Map.SetUserWaypoint(UiMapPoint.CreateFromCoordinates(p.map, p.x / 100, p.y / 100))
     C_SuperTrack.SetSuperTrackedUserWaypoint(true)
     pinned = p
+end
+
+local function setPin(p)
+    wanted = p
+    handled = false
+    syncPin()
 end
 
 ---------------------------------------------------------------------------
@@ -133,6 +150,7 @@ function Nav:Update()
         setPin(pin)
         ns.Fire("Target", target)
     end
+    syncPin()
     return inst, px, py
 end
 
@@ -157,7 +175,7 @@ ns.Listen("Setting", function(key)
             Nav.target = nil
             Nav:Update()
         else
-            clearPin()
+            setPin(nil)
         end
     end
 end)
