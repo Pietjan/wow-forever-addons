@@ -13,8 +13,8 @@
 -- class line, the faction line and the "(Player)" after the race, and
 -- its guild line is green. Every other line under a unit's name (level,
 -- type, faction and the like) is dimmed, so the name is what you see first.
--- A unit flagged for PvP shows its faction crest at the right of the
--- level line instead of a "PvP" line of its own.
+-- A unit flagged for PvP shows its faction crest at the right of its
+-- name instead of a "PvP" line of its own.
 -- Item and spell tooltips show their ID while Alt is held.
 --
 -- How: the game hands a tooltip to addons as typed lines before it draws
@@ -214,7 +214,8 @@ end
 -- Finds the lines to change on a unit's tooltip. `into` maps a data line
 -- to the rows shown in its place; no rows means the line just goes.
 --   any unit: the "PvP" line goes and its faction crest sits at the right
---             of the level line instead
+--             of the name instead
+--   a mob:    its kind ("Humanoid") joins the level line
 --   a player: the guild line turns green with the rank at its right,
 --             "(Player)" goes, and so do the
 --             class and faction lines
@@ -241,10 +242,15 @@ local function Trim(lines, unit, into)
 		local word = _G.PLAYER
 		tag = type(word) == "string" and ("(" .. word .. ")")
 	end
+	local creature
+	if not isPlayer then
+		creature = UnitCreatureType(unit)
+		if Secret(creature) or creature == "" then creature = nil end
+	end
 	local levelWord = _G.LEVEL
 	local pvpWord = _G.PVP_ENABLED or _G.PVP
 
-	local level, levelText, pvp
+	local level, levelText, pvp, kind
 	for i, line in ipairs(lines) do
 		local text = line.leftText
 		if i > 1 and not line.rightText and type(text) == "string" and not Secret(text) then
@@ -254,6 +260,8 @@ local function Trim(lines, unit, into)
 					into[line] = {}
 				elseif pvpWord and plain == pvpWord then
 					pvp = line
+				elseif not kind and creature and plain == creature then
+					kind = line
 				end
 			else
 				local from, to
@@ -272,13 +280,20 @@ local function Trim(lines, unit, into)
 		end
 	end
 
-	local crest = pvp and Crest(unit)
-	if crest then
-		into[pvp] = {}
-		into[level] = { { left = levelText, right = crest, leftColour = DIM, rightColour = WHITE } }
-	elseif level and isPlayer then
+	if kind then
+		into[kind] = {}
+		levelText = levelText .. " " .. creature
+	end
+	if level and (isPlayer or kind) then
 		into[level] = { { left = levelText, leftColour = DIM } }
 	end
+	-- The crest goes on the name line, which the game has not drawn yet:
+	-- it is handed back and put there once the tooltip is built.
+	local crest = pvp and GameTooltipTextRight1 and Crest(unit)
+	if crest then
+		into[pvp] = {}
+	end
+	return crest
 end
 
 ---------------------------------------------------------------------------
@@ -291,6 +306,10 @@ end
 -- tooltip matches nothing.
 local replace = {}
 
+-- The crest waiting to go on the name line of the tooltip built from
+-- this data.
+local crestFor, crestText
+
 -- The lines to dim once the game has drawn them, keyed the same way. Only
 -- the colour is set, the text is not read, so a secret line is fine. The
 -- name, the threat line and quest lines keep their own colours.
@@ -299,6 +318,7 @@ local BRIGHT = { [Types.UnitName or -1] = true, [Types.UnitThreat or -1] = true,
 
 Processor.AddTooltipPreCall(Enum.TooltipDataType.Unit, function(tooltip, data)
 	replace, dim = {}, {}
+	crestFor, crestText = nil, nil
 	if tooltip ~= GameTooltip or type(data) ~= "table" or type(data.lines) ~= "table" then
 		return
 	end
@@ -311,9 +331,15 @@ Processor.AddTooltipPreCall(Enum.TooltipDataType.Unit, function(tooltip, data)
 		end
 	end
 	local trimmed = {}
-	if UnitExists("mouseover") and pcall(Trim, data.lines, "mouseover", trimmed) then
-		for line, rows in pairs(trimmed) do
-			replace[line] = rows
+	if UnitExists("mouseover") then
+		local fine, crest = pcall(Trim, data.lines, "mouseover", trimmed)
+		if fine then
+			for line, rows in pairs(trimmed) do
+				replace[line] = rows
+			end
+			if crest then
+				crestFor, crestText = data, crest
+			end
 		end
 	end
 	for i, line in ipairs(data.lines) do
@@ -350,12 +376,18 @@ Processor.AddLinePreCall(Processor.AllTypes, function(tooltip, line)
 	return true
 end)
 
--- A player's own tooltip: the name in class colour. Only the colour is
--- set, the text is not read, so a secret name is fine.
-Processor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip)
+-- The name line, once the tooltip is built: the PvP crest at its right,
+-- and a player's name in class colour. The name itself is not read or
+-- rewritten, so a secret name is fine.
+Processor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip, data)
 	if tooltip ~= GameTooltip or not GameTooltipTextLeft1 then
 		return
 	end
+	if crestText and crestFor == data and GameTooltipTextRight1 then
+		GameTooltipTextRight1:SetText(crestText)
+		GameTooltipTextRight1:Show()
+	end
+	crestFor, crestText = nil, nil
 	local unit = "mouseover"
 	if not UnitExists(unit) then
 		return
