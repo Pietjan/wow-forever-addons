@@ -781,6 +781,33 @@ local function TooHigh(itemID)
 	return type(level) == "number" and not IsSecret(level) and minLevel > level
 end
 
+-- The item's level (the fourth value of GetItemInfo), 0 while the client
+-- has no data for it.
+local function ItemLevel(itemID)
+	local ok, _, _, _, level = pcall(function()
+		return (C_Item and C_Item.GetItemInfo or GetItemInfo)(itemID)
+	end)
+	if not ok or type(level) ~= "number" or IsSecret(level) then
+		return 0
+	end
+	return level
+end
+
+-- Puts candidates in order of item level, highest first: the game gives
+-- the stronger food the higher level. Equal levels keep their bag order.
+local function ByItemLevel(list)
+	for i, candidate in ipairs(list) do
+		candidate.level, candidate.order = ItemLevel(candidate.value), i
+	end
+	table.sort(list, function(a, b)
+		if a.level ~= b.level then
+			return a.level > b.level
+		end
+		return a.order < b.order
+	end)
+	return list
+end
+
 -- Calls fn(itemID) for every item in the bags, until it returns true.
 local function EachBagItem(fn)
 	local numSlots = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
@@ -857,7 +884,7 @@ local function FoodCandidates(entry)
 			list[#list + 1] = { kind = "item", value = itemID, icon = icon, text = name, eat = true }
 		end
 	end)
-	return list
+	return ByItemLevel(list)
 end
 
 -- A hunter pet that is not as happy as wanted, and food in the bags that
