@@ -5,6 +5,7 @@
 -- - in Baganator's bags and bank, as an icon corner widget (top right);
 -- - on LootRolls bars (it asks UpgradeArrow.IsUpgrade);
 -- - on quest reward and choice items, in the quest frame and quest log;
+-- - on a vendor's items, for sale and on the buyback tab;
 -- - nothing in the tooltip, unless Alt is held: then both scores and the
 --   stats behind them.
 --
@@ -486,12 +487,83 @@ local function HookQuestRewards()
 	end
 end
 
+-- Vendor ----------------------------------------------------------------
+
+-- Our arrows on the vendor's item buttons (what is for sale, the buyback
+-- tab, and the one buyback item on the first tab), kept in our own table
+-- as with the quest rewards: no field is written on the game's frames.
+local merchantArrows = {}
+local merchantRetry = false
+
+-- Shows or hides the arrow of one button; true when the item is not
+-- cached yet and has to be looked at again.
+local function MerchantArrow(button, link)
+	if not button then
+		return false
+	end
+	local result = link and Evaluate(link)
+	local show = result and result.upgrade or false
+	local arrow = merchantArrows[button]
+	if show and not arrow then
+		arrow = button:CreateTexture(nil, "OVERLAY", nil, 7)
+		SetArrow(arrow)
+		arrow:SetSize(ARROW_SIZE, ARROW_SIZE)
+		arrow:SetPoint("TOPRIGHT", button, "TOPRIGHT", 3, 3)
+		merchantArrows[button] = arrow
+	end
+	if arrow then
+		arrow:SetShown(show)
+	end
+	return link ~= nil and not result
+end
+
+local function UpdateMerchant()
+	local frame = MerchantFrame
+	if not (frame and frame:IsShown() and GetMerchantItemLink and GetBuybackItemLink) then
+		return
+	end
+	local buyback = frame.selectedTab == 2
+	local perPage = buyback and (BUYBACK_ITEMS_PER_PAGE or 12) or (MERCHANT_ITEMS_PER_PAGE or 10)
+	local bought = GetNumBuybackItems and GetNumBuybackItems() or 0
+	local count = buyback and bought or (GetMerchantNumItems and GetMerchantNumItems() or 0)
+	local first = buyback and 0 or ((tonumber(frame.page) or 1) - 1) * perPage
+	local pending = false
+	for i = 1, math.max(BUYBACK_ITEMS_PER_PAGE or 12, MERCHANT_ITEMS_PER_PAGE or 10) do
+		local index = first + i
+		local link
+		if i <= perPage and index <= count then
+			link = buyback and GetBuybackItemLink(index) or GetMerchantItemLink(index)
+		end
+		pending = MerchantArrow(_G["MerchantItem" .. i .. "ItemButton"], link) or pending
+	end
+	-- The last item sold, shown under the items for sale.
+	local last = not buyback and bought > 0 and GetBuybackItemLink(bought) or nil
+	pending = MerchantArrow(MerchantBuyBackItemItemButton, last) or pending
+
+	if pending and not merchantRetry then
+		merchantRetry = true
+		C_Timer.After(0.5, function()
+			merchantRetry = false
+			pcall(UpdateMerchant)
+		end)
+	end
+end
+
+local function HookMerchant()
+	if MerchantFrame_Update then
+		hooksecurefunc("MerchantFrame_Update", function()
+			pcall(UpdateMerchant)
+		end)
+	end
+end
+
 -- Events -----------------------------------------------------------------
 
 local function Invalidate()
 	wipe(cache)
 	weights = Weights()
 	pcall(UpdateQuestRewards)
+	pcall(UpdateMerchant)
 	if Baganator and Baganator.API and Baganator.API.RequestItemButtonsRefresh then
 		Baganator.API.RequestItemButtonsRefresh()
 	end
@@ -516,6 +588,7 @@ events:SetScript("OnEvent", function(self, event, name)
 		weights = Weights()
 		RegisterBaganator()
 		HookQuestRewards()
+		HookMerchant()
 		if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
 			TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tooltip, data)
 				pcall(AddTooltip, tooltip, data)

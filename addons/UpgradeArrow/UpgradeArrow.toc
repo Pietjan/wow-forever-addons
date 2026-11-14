@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: UpgradeArrow
-## Notes: Pawn lite: a green arrow on items that would be an upgrade for your class and role, in Baganator's bags, quest rewards and LootRolls bars. /upgradearrow
+## Notes: Pawn lite: a green arrow on items that would be an upgrade for your class and role, in Baganator's bags, quest rewards, vendor windows and LootRolls bars. /upgradearrow
 ## Author: Pietjan
 ## Version: 1.0
 ## OptionalDeps: Baganator
