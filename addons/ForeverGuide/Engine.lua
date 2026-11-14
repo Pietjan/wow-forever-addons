@@ -493,6 +493,155 @@ local function markDone(index, quiet)
     end
 end
 
+local function parse(g)
+    if g.format == "rxp" then
+        return ns.ParserRXP.Parse(g.text)
+    end
+    g.map = g.map or Maps.Find(g.zone)
+    return ns.ParserWoWPro.Parse(g)
+end
+
+---------------------------------------------------------------------------
+-- Pickups: a quest a step works on that the character never accepted
+---------------------------------------------------------------------------
+-- A guide may leave the accepting to another guide of its series (a Tauren
+-- takes the first Crossroads quests at the end of the Mulgore guide), and
+-- a step can be ticked off by hand. Either way the character can stand
+-- before "kill these" without the quest. The pickup then comes first: a
+-- step made from the step, in this guide or another of the series, that
+-- accepts the quest.
+
+-- The quest of an objective that cannot be worked on yet.
+local function unaccepted(el)
+    if el.kind ~= "complete" or el.ifOnQuest then
+        return nil
+    end
+    local declined = prog.declined
+    local function open(quest)
+        return not (State.Accepted(quest) or State.Passed(quest) or (declined and declined[quest]))
+    end
+    if el.quests then
+        for i = 1, #el.quests do
+            if not open(el.quests[i]) then
+                return nil
+            end
+        end
+        return el.quests[1]
+    end
+    return el.quest and open(el.quest) and el.quest or nil
+end
+
+-- Adds the quests step `index` still needs accepted to `into` (a list that
+-- is also a set). True when the step has nothing else left to do.
+local function lacking(index, step, into)
+    local any, only = false, true
+    for j, el in ipairs(step.elements) do
+        if el.obj and not elementDone(index, j, el) then
+            local quest = unaccepted(el)
+            if quest then
+                any = true
+                if not into[quest] then
+                    into[quest] = true
+                    into[#into + 1] = quest
+                end
+            else
+                only = false
+            end
+        end
+    end
+    return any and only
+end
+
+local function accepts(el, quest)
+    if el.kind ~= "accept" then
+        return false
+    end
+    if el.quest == quest then
+        return true
+    end
+    for _, other in ipairs(el.quests or {}) do
+        if other == quest then
+            return true
+        end
+    end
+    return false
+end
+
+-- Per guide: quest -> the step that accepts it.
+local givers = {}
+
+local function indexGivers(list)
+    local out = {}
+    local function put(quest, step)
+        if not out[quest] or (step.points and not out[quest].points) then
+            out[quest] = step
+        end
+    end
+    for _, step in ipairs(list) do
+        for _, el in ipairs(step.elements) do
+            if el.kind == "accept" then
+                if el.quest then
+                    put(el.quest, step)
+                end
+                for _, quest in ipairs(el.quests or {}) do
+                    put(quest, step)
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function giver(quest)
+    local own = givers[guide.key]
+    if not own then
+        own = indexGivers(steps)
+        givers[guide.key] = own
+    end
+    if own[quest] then
+        return own[quest]
+    end
+    for _, other in ipairs(Registry.list) do
+        if other ~= guide and other.format == guide.format and other.group == guide.group then
+            local known = givers[other.key]
+            if not known then
+                local ok, parsed = pcall(parse, other)
+                known = ok and type(parsed) == "table" and indexGivers(parsed) or {}
+                givers[other.key] = known
+            end
+            if known[quest] then
+                return known[quest]
+            end
+        end
+    end
+    return nil
+end
+
+local pickups = {}
+
+local function pickupStep(quest)
+    local step = pickups[quest]
+    if not step then
+        step = { elements = {}, pickup = quest }
+        local from = giver(quest)
+        local accept
+        if from then
+            step.points, step.loop, step.targets = from.points, from.loop, from.targets
+            step.title, step.titleIsObjective = from.title, from.titleIsObjective
+            for _, el in ipairs(from.elements) do
+                if el.kind == "text" and not el.obj then
+                    step.elements[#step.elements + 1] = el
+                elseif not accept and accepts(el, quest) then
+                    accept = el
+                end
+            end
+        end
+        step.elements[#step.elements + 1] = accept or { kind = "accept", obj = true, quest = quest, text = "Accept *quest*" }
+        pickups[quest] = step
+    end
+    return step
+end
+
 ---------------------------------------------------------------------------
 -- What the tracker shows
 ---------------------------------------------------------------------------
@@ -642,8 +791,8 @@ local function addLines(lines, index, j, el, step)
     lines[#lines + 1] = { key = key, text = text, done = done, obj = el.obj }
 end
 
-local function buildBlock(index, isMain)
-    local step = steps[index]
+local function buildBlock(index, isMain, step)
+    step = step or steps[index]
     if step.hidden then
         return nil
     end
@@ -685,6 +834,7 @@ local function emptyView(titleText, line)
     Engine.nav = nil
     Engine.quests = {}
     Engine.arrivals = {}
+    Engine.pickups = {}
 end
 
 local refreshing = false
@@ -823,7 +973,27 @@ function refresh()
         shown[#shown + 1] = index
     end
 
+    -- Quests these steps work on that were never accepted: their pickups
+    -- come first, and a step with nothing else to do waits for them.
+    local lack = {}
+    for n = #shown, 1, -1 do
+        if lacking(shown[n], steps[shown[n]], lack) then
+            table.remove(shown, n)
+        end
+    end
+    table.sort(lack)
+
     local nav
+    for _, quest in ipairs(lack) do
+        local step = pickupStep(quest)
+        local block = buildBlock(-quest, false, step)
+        view.blocks[#view.blocks + 1] = block
+        if step.points and not nav then
+            nav = { points = step.points, loop = step.loop, step = -quest, title = block.title }
+        end
+    end
+    local detour = nav ~= nil
+
     for n, index in ipairs(shown) do
         local step = steps[index]
         local block = buildBlock(index, index == main)
@@ -844,7 +1014,7 @@ function refresh()
                 arrivals[#arrivals + 1] = { point = el.point, key = index * 100 + j }
             end
         end
-        if step.points and (not nav or (nav.step ~= main and index == main)) then
+        if step.points and not detour and (not nav or (nav.step ~= main and index == main)) then
             nav = { points = step.points, loop = step.loop, step = index, title = block and block.title or title(index, step) }
         end
     end
@@ -857,6 +1027,7 @@ function refresh()
     Engine.nav = nav
     Engine.quests = quests
     Engine.arrivals = arrivals
+    Engine.pickups = lack
     refreshing = false
 
     -- Tell the others only when something they show has changed.
@@ -917,14 +1088,6 @@ end
 ---------------------------------------------------------------------------
 -- Starting and steering
 ---------------------------------------------------------------------------
-local function parse(g)
-    if g.format == "rxp" then
-        return ns.ParserRXP.Parse(g.text)
-    end
-    g.map = g.map or Maps.Find(g.zone)
-    return ns.ParserWoWPro.Parse(g)
-end
-
 -- On a first start, pass over everything before the first quest step that
 -- is still open, so a character that is already under way lands in place.
 local function fastForward()
@@ -961,7 +1124,7 @@ function Engine:Start(key, restart)
     local signature = ("%s:%d:%s"):format(tostring(g.signature or 0), #steps, ns.db.group and "g" or "s")
     prog = ns.char.progress[key]
     if restart or not prog or prog.signature ~= signature then
-        prog = { done = {}, latch = {}, hist = {}, base = 1, signature = signature }
+        prog = { done = {}, latch = {}, hist = {}, declined = {}, base = 1, signature = signature }
         ns.char.progress[key] = prog
         local first = fastForward()
         for index = 1, first - 1 do
@@ -970,6 +1133,8 @@ function Engine:Start(key, restart)
         prog.base = first
     end
     prog.hist = prog.hist or {}
+    prog.declined = prog.declined or {}
+    pickups = {}
     Engine.guide = guide
     Engine:Refresh()
     return true
@@ -1034,6 +1199,9 @@ function Engine:Wants(kind, quest)
     if not guide or not quest or Engine.view.paused then
         return false
     end
+    if kind == "accept" and Engine.pickups and Engine.pickups[quest] then
+        return true
+    end
     for _, index in ipairs(Engine.shown or {}) do
         for _, el in ipairs(steps[index].elements) do
             if el.kind == kind then
@@ -1055,9 +1223,14 @@ function Engine:Current()
     return guide
 end
 
--- Finish a step by hand (the check button on its block).
+-- Finish a step by hand (the check button on its block). On a pickup
+-- (a negative number, the quest) it means: carry on without that quest.
 function Engine:CompleteStep(index)
-    if guide and steps[index] then
+    if guide and index < 0 then
+        prog.declined[-index] = true
+        prog.hist[#prog.hist + 1] = index
+        Engine:Refresh()
+    elseif guide and steps[index] then
         markDone(index)
         Engine:Refresh()
     end
@@ -1069,6 +1242,10 @@ function Engine:Back()
         return
     end
     local index = table.remove(prog.hist)
+    if index and index < 0 then
+        prog.declined[-index] = nil
+        return Engine:Refresh()
+    end
     if not index then
         -- Nothing remembered: step back to the previous step in the guide.
         index = (Engine.view.step or prog.base) - 1

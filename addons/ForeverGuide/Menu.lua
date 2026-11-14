@@ -102,7 +102,7 @@ local function build(_, root)
             disable(root:CreateButton(("Step %d of %d"):format(view.step, view.count)))
         end
         local main = view.blocks[1]
-        if main and main.id > 0 then
+        if main and main.id ~= 0 then
             root:CreateButton("Skip this step", function()
                 Engine:CompleteStep(main.id)
             end)
@@ -174,7 +174,7 @@ SlashCmdList.FOREVERGUIDE = function(message)
     local command = (message or ""):lower():match("^%s*(%S*)")
     if command == "skip" or command == "next" then
         local main = Engine.view.blocks[1]
-        if main and main.id > 0 then
+        if main and main.id ~= 0 then
             Engine:CompleteStep(main.id)
         end
     elseif command == "back" then

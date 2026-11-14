@@ -35,8 +35,13 @@ end
 
 function ForeverGuideStepButtonMixin:OnEnter()
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:SetText("Step done")
-    GameTooltip:AddLine("Mark this step as done and move on.", 1, 1, 1, true)
+    if self.stepIndex < 0 then
+        GameTooltip:SetText("Skip this quest")
+        GameTooltip:AddLine("Carry on without picking it up.", 1, 1, 1, true)
+    else
+        GameTooltip:SetText("Step done")
+        GameTooltip:AddLine("Mark this step as done and move on.", 1, 1, 1, true)
+    end
     GameTooltip:Show()
 end
 
@@ -309,7 +314,7 @@ local function layout()
         block.text:SetText(data.title or "")
         local height = textHeight(block.text)
         block:SetSize(blockWidth - BUTTON_ROOM, height)
-        if data.id > 0 then
+        if data.id ~= 0 then
             block.check:SetUp(data.id)
             block.check:ClearAllPoints()
             block.check:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, y + 2)
