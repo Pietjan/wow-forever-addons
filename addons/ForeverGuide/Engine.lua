@@ -122,6 +122,12 @@ function tests.collect(el)
     if el.quest and turnedInOrPassed(el.quest) then
         return true
     end
+    -- An item that starts a quest is gone once the quest is accepted, so
+    -- having the quest counts as having collected it. The same goes for a
+    -- quest whose objectives are all done. This is RXPGuides' own rule.
+    if el.quest and ((el.forQuest and State.OnQuest(el.quest)) or State.ReadyToTurnIn(el.quest)) then
+        return true
+    end
     if el.items then
         return itemsDone(el.items)
     end

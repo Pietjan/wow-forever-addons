@@ -2,7 +2,7 @@
 ## Title: ForeverGuide
 ## Notes: Leveling guides under the quest tracker. Reads RestedXP and WoW-Pro guides, tracks the quests of the current step, points an arrow and sets the map pin. /fg
 ## Author: Pietjan
-## Version: 1.0
+## Version: 1.1
 ## OptionalDeps: QuestieDB
 ## SavedVariables: ForeverGuideDB
 ## SavedVariablesPerCharacter: ForeverGuideCharDB

@@ -238,7 +238,7 @@ function commands.complete(step, text, id, objective, atLeast, flags, comment)
     })
 end
 
-function commands.collect(step, text, id, quantity, quest, _, flags)
+function commands.collect(step, text, id, quantity, quest, objFlags, flags)
     id = tonumber(id and id:match("^%d+"))
     if not id then
         return
@@ -248,6 +248,8 @@ function commands.collect(step, text, id, quantity, quest, _, flags)
     add(step, {
         kind = "collect", obj = not textOnly, item = id, count = tonumber(quantity) or 1,
         quest = tonumber(quest), text = text,
+        -- No objective flags: the item is only wanted to get the quest.
+        forQuest = (tonumber(objFlags) or 0) == 0,
     })
 end
 
