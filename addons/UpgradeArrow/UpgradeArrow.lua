@@ -569,6 +569,96 @@ local function Invalidate()
 	end
 end
 
+-- Settings (this character's): the slash command and the options window
+-- both change them here.
+
+local function SetRole(value) -- "TANK", "HEALER", "DAMAGER", or nil for automatic
+	db.role = value
+	Invalidate()
+end
+
+-- A weight equal to the class default is not kept: the default applies again.
+local function SetWeight(forRole, stat, value)
+	db.weights = db.weights or {}
+	db.weights[forRole] = db.weights[forRole] or {}
+	local default = ClassRoles()[forRole][stat] or 0
+	db.weights[forRole][stat] = value ~= default and value or nil
+	Invalidate()
+end
+
+local function ResetWeights(forRole)
+	if db.weights then
+		db.weights[forRole] = nil
+	end
+	Invalidate()
+end
+
+------------------------------------------------------------------------------
+-- The game's options window (Options > AddOns): the role, and under it one
+-- page of weights for each role the class can fill. The Defaults button on a
+-- page is /upgradearrow reset for that role. Optional: without the game's
+-- settings API the slash command still does everything.
+------------------------------------------------------------------------------
+
+local STAT_NAME = { dps = "Weapon damage per second, melee", rdps = "Weapon damage per second, ranged" }
+
+local function RegisterSettings()
+	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterVerticalLayoutSubcategory
+		and Settings.RegisterProxySetting and Settings.CreateSlider and Settings.CreateDropdown) then
+		return
+	end
+	local category = Settings.RegisterVerticalLayoutCategory("UpgradeArrow")
+	local roles = ClassRoles()
+
+	local function Roles()
+		local container = Settings.CreateControlTextContainer()
+		container:Add("auto", "Automatic", "Your role in the group, else the role ticked in the group finder, else damage. Now: " .. ROLE_NAME[role] .. ".")
+		for _, key in ipairs(ROLE_ORDER) do
+			if roles[key] then
+				container:Add(key, ROLE_NAME[key])
+			end
+		end
+		return container:GetData()
+	end
+	local roleSetting = Settings.RegisterProxySetting(category, "UpgradeArrow_role", Settings.VarType.String, "Score items as", "auto",
+		function() return db.role and roles[db.role] and db.role or "auto" end,
+		function(value) SetRole(value ~= "auto" and value or nil) end)
+	Settings.CreateDropdown(category, roleSetting, Roles,
+		"The role the upgrade arrows are worked out for, on this character. Each role has its own weights, on the pages under this one.")
+
+	local function Weight(value)
+		return ("%g"):format(value)
+	end
+	for _, forRole in ipairs(ROLE_ORDER) do
+		if roles[forRole] then
+			local page = Settings.RegisterVerticalLayoutSubcategory(category, ROLE_NAME[forRole] .. " weights")
+			for _, stat in ipairs(ORDER) do
+				local key = STATS[stat]
+				local name = (STAT_NAME[stat] or _G[type(key) == "table" and key[1] or key] or stat) .. " (" .. stat .. ")"
+				-- Armor counts in hundredths of what the others do.
+				local max, step = 20, 0.1
+				if stat == "armor" then
+					max, step = 0.5, 0.005
+				end
+				local setting = Settings.RegisterProxySetting(page, "UpgradeArrow_" .. forRole .. "_" .. stat, Settings.VarType.Number, name,
+					roles[forRole][stat] or 0,
+					function()
+						local own = db.weights and db.weights[forRole]
+						return own and own[stat] or roles[forRole][stat] or 0
+					end,
+					function(value)
+						SetWeight(forRole, stat, tonumber(("%.4f"):format(math.floor(value / step + 0.5) * step)))
+					end)
+				local options = Settings.CreateSliderOptions(0, max, step)
+				options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, Weight)
+				Settings.CreateSlider(page, setting, options, "Points for one " .. stat .. " on an item, when scoring as " .. ROLE_NAME[forRole]:lower() .. ".")
+			end
+		end
+	end
+
+	Settings.RegisterAddOnCategory(category)
+end
+
 local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
 events:SetScript("OnEvent", function(self, event, name)
@@ -586,6 +676,10 @@ events:SetScript("OnEvent", function(self, event, name)
 			db.weights = { DAMAGER = db.weights }
 		end
 		weights = Weights()
+		local ok, err = pcall(RegisterSettings)
+		if not ok then
+			print("|cff40c040UpgradeArrow|r: options panel unavailable (" .. tostring(err) .. "); use /upgradearrow instead")
+		end
 		RegisterBaganator()
 		HookQuestRewards()
 		HookMerchant()
@@ -617,9 +711,9 @@ SlashCmdList.UPGRADEARROW = function(msg)
 	local prefix = "|cff40c040UpgradeArrow|r: "
 	if stat == "role" then
 		if value == "auto" then
-			db.role = nil
+			SetRole(nil)
 		elseif ROLE_ARG[value] and ClassRoles()[ROLE_ARG[value]] then
-			db.role = ROLE_ARG[value]
+			SetRole(ROLE_ARG[value])
 		else
 			local names = {}
 			for _, r in ipairs(ROLE_ORDER) do
@@ -630,19 +724,12 @@ SlashCmdList.UPGRADEARROW = function(msg)
 			print(prefix .. "/upgradearrow role " .. table.concat(names, " | ") .. " | auto")
 			return
 		end
-		Invalidate()
 		print(prefix .. "scoring as " .. ROLE_NAME[role] .. " (" .. roleSource .. ")")
 	elseif stat == "reset" then
-		if db.weights then
-			db.weights[role] = nil
-		end
-		Invalidate()
+		ResetWeights(role)
 		print(prefix .. ROLE_NAME[role] .. " weights back to the class defaults")
 	elseif STATS[stat] and tonumber(value) then
-		db.weights = db.weights or {}
-		db.weights[role] = db.weights[role] or {}
-		db.weights[role][stat] = tonumber(value)
-		Invalidate()
+		SetWeight(role, stat, tonumber(value))
 		print(("%s%s %s = %g"):format(prefix, ROLE_NAME[role], stat, tonumber(value)))
 	else
 		local list = {}

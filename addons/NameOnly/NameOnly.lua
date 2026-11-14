@@ -314,6 +314,88 @@ local function Command(msg)
 	Status()
 end
 
+------------------------------------------------------------------------------
+-- The game's options window (Options > AddOns): the settings of the slash
+-- command as check boxes, sliders and dropdowns. Optional: without the
+-- game's settings API the slash command still does everything.
+------------------------------------------------------------------------------
+
+local function RegisterSettings()
+	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting
+		and Settings.CreateCheckbox and Settings.CreateSlider and Settings.CreateDropdown) then
+		return
+	end
+	local category = Settings.RegisterVerticalLayoutCategory("NameOnly")
+
+	local function Proxy(key, kind, name, default, get, set)
+		if default == nil then
+			default = DEFAULTS[key]
+		end
+		return Settings.RegisterProxySetting(category, "NameOnly_" .. key, kind, name, default,
+			get or function() return db[key] end, set or function(value) db[key] = value end)
+	end
+	local function Checkbox(key, name, tooltip, default, get, set)
+		Settings.CreateCheckbox(category, Proxy(key, Settings.VarType.Boolean, name, default, get, set), tooltip)
+	end
+	-- A slider hands over what its arithmetic gives (0.30000000000000004):
+	-- store the step it stands on.
+	local function Slider(key, name, tooltip, min, max, step, format, default, get, set)
+		set = set or function(value) db[key] = value end
+		local setting = Proxy(key, Settings.VarType.Number, name, default, get, function(value)
+			set(tonumber(("%.4f"):format(min + math.floor((value - min) / step + 0.5) * step)))
+		end)
+		local options = Settings.CreateSliderOptions(min, max, step)
+		options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, format)
+		Settings.CreateSlider(category, setting, options, tooltip)
+	end
+	-- choices: { value, label, tooltip } each.
+	local function Dropdown(key, name, tooltip, choices, default, get, set)
+		local function Choices()
+			local container = Settings.CreateControlTextContainer()
+			for _, choice in ipairs(choices) do
+				container:Add(choice[1], choice[2], choice[3])
+			end
+			return container:GetData()
+		end
+		Settings.CreateDropdown(category, Proxy(key, Settings.VarType.String, name, default, get, set), Choices, tooltip)
+	end
+
+	local function Styled(key)
+		return function(value)
+			db[key] = value
+			StyleAll()
+		end
+	end
+	local OWN = "the game's own"
+	local fonts = { { "default", "The game's own" } }
+	for _, key in ipairs(FONT_ORDER) do
+		if FONTS[key] then
+			fonts[#fonts + 1] = { key, FONTS[key][2] }
+		end
+	end
+	Dropdown("font", "Font", "The font of friendly players' names on their nameplates.", fonts, nil, nil, Styled("font"))
+	-- Size 0 is the game's own size: the slider's left end.
+	Slider("size", "Size", "All the way left for the game's own size.", 7, 32, 1,
+		function(value) return value < 8 and OWN or ("%d"):format(value) end, 7,
+		function() return db.size > 0 and db.size or 7 end,
+		function(value)
+			db.size = value >= 8 and value or 0
+			StyleAll()
+		end)
+	Dropdown("outline", "Outline", nil, {
+		{ "default", "The game's own" }, { "none", "None" }, { "thin", "Thin" }, { "thick", "Thick" },
+	}, nil, nil, Styled("outline"))
+	Checkbox("shadow", "Shadow", nil, nil, nil, Styled("shadow"))
+	local function Offset(value)
+		return ("%d"):format(value)
+	end
+	Slider("x", "Sideways", "Moves the name from where the game puts it; positive is to the right.", -50, 50, 1, Offset, nil, nil, Styled("x"))
+	Slider("y", "Up or down", "Moves the name from where the game puts it; positive is up.", -50, 50, 1, Offset, nil, nil, Styled("y"))
+	Checkbox("raidIcon", "Raid marker above the name", nil, nil, nil, Styled("raidIcon"))
+
+	Settings.RegisterAddOnCategory(category)
+end
+
 -- Events -------------------------------------------------------------------
 
 local loader = CreateFrame("Frame")
@@ -344,6 +426,10 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		SLASH_NAMEONLY1 = "/nameonly"
 		SLASH_NAMEONLY2 = "/nonly"
 		SlashCmdList.NAMEONLY = Command
+		local ok, err = pcall(RegisterSettings)
+		if not ok then
+			Print(("options panel unavailable (%s); use /nameonly instead"):format(tostring(err)))
+		end
 	elseif event == "PLAYER_LOGIN" then
 		-- Quiet unless something had to change.
 		if db.release and not InCombatLockdown() then

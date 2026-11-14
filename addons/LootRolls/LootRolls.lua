@@ -1003,6 +1003,70 @@ local function Test()
 	print("|cffffd100LootRolls|r: four test rolls; click a button to dismiss one. /lootrolls unlock to drag them.")
 end
 
+-- Settings: the slash command and the options window both change them here.
+
+local function SetScale(scale)
+	db.scale = scale
+	anchor:SetScale(scale)
+end
+
+local function SetBlizzard(on)
+	db.blizzard = on
+	MuteBlizzard(not on)
+end
+
+local function Reset()
+	db.point, db.scale = nil, nil
+	PlaceAnchor()
+	Layout()
+end
+
+------------------------------------------------------------------------------
+-- The game's options window (Options > AddOns): the settings of the slash
+-- command as check boxes, a slider and buttons. Optional: without the
+-- game's settings API the slash command still does everything.
+------------------------------------------------------------------------------
+
+local function RegisterSettings()
+	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting
+		and Settings.CreateCheckbox and Settings.CreateSlider and Settings.RegisterInitializer and CreateSettingsButtonInitializer) then
+		return
+	end
+	local category = Settings.RegisterVerticalLayoutCategory("LootRolls")
+
+	local function Proxy(key, kind, name, default, get, set)
+		return Settings.RegisterProxySetting(category, "LootRolls_" .. key, kind, name, default,
+			get or function() return db[key] end, set or function(value) db[key] = value end)
+	end
+	local function Checkbox(key, name, tooltip, default, get, set)
+		Settings.CreateCheckbox(category, Proxy(key, Settings.VarType.Boolean, name, default, get, set), tooltip)
+	end
+	-- A slider hands over what its arithmetic gives (0.30000000000000004):
+	-- store the step it stands on.
+	local function Slider(key, name, tooltip, min, max, step, format, default, get, set)
+		set = set or function(value) db[key] = value end
+		local setting = Proxy(key, Settings.VarType.Number, name, default, get, function(value)
+			set(tonumber(("%.4f"):format(min + math.floor((value - min) / step + 0.5) * step)))
+		end)
+		local options = Settings.CreateSliderOptions(min, max, step)
+		options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, format)
+		Settings.CreateSlider(category, setting, options, tooltip)
+	end
+	local function Button(name, text, click, tooltip)
+		Settings.RegisterInitializer(category, CreateSettingsButtonInitializer(name, text, click, tooltip, true))
+	end
+
+	Slider("scale", "Size", nil, 0.5, 2, 0.05, function(value) return ("%d%%"):format(value * 100 + 0.5) end, 1,
+		function() return db.scale or 1 end, SetScale)
+	Checkbox("blizzard", "Blizzard's roll frames as well", "Leaves the game's own roll frames on beside these.", false, nil, SetBlizzard)
+	Checkbox("unlocked", "Unlock to move", "Shows the anchor of the roll frames: drag it where you want them, then lock again.", false,
+		function() return unlocked end, SetUnlocked)
+	Button("Try it", "Test rolls", Test, "Shows four test rolls; click a button on one to dismiss it.")
+	Button("Position and size", "Reset", Reset, "Back to the middle of the screen at normal size.")
+
+	Settings.RegisterAddOnCategory(category)
+end
+
 -- Events and commands ---------------------------------------------------
 
 events:RegisterEvent("ADDON_LOADED")
@@ -1018,6 +1082,10 @@ events:SetScript("OnEvent", function(self, event, ...)
 			db.blizzard = false
 		end
 		CreateAnchor()
+		local ok, err = pcall(RegisterSettings)
+		if not ok then
+			print("|cffffd100LootRolls|r: options panel unavailable (" .. tostring(err) .. "); use /lootrolls instead")
+		end
 		for _, e in ipairs({ "PLAYER_ENTERING_WORLD", "START_LOOT_ROLL", "CANCEL_LOOT_ROLL", "CANCEL_ALL_LOOT_ROLLS",
 			"MAIN_SPEC_NEED_ROLL", "LOOT_HISTORY_UPDATE_DROP", "CHAT_MSG_LOOT" }) do
 			pcall(self.RegisterEvent, self, e)
@@ -1072,16 +1140,12 @@ SlashCmdList.LOOTROLLS = function(msg)
 	elseif cmd == "test" then
 		Test()
 	elseif cmd == "scale" and tonumber(arg) then
-		db.scale = math.min(2, math.max(0.5, tonumber(arg)))
-		anchor:SetScale(db.scale)
+		SetScale(math.min(2, math.max(0.5, tonumber(arg))))
 		print(("|cffffd100LootRolls|r: scale %.2f"):format(db.scale))
 	elseif cmd == "reset" then
-		db.point, db.scale = nil, nil
-		PlaceAnchor()
-		Layout()
+		Reset()
 	elseif cmd == "blizzard" then
-		db.blizzard = not db.blizzard
-		MuteBlizzard(not db.blizzard)
+		SetBlizzard(not db.blizzard)
 		print("|cffffd100LootRolls|r: Blizzard's roll frames " .. (db.blizzard and "on (as well)" or "off"))
 	elseif cmd == "clear" then
 		for _, row in pairs(rows) do

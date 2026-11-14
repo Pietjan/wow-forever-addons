@@ -349,6 +349,67 @@ SlashCmdList.FISHCLICK = function(msg)
 	Status()
 end
 
+------------------------------------------------------------------------------
+-- The game's options window (Options > AddOns): the settings of the slash
+-- command as check boxes, sliders and dropdowns. Optional: without the
+-- game's settings API the slash command still does everything.
+------------------------------------------------------------------------------
+
+local function RegisterSettings()
+	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting
+		and Settings.CreateCheckbox and Settings.CreateSlider and Settings.CreateDropdown) then
+		return
+	end
+	local category = Settings.RegisterVerticalLayoutCategory("FishClick")
+
+	local function Proxy(key, kind, name, default, get, set)
+		if default == nil then
+			default = DEFAULTS[key]
+		end
+		return Settings.RegisterProxySetting(category, "FishClick_" .. key, kind, name, default,
+			get or function() return db[key] end, set or function(value) db[key] = value end)
+	end
+	local function Checkbox(key, name, tooltip, default, get, set)
+		Settings.CreateCheckbox(category, Proxy(key, Settings.VarType.Boolean, name, default, get, set), tooltip)
+	end
+	-- A slider hands over what its arithmetic gives (0.30000000000000004):
+	-- store the step it stands on.
+	local function Slider(key, name, tooltip, min, max, step, format, default, get, set)
+		set = set or function(value) db[key] = value end
+		local setting = Proxy(key, Settings.VarType.Number, name, default, get, function(value)
+			set(tonumber(("%.4f"):format(min + math.floor((value - min) / step + 0.5) * step)))
+		end)
+		local options = Settings.CreateSliderOptions(min, max, step)
+		options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, format)
+		Settings.CreateSlider(category, setting, options, tooltip)
+	end
+	-- choices: { value, label, tooltip } each.
+	local function Dropdown(key, name, tooltip, choices, default, get, set)
+		local function Choices()
+			local container = Settings.CreateControlTextContainer()
+			for _, choice in ipairs(choices) do
+				container:Add(choice[1], choice[2], choice[3])
+			end
+			return container:GetData()
+		end
+		Settings.CreateDropdown(category, Proxy(key, Settings.VarType.String, name, default, get, set), Choices, tooltip)
+	end
+
+	Checkbox("enabled", "Double-click to fish", "Double-click in the world to cast Fishing while a fishing pole is equipped.")
+	Dropdown("button", "Mouse button", "Which mouse button's double-click casts.", {
+		{ "left", "Left" }, { "right", "Right" }, { "both", "Left or right" },
+	})
+	Slider("delay", "Double-click time", "Longest pause between the two clicks.", 0.15, 1, 0.05,
+		function(value) return ("%.2f s"):format(value) end)
+	Checkbox("lure", "Attach a lure first", "When the pole has no lure on it, the double-click attaches one from your bags before fishing.")
+	Dropdown("lurePick", "Which lure", "The lure taken from your bags.", {
+		{ "best", "Best", "The one with the highest fishing bonus." },
+		{ "cheap", "Cheapest", "The one with the lowest fishing bonus." },
+	})
+
+	Settings.RegisterAddOnCategory(category)
+end
+
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
 loader:RegisterEvent("PLAYER_LOGIN")
@@ -375,6 +436,10 @@ loader:SetScript("OnEvent", function(self, event, arg)
 			if db[key] == nil then
 				db[key] = value
 			end
+		end
+		local ok, err = pcall(RegisterSettings)
+		if not ok then
+			Print("options panel unavailable (%s); use /fish instead", tostring(err))
 		end
 	elseif event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
 		UpdatePole()

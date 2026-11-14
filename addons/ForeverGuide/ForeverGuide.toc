@@ -27,3 +27,4 @@ Arrow.lua
 Tracker.lua
 Tracker.xml
 Menu.lua
+Options.lua

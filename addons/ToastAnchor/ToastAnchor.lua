@@ -89,6 +89,23 @@ local function CreateMarker()
 	end)
 end
 
+-- The slash command and the options window both go through these two.
+local function ShowMarker(show)
+	if show then
+		PlaceMarker()
+		marker:Show()
+	else
+		marker:Hide()
+	end
+end
+
+local function Reset()
+	db.x, db.y = nil, nil
+	Apply()
+	PlaceMarker()
+	print("|cffffd100ToastAnchor|r: alert popups are back at the game's own place.")
+end
+
 SLASH_TOASTANCHOR1 = "/toastanchor"
 SlashCmdList.TOASTANCHOR = function(message)
 	if not db then
@@ -96,16 +113,27 @@ SlashCmdList.TOASTANCHOR = function(message)
 	end
 	local command = (message or ""):lower():match("^%s*(%S*)")
 	if command == "reset" then
-		db.x, db.y = nil, nil
-		Apply()
-		PlaceMarker()
-		print("|cffffd100ToastAnchor|r: alert popups are back at the game's own place.")
-	elseif marker:IsShown() then
-		marker:Hide()
+		Reset()
 	else
-		PlaceMarker()
-		marker:Show()
+		ShowMarker(not marker:IsShown())
 	end
+end
+
+-- The game's options window (Options > AddOns): the same two things.
+-- Optional: without the game's settings API the slash command does it all.
+local function RegisterSettings()
+	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting
+		and Settings.CreateCheckbox and Settings.RegisterInitializer and CreateSettingsButtonInitializer) then
+		return
+	end
+	local category = Settings.RegisterVerticalLayoutCategory("ToastAnchor")
+	local setting = Settings.RegisterProxySetting(category, "ToastAnchor_marker", Settings.VarType.Boolean,
+		"Show the marker", false, function() return marker:IsShown() and true or false end, ShowMarker)
+	Settings.CreateCheckbox(category, setting,
+		"Shows a marker on screen: drag it to where the lowest alert popup should sit, then untick this.")
+	Settings.RegisterInitializer(category, CreateSettingsButtonInitializer("Position", "Reset", Reset,
+		"Alert popups go back to the game's own place.", true))
+	Settings.RegisterAddOnCategory(category)
 end
 
 local loader = CreateFrame("Frame")
@@ -117,6 +145,10 @@ loader:SetScript("OnEvent", function(_, event, name)
 			ToastAnchorDB = ToastAnchorDB or {}
 			db = ToastAnchorDB
 			CreateMarker()
+			local ok, err = pcall(RegisterSettings)
+			if not ok then
+				print("|cffffd100ToastAnchor|r: options panel unavailable (" .. tostring(err) .. "); use /toastanchor instead")
+			end
 		end
 	elseif event == "PLAYER_LOGIN" then
 		Apply()

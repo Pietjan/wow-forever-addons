@@ -341,6 +341,49 @@ local function Command(msg)
 	end
 end
 
+------------------------------------------------------------------------------
+-- The game's options window (Options > AddOns): the setting of the slash
+-- command as a dropdown. Optional: without the game's settings API the
+-- slash command still does everything.
+------------------------------------------------------------------------------
+
+local function RegisterSettings()
+	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting and Settings.CreateDropdown) then
+		return
+	end
+	local category = Settings.RegisterVerticalLayoutCategory("ThreatColor")
+
+	local function Proxy(key, kind, name, default, get, set)
+		if default == nil then
+			default = DEFAULTS[key]
+		end
+		return Settings.RegisterProxySetting(category, "ThreatColor_" .. key, kind, name, default,
+			get or function() return db[key] end, set or function(value) db[key] = value end)
+	end
+	-- choices: { value, label, tooltip } each.
+	local function Dropdown(key, name, tooltip, choices, default, get, set)
+		local function Choices()
+			local container = Settings.CreateControlTextContainer()
+			for _, choice in ipairs(choices) do
+				container:Add(choice[1], choice[2], choice[3])
+			end
+			return container:GetData()
+		end
+		Settings.CreateDropdown(category, Proxy(key, Settings.VarType.String, name, default, get, set), Choices, tooltip)
+	end
+
+	Dropdown("role", "Role", "Which way the nameplate colours run.", {
+		{ "auto", "Automatic", "Tank when the game counts you as one." },
+		{ "tank", "Tank", "Green means you hold threat." },
+		{ "dps", "Healer or damage", "Green means no threat on you." },
+	}, nil, nil, function(value)
+		db.role = value
+		PaintAll()
+	end)
+
+	Settings.RegisterAddOnCategory(category)
+end
+
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
 loader:RegisterEvent("PLAYER_LOGIN")
@@ -365,6 +408,10 @@ loader:SetScript("OnEvent", function(_, event, arg)
 			SLASH_THREATCOLOR1 = "/threatcolor"
 			SLASH_THREATCOLOR2 = "/tcolor"
 			SlashCmdList.THREATCOLOR = Command
+			local ok, err = pcall(RegisterSettings)
+			if not ok then
+				Print(("options panel unavailable (%s); use /threatcolor instead"):format(tostring(err)))
+			end
 		end
 	elseif event == "PLAYER_LOGIN" then
 		hooksecurefunc("CompactUnitFrame_UpdateHealthColor", PaintHook)

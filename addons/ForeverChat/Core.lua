@@ -38,6 +38,22 @@ local DEFAULTS = {
 	scrollDown = 30, -- seconds before a scrolled-up window returns to the bottom; 0 is never
 }
 
+ns.defaults = DEFAULTS
+
+-- The one place a setting changes: the slash command and the options window
+-- (Options.lua) both come through here.
+local AFTER = {
+	arrows = function() ns.Skin.UpdateArrowKeys() end,
+	input = function() ns.Skin.UpdateEditBoxes() end,
+}
+
+function ns.Set(key, value)
+	ns.db[key] = value
+	if AFTER[key] then
+		AFTER[key]()
+	end
+end
+
 local PREFIX = "|cffd9b77aForeverChat|r: "
 
 function ns.Print(text, ...)
@@ -93,39 +109,37 @@ local function Command(text)
 	elseif command == "sync" and (argument == "on" or argument == "off") then
 		ns.Sync.SetEnabled(argument == "on")
 	elseif command == "channels" and (argument == "number" or argument == "name" or argument == "off") then
-		db.short = argument
+		ns.Set("short", argument)
 		ns.Print("channel names: %s. New messages use it; lines already in the window stay as they are.", argument)
 	elseif command == "links" and (argument == "on" or argument == "off") then
-		db.links = argument == "on"
+		ns.Set("links", argument == "on")
 		ns.Print(db.links and "web addresses in new chat lines can be clicked to copy." or "web addresses are left as text.")
 	elseif command == "skin" and (argument == "on" or argument == "off") then
-		db.skin = argument == "on"
+		ns.Set("skin", argument == "on")
 		ns.Print("skin %s. Type /reload to see it.", argument)
 	elseif command == "combatlog" and (argument == "last" or argument == "second") then
-		db.combatLogLast = argument == "last"
+		ns.Set("combatLogLast", argument == "last")
 		ns.Print("Combat Log tab %s. Type /reload to see it.", argument == "last" and "after the other tabs" or "back in second place")
 	elseif command == "scrolldown" and (argument == "off" or tonumber(argument)) then
 		local seconds = argument == "off" and 0 or math.floor(tonumber(argument))
 		if seconds ~= 0 and (seconds < 5 or seconds > 600) then
 			ns.Print("between 5 and 600 seconds, or off.")
 		else
-			db.scrollDown = seconds
+			ns.Set("scrollDown", seconds)
 			ns.Print(seconds == 0 and "scrolled-up chat windows stay where you leave them."
 				or ("a scrolled-up chat window returns to the newest line after " .. seconds .. " seconds."))
 		end
 	elseif command == "history" and (argument == "on" or argument == "off") then
-		db.history = argument == "on"
+		ns.Set("history", argument == "on")
 		ns.Print(db.history and "chat lines are kept across a reload." or "chat windows start empty after a reload.")
 	elseif command == "follow" and (argument == "on" or argument == "off") then
-		db.follow = argument == "on"
+		ns.Set("follow", argument == "on")
 		ns.Print(db.follow and "the tab that shows the channel you type to comes to the front." or "tabs stay where they are while you type.")
 	elseif command == "arrows" and (argument == "on" or argument == "off") then
-		db.arrows = argument == "on"
-		ns.Skin.UpdateArrowKeys()
+		ns.Set("arrows", argument == "on")
 		ns.Print(db.arrows and "arrow keys move the cursor in the input box." or "arrow keys need Alt in the input box, as the game has it.")
 	elseif command == "input" and (argument == "active" or argument == "always") then
-		db.input = argument
-		ns.Skin.UpdateEditBoxes()
+		ns.Set("input", argument)
 		ns.Print(argument == "active" and "the input box shows only while you type." or "the input box always shows.")
 	else
 		Usage()
@@ -164,4 +178,9 @@ events:SetScript("OnEvent", function(self, event, name)
 	SLASH_FOREVERCHAT1 = "/fchat"
 	SLASH_FOREVERCHAT2 = "/foreverchat"
 	SlashCmdList.FOREVERCHAT = Command
+
+	local ok, err = pcall(ns.RegisterSettings)
+	if not ok then
+		ns.Print("options panel unavailable (%s); use /fchat instead", tostring(err))
+	end
 end)

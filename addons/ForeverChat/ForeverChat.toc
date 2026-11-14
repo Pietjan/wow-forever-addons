@@ -12,3 +12,4 @@ Skin.lua
 Sync.lua
 History.lua
 Scroll.lua
+Options.lua

@@ -1075,6 +1075,144 @@ local function Debug()
 	end
 end
 
+-- Settings: the slash command and the options window both go through these.
+
+-- After a setting changed.
+local function Changed()
+	ApplyLayout()
+	if panel and panel:IsShown() then
+		panel:RefreshHelp()
+	end
+	Evaluate()
+end
+
+local function SetMinCooldown(seconds)
+	db.minCooldown = seconds
+	Rebuild()
+end
+
+local function ResetPosition()
+	db.point = { DEFAULTS.point[1], DEFAULTS.point[2], DEFAULTS.point[3] }
+end
+
+local function TogglePreview()
+	SetPreview(not previewing)
+	Print("bar preview %s", previewing and "on" or "off")
+end
+
+------------------------------------------------------------------------------
+-- The game's options window (Options > AddOns): the settings of the slash
+-- command as check boxes, sliders and dropdowns. Optional: without the
+-- game's settings API the slash command still does everything.
+------------------------------------------------------------------------------
+
+local function RegisterSettings()
+	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting
+		and Settings.CreateCheckbox and Settings.CreateSlider and Settings.CreateDropdown
+		and Settings.RegisterInitializer and CreateSettingsButtonInitializer) then
+		return
+	end
+	local category = Settings.RegisterVerticalLayoutCategory("CooldownNag")
+
+	local function Proxy(key, kind, name, default, get, set)
+		if default == nil then
+			default = DEFAULTS[key]
+		end
+		return Settings.RegisterProxySetting(category, "CooldownNag_" .. key, kind, name, default,
+			get or function() return db[key] end, set or function(value) db[key] = value end)
+	end
+	local function Checkbox(key, name, tooltip, default, get, set)
+		Settings.CreateCheckbox(category, Proxy(key, Settings.VarType.Boolean, name, default, get, set), tooltip)
+	end
+	-- A slider hands over what its arithmetic gives (0.30000000000000004):
+	-- store the step it stands on.
+	local function Slider(key, name, tooltip, min, max, step, format, default, get, set)
+		set = set or function(value) db[key] = value end
+		local setting = Proxy(key, Settings.VarType.Number, name, default, get, function(value)
+			set(tonumber(("%.4f"):format(min + math.floor((value - min) / step + 0.5) * step)))
+		end)
+		local options = Settings.CreateSliderOptions(min, max, step)
+		options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, format)
+		Settings.CreateSlider(category, setting, options, tooltip)
+	end
+	-- choices: { value, label, tooltip } each.
+	local function Dropdown(key, name, tooltip, choices, default, get, set)
+		local function Choices()
+			local container = Settings.CreateControlTextContainer()
+			for _, choice in ipairs(choices) do
+				container:Add(choice[1], choice[2], choice[3])
+			end
+			return container:GetData()
+		end
+		Settings.CreateDropdown(category, Proxy(key, Settings.VarType.String, name, default, get, set), Choices, tooltip)
+	end
+	local function Button(name, text, click, tooltip)
+		Settings.RegisterInitializer(category, CreateSettingsButtonInitializer(name, text, click, tooltip, true))
+	end
+
+	local function Apply(key)
+		return function(value)
+			db[key] = value
+			Changed(true)
+		end
+	end
+	local function Seconds(value)
+		return ("%g s"):format(value)
+	end
+	local function Percent(value)
+		return ("%d%%"):format(value + 0.5)
+	end
+	Slider("soon", "Show before ready", "Seconds before an ability is ready at which its icon appears.", 1, 60, 1, Seconds, nil, nil, Apply("soon"))
+	Slider("linger", "Stay once ready", "Seconds the icon stays once the ability is ready.", 0, 60, 1, Seconds, nil, nil, Apply("linger"))
+	Checkbox("sound", "Sound when an ability comes ready", nil, nil, nil, Apply("sound"))
+
+	-- The Cooldown Manager's sounds, when its list is loaded; ping always.
+	local function Sounds()
+		local container = Settings.CreateControlTextContainer()
+		local seen = {}
+		local function Add(kit, text)
+			if not seen[kit] then
+				seen[kit] = true
+				container:Add(kit, text)
+			end
+		end
+		Add(PING, "Ping")
+		EachSound(function(text, kit)
+			Add(kit, text)
+		end)
+		Add(DEFAULTS.soundKit, SoundName(DEFAULTS.soundKit))
+		Add(db.soundKit or PING, SoundName(db.soundKit or PING))
+		return container:GetData()
+	end
+	local soundKit = Settings.RegisterProxySetting(category, "CooldownNag_soundKit", Settings.VarType.Number, "Which sound", DEFAULTS.soundKit,
+		function() return db.soundKit or PING end,
+		function(value)
+			db.soundKit = value
+			pcall(PlaySound, value) -- so the choice is heard
+			Changed(true)
+		end)
+	Settings.CreateDropdown(category, soundKit, Sounds, "The Cooldown Manager's sounds. Picking one plays it.")
+
+	Dropdown("glow", "Glow", "The Cooldown Manager's alert effect on a ready ability.", {
+		{ "flash", "Flash" }, { "ants", "Marching ants" }, { "off", "None" },
+	}, nil, nil, Apply("glow"))
+	Dropdown("glowColor", "Glow colour", nil, {
+		{ "gold", "Gold" }, { "cyan", "Cyan" }, { "red", "Red" }, { "green", "Green" }, { "blue", "Blue" },
+	}, nil, nil, Apply("glowColor"))
+	Slider("minCooldown", "Shortest cooldown listed", "Abilities with a shorter cooldown stay out of the list of abilities to watch. /cdn min <seconds> takes values the slider does not have.",
+		5, 600, 5, Seconds, nil, nil, SetMinCooldown)
+	Slider("scale", "Bar size", nil, 0.5, 3, 0.05, function(value) return Percent(value * 100) end, nil, nil, Apply("scale"))
+	Checkbox("locked", "Lock the bar", "Unlocked, the bar can be dragged while its preview shows.", nil, nil, Apply("locked"))
+	Button("Bar position", "Reset", function()
+		ResetPosition()
+		Changed(true)
+	end, "Puts the bar back where it started.")
+	Button("Bar preview", "Show or hide", TogglePreview, "Shows the bar, to place and size it.")
+	Button("Abilities to watch", "Open", OpenSettings, "Opens CooldownNag's page in the Cooldown Manager's settings, as /cdn does: which abilities to watch.")
+
+	Settings.RegisterAddOnCategory(category)
+end
+
 SLASH_COOLDOWNNAG1 = "/cdn"
 SLASH_COOLDOWNNAG2 = "/cooldownnag"
 SlashCmdList.COOLDOWNNAG = function(msg)
@@ -1148,9 +1286,8 @@ SlashCmdList.COOLDOWNNAG = function(msg)
 	elseif word == "scale" then
 		db.scale = math.max(0.5, math.min(3, tonumber(rest) or 1))
 	elseif word == "min" then
-		db.minCooldown = math.max(1, math.min(3600, tonumber(rest) or DEFAULTS.minCooldown))
+		SetMinCooldown(math.max(1, math.min(3600, tonumber(rest) or DEFAULTS.minCooldown)))
 		Print("abilities with a cooldown of %g seconds or more are listed", db.minCooldown)
-		Rebuild()
 		return
 	elseif word == "watch" or word == "unwatch" then
 		local name = BookSpell(rest)
@@ -1176,23 +1313,18 @@ SlashCmdList.COOLDOWNNAG = function(msg)
 		end
 		return
 	elseif word == "test" then
-		SetPreview(not previewing)
-		Print("bar preview %s", previewing and "on" or "off")
+		TogglePreview()
 		return
 	elseif word == "debug" then
 		Debug()
 		return
 	elseif word == "reset" then
-		db.point = { DEFAULTS.point[1], DEFAULTS.point[2], DEFAULTS.point[3] }
+		ResetPosition()
 	else
 		Print("/cdn opens the settings; /cdn soon <seconds>; /cdn linger <seconds>; /cdn sound on|off|list|test|<name>; /cdn glow flash|ants|off; /cdn glowcolor <colour>; /cdn lock|unlock; /cdn scale <n>; /cdn min <seconds>; /cdn watch|unwatch <spell>; /cdn list; /cdn test; /cdn debug; /cdn reset")
 		return
 	end
-	ApplyLayout()
-	if panel and panel:IsShown() then
-		panel:RefreshHelp()
-	end
-	Evaluate()
+	Changed()
 end
 
 ------------------------------------------------------------------------------
@@ -1226,6 +1358,10 @@ loader:SetScript("OnEvent", function(self, event, arg, _, spellID)
 			cdb.extra = cdb.extra or {} -- spells added by /cdn watch, listed whatever their cooldown
 			cdb.learned = cdb.learned or {} -- spell name -> cooldown seconds seen
 			cdb.lengths = cdb.lengths or {} -- spell name -> the real cooldown length last seen
+			local ok, err = pcall(RegisterSettings)
+			if not ok then
+				Print("options panel unavailable (%s); use /cdn instead", tostring(err))
+			end
 		elseif arg == "Blizzard_CooldownViewer" and db then
 			HookSettings()
 		end

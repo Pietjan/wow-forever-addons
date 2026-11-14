@@ -2016,6 +2016,138 @@ function BuffNag_TogglePause()
 	end
 end
 
+-- Settings: the slash command and the options window both go through these.
+
+-- After a setting changed: the bar follows at once, or after combat.
+local function Changed(quiet)
+	if InCombatLockdown() then
+		if not quiet then
+			Print("changes apply after combat")
+		end
+	else
+		ApplyLayout()
+		Refresh()
+	end
+end
+
+local function ResetPosition()
+	db.point = { DEFAULTS.point[1], DEFAULTS.point[2], DEFAULTS.point[3] }
+end
+
+local function TogglePreview()
+	previewing = not previewing
+	Print("bar preview %s", previewing and "on" or "off")
+end
+
+------------------------------------------------------------------------------
+-- The game's options window (Options > AddOns): the settings of the slash
+-- command as check boxes, sliders and dropdowns. Optional: without the
+-- game's settings API the slash command still does everything.
+------------------------------------------------------------------------------
+
+local function RegisterSettings()
+	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting
+		and Settings.CreateCheckbox and Settings.CreateSlider and Settings.CreateDropdown
+		and Settings.RegisterInitializer and CreateSettingsButtonInitializer) then
+		return
+	end
+	local category = Settings.RegisterVerticalLayoutCategory("BuffNag")
+
+	local function Proxy(key, kind, name, default, get, set)
+		if default == nil then
+			default = DEFAULTS[key]
+		end
+		return Settings.RegisterProxySetting(category, "BuffNag_" .. key, kind, name, default,
+			get or function() return db[key] end, set or function(value) db[key] = value end)
+	end
+	local function Checkbox(key, name, tooltip, default, get, set)
+		Settings.CreateCheckbox(category, Proxy(key, Settings.VarType.Boolean, name, default, get, set), tooltip)
+	end
+	-- A slider hands over what its arithmetic gives (0.30000000000000004):
+	-- store the step it stands on.
+	local function Slider(key, name, tooltip, min, max, step, format, default, get, set)
+		set = set or function(value) db[key] = value end
+		local setting = Proxy(key, Settings.VarType.Number, name, default, get, function(value)
+			set(tonumber(("%.4f"):format(min + math.floor((value - min) / step + 0.5) * step)))
+		end)
+		local options = Settings.CreateSliderOptions(min, max, step)
+		options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, format)
+		Settings.CreateSlider(category, setting, options, tooltip)
+	end
+	-- choices: { value, label, tooltip } each.
+	local function Dropdown(key, name, tooltip, choices, default, get, set)
+		local function Choices()
+			local container = Settings.CreateControlTextContainer()
+			for _, choice in ipairs(choices) do
+				container:Add(choice[1], choice[2], choice[3])
+			end
+			return container:GetData()
+		end
+		Settings.CreateDropdown(category, Proxy(key, Settings.VarType.String, name, default, get, set), Choices, tooltip)
+	end
+	local function Button(name, text, click, tooltip)
+		Settings.RegisterInitializer(category, CreateSettingsButtonInitializer(name, text, click, tooltip, true))
+	end
+
+	local function Apply(key)
+		return function(value)
+			db[key] = value
+			Changed(true)
+		end
+	end
+	local function Seconds(value)
+		return ("%g s"):format(value)
+	end
+	local function Percent(value)
+		return ("%d%%"):format(value + 0.5)
+	end
+	Checkbox("party", "Party members too", "Also looks at your party, for the buffs marked for the party.", nil, nil, Apply("party"))
+	Checkbox("sound", "Ping while something is missing", nil, nil, nil, function(value)
+		db.sound = value
+		if not value then
+			StopNag()
+		end
+		Changed(true)
+	end)
+	Slider("pingGap", "Time between pings", nil, 0.1, 10, 0.1, Seconds, nil, nil, Apply("pingGap"))
+	Dropdown("glow", "Glow", "The Cooldown Manager's alert effect on a missing buff.", {
+		{ "flash", "Flash" }, { "ants", "Marching ants" }, { "off", "None" },
+	}, nil, nil, Apply("glow"))
+	Dropdown("glowColor", "Glow colour", nil, {
+		{ "gold", "Gold" }, { "cyan", "Cyan" }, { "red", "Red" }, { "green", "Green" }, { "blue", "Blue" },
+	}, nil, nil, Apply("glowColor"))
+	Checkbox("expiringGlow", "Border on a buff that is running out", nil, nil, nil, Apply("expiringGlow"))
+	Slider("soonShare", "Running out: share of the duration left", "A buff counts as running out with this share of its duration left, within the two limits below.",
+		0, 100, 1, Percent, DEFAULTS.soonShare * 100,
+		function() return db.soonShare * 100 end,
+		function(value)
+			db.soonShare = value / 100
+			Changed(true)
+		end)
+	Slider("soonMax", "Running out: at most", "Never earlier than this before the end. Buffs of unknown duration use this.", 0, 1800, 10, Seconds, nil, nil, Apply("soonMax"))
+	Slider("soonMin", "Running out: at least", "Never later than this before the end; no more than the limit above.", 0, 1800, 10, Seconds, nil, nil, function(value)
+		db.soonMin = math.min(value, db.soonMax)
+		Changed(true)
+	end)
+	Dropdown("petNag", "Hunter pet", "When to ask for the pet to be fed.", {
+		{ "happy", "Whenever it is not Happy" },
+		{ "content", "Only once Unhappy", "Content shows quietly, without the sound." },
+	}, nil, nil, Apply("petNag"))
+	Slider("scale", "Bar size", nil, 0.5, 3, 0.05, function(value) return Percent(value * 100) end, nil, nil, Apply("scale"))
+	Checkbox("locked", "Lock the bar", "Unlocked, the bar can be dragged by its label.", nil, nil, Apply("locked"))
+	Button("Bar position", "Reset", function()
+		ResetPosition()
+		Changed(true)
+	end, "Puts the bar back where it started.")
+	Button("Bar preview", "Show or hide", function()
+		TogglePreview()
+		Changed(true)
+	end, "Shows the bar with every watched buff on it, to place and size it.")
+	Button("Buffs to watch", "Open", OpenSettings, "Opens BuffNag's page in the Cooldown Manager's settings, as /bn does: which buffs to watch, and where.")
+
+	Settings.RegisterAddOnCategory(category)
+end
+
 BINDING_HEADER_BUFFNAG = "BuffNag"
 BINDING_NAME_BUFFNAG_TOGGLE_PAUSE = "Pause or resume the buff nagging"
 
@@ -2071,7 +2203,7 @@ SlashCmdList.BUFFNAG = function(msg)
 	elseif word == "scale" then
 		db.scale = math.max(0.5, math.min(3, tonumber(rest) or 1))
 	elseif word == "reset" then
-		db.point = { DEFAULTS.point[1], DEFAULTS.point[2], DEFAULTS.point[3] }
+		ResetPosition()
 	elseif word == "debug" then
 		Print("party %s, in raid: %s", db.party and "on" or "off", tostring(IsInRaid and IsInRaid() or false))
 		if catalog.pet then
@@ -2131,8 +2263,7 @@ SlashCmdList.BUFFNAG = function(msg)
 		SetPaused(0)
 		return
 	elseif word == "test" then
-		previewing = not previewing
-		Print("bar preview %s", previewing and "on" or "off")
+		TogglePreview()
 	elseif word == "list" then
 		Print("watching:")
 		for _, key in ipairs(catalogOrder) do
@@ -2146,12 +2277,7 @@ SlashCmdList.BUFFNAG = function(msg)
 		Print("/bn opens the settings; /bn pause [minutes], /bn resume; /bn list; /bn lock|unlock; /bn party on|off; /bn sound on|off; /bn glow flash|ants|off; /bn glowcolor <colour>; /bn expiring on|off; /bn pet happy|content; /bn gap <seconds>; /bn soon <max seconds>; /bn soonmin <seconds>; /bn soonshare <percent>; /bn scale <n>; /bn test; /bn reset")
 		return
 	end
-	if InCombatLockdown() then
-		Print("changes apply after combat")
-	else
-		ApplyLayout()
-		Refresh()
-	end
+	Changed()
 end
 
 ------------------------------------------------------------------------------
@@ -2217,6 +2343,10 @@ loader:SetScript("OnEvent", function(self, event, arg)
 			cdb = BuffNagCharDB
 			cdb.nag = cdb.nag or {}
 			cdb.prefer = cdb.prefer or {} -- entry key -> item or spell picked by right-click
+			local ok, err = pcall(RegisterSettings)
+			if not ok then
+				Print("options panel unavailable (%s); use /bn instead", tostring(err))
+			end
 		elseif arg == "Blizzard_CooldownViewer" and db then
 			HookSettings()
 		end

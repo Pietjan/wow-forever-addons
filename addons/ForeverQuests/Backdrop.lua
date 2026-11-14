@@ -136,14 +136,19 @@ local function Follow()
 	frame:Show()
 end
 
+-- The slash command and the options window both set it here.
+local function SetOpacity(value)
+	ForeverQuestsDB.backdrop = math.floor(value + 0.5)
+	if frame then
+		Follow()
+	end
+end
+
 -- /fq backdrop [0-100]
 function ns.BackdropCommand(text)
 	local value = tonumber(text)
 	if value and value >= 0 and value <= 100 then
-		ForeverQuestsDB.backdrop = math.floor(value + 0.5)
-		if frame then
-			Follow()
-		end
+		SetOpacity(value)
 	elseif text ~= "" then
 		ns.Print("/fq backdrop <0-100>: how dark the backdrop behind the quest tracker is; 0 switches it off.")
 		return
@@ -153,11 +158,33 @@ function ns.BackdropCommand(text)
 		or "tracker backdrop is off. /fq backdrop <1-100> to switch it on.")
 end
 
+-- The game's options window (Options > AddOns): the same setting as a
+-- slider. Optional: without the game's settings API /fq backdrop does it.
+local function RegisterSettings()
+	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting and Settings.CreateSlider) then
+		return
+	end
+	local category = Settings.RegisterVerticalLayoutCategory("ForeverQuests")
+	local setting = Settings.RegisterProxySetting(category, "ForeverQuests_backdrop", Settings.VarType.Number,
+		"Tracker backdrop", DEFAULT, Opacity, SetOpacity)
+	local options = Settings.CreateSliderOptions(0, 100, 1)
+	options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(value)
+		return value < 0.5 and "off" or ("%d%%"):format(value + 0.5)
+	end)
+	Settings.CreateSlider(category, setting, options,
+		"How dark the backdrop behind the quest tracker is; all the way left switches it off.")
+	Settings.RegisterAddOnCategory(category)
+end
+
 local events = CreateFrame("Frame")
 events:RegisterEvent("PLAYER_LOGIN")
 events:SetScript("OnEvent", function()
 	ForeverQuestsDB = type(ForeverQuestsDB) == "table" and ForeverQuestsDB or {}
 	Create()
 	Follow()
+	local ok, err = pcall(RegisterSettings)
+	if not ok then
+		ns.Print("options panel unavailable (" .. tostring(err) .. "); use /fq backdrop instead")
+	end
 	C_Timer.NewTicker(INTERVAL, Follow)
 end)

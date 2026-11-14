@@ -251,6 +251,75 @@ local function Status()
 	UpdateGlow()
 end
 
+------------------------------------------------------------------------------
+-- The game's options window (Options > AddOns): the settings of the slash
+-- command as check boxes, sliders and dropdowns. Optional: without the
+-- game's settings API the slash command still does everything.
+------------------------------------------------------------------------------
+
+local function RegisterSettings()
+	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting
+		and Settings.CreateCheckbox and Settings.CreateSlider and Settings.CreateDropdown) then
+		return
+	end
+	local category = Settings.RegisterVerticalLayoutCategory("TrackSwap")
+
+	local function Proxy(key, kind, name, default, get, set)
+		if default == nil then
+			default = DEFAULTS[key]
+		end
+		return Settings.RegisterProxySetting(category, "TrackSwap_" .. key, kind, name, default,
+			get or function() return db[key] end, set or function(value) db[key] = value end)
+	end
+	local function Checkbox(key, name, tooltip, default, get, set)
+		Settings.CreateCheckbox(category, Proxy(key, Settings.VarType.Boolean, name, default, get, set), tooltip)
+	end
+	-- A slider hands over what its arithmetic gives (0.30000000000000004):
+	-- store the step it stands on.
+	local function Slider(key, name, tooltip, min, max, step, format, default, get, set)
+		set = set or function(value) db[key] = value end
+		local setting = Proxy(key, Settings.VarType.Number, name, default, get, function(value)
+			set(tonumber(("%.4f"):format(min + math.floor((value - min) / step + 0.5) * step)))
+		end)
+		local options = Settings.CreateSliderOptions(min, max, step)
+		options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, format)
+		Settings.CreateSlider(category, setting, options, tooltip)
+	end
+	-- choices: { value, label, tooltip } each.
+	local function Dropdown(key, name, tooltip, choices, default, get, set)
+		local function Choices()
+			local container = Settings.CreateControlTextContainer()
+			for _, choice in ipairs(choices) do
+				container:Add(choice[1], choice[2], choice[3])
+			end
+			return container:GetData()
+		end
+		Settings.CreateDropdown(category, Proxy(key, Settings.VarType.String, name, default, get, set), Choices, tooltip)
+	end
+
+	local function Seconds(value)
+		return ("%g s"):format(value)
+	end
+	Checkbox("enabled", "Swap between herbs and minerals", "Switches the minimap tracking between Find Herbs and Find Minerals. Also on a key binding and on a right-click of the tracking button.",
+		nil, nil, function(value)
+			db.enabled = value
+			UpdateGlow()
+		end)
+	Slider("interval", "Pace", "Seconds between swaps.", 0.5, 30, 0.5, Seconds, nil, nil, function(value)
+		db.interval = value
+		Start()
+	end)
+	Dropdown("mute", "Mute during the swap", "Changing tracking plays a click.", {
+		{ "file", "Just the click", "Mutes the one sound file of the click (/ts mute <sound file id> picks another)." },
+		{ "all", "All sound effects", "Turns every sound effect off for a moment." },
+		{ "off", "Nothing" },
+	})
+	Slider("hold", "Pause after a cast", "Seconds to leave the tracking alone after you cast or channel anything.", 0, 120, 1, Seconds)
+	Slider("fishingHold", "Pause after fishing", "Seconds to leave the tracking alone after a Fishing cast: a swap would reel the line in.", 0, 120, 1, Seconds)
+
+	Settings.RegisterAddOnCategory(category)
+end
+
 BINDING_HEADER_TRACKSWAP = "TrackSwap"
 BINDING_NAME_TRACKSWAP_TOGGLE = "Toggle herb/mineral swapping"
 
@@ -326,6 +395,10 @@ loader:SetScript("OnEvent", function(self, event, name, _, spellID)
 			end
 		end
 		RestoreSound()
+		local ok, err = pcall(RegisterSettings)
+		if not ok then
+			Print("options panel unavailable (%s); use /ts instead", tostring(err))
+		end
 	elseif event == "PLAYER_LOGIN" then
 		Start()
 		UpdateGlow()
