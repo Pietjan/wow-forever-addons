@@ -408,12 +408,18 @@ end
 ---------------------------------------------------------------------------
 -- Steps
 ---------------------------------------------------------------------------
+local orphan -- below, with the pickups
+
 local function elementDone(index, j, el)
     if prog.latch[index * 100 + j] then
         return true
     end
     local test = tests[el.kind]
-    return test and test(el) or false
+    if test and test(el) then
+        return true
+    end
+    -- A quest that was never accepted cannot be handed in.
+    return el.kind == "turnin" and index > 0 and orphan(index, el) or false
 end
 
 local function hasObjectives(step)
@@ -510,6 +516,14 @@ end
 -- before "kill these" without the quest. The pickup then comes first: a
 -- step made from the step, in this guide or another of the series, that
 -- accepts the quest.
+--
+-- A pickup shows in two places: at a step that works on the quest's
+-- objectives, and earlier, whenever the character or the current step is
+-- near the quest giver and steps still to come need the quest, so the
+-- character is not sent back for it. A hand-in of a quest that was never
+-- accepted is passed over once it is reached, unless its giver is right
+-- there.
+local NEAR = 250 -- yards between a step and a quest giver that count as "there"
 
 -- The quest of an objective that cannot be worked on yet.
 local function unaccepted(el)
@@ -519,6 +533,7 @@ local function unaccepted(el)
     local declined = prog.declined
     local function open(quest)
         return not (State.Accepted(quest) or State.Passed(quest) or (declined and declined[quest]))
+            and State.CanAccept(quest)
     end
     if el.quests then
         for i = 1, #el.quests do
@@ -642,6 +657,159 @@ local function pickupStep(quest)
     return step
 end
 
+-- Is any point of the one step within NEAR yards of a point of the other?
+local function near(a, b)
+    if not (a and b and a.points and b.points) then
+        return false
+    end
+    for _, p in ipairs(a.points) do
+        if Maps.Resolve(p) then
+            for _, q in ipairs(b.points) do
+                if Maps.Resolve(q) and p.inst == q.inst then
+                    local dx, dy = p.wx - q.wx, p.wy - q.wy
+                    if dx * dx + dy * dy <= NEAR * NEAR then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- Is the quest one a pickup can be shown for?
+local function eligible(quest)
+    return not (State.Accepted(quest) or State.Passed(quest) or prog.declined[quest]) and State.CanAccept(quest)
+end
+
+-- Where the character stands, in the form of a step with one point.
+local here = { points = { { resolved = true } } }
+
+local function standing()
+    local inst, x, y = Maps.Player()
+    if not inst then
+        return nil -- in an instance, or the position is not known
+    end
+    local p = here.points[1]
+    p.inst, p.wx, p.wy = inst, x, y
+    return here
+end
+
+-- Could the quest be picked up from where the character or step `at` is?
+local function offered(quest, at)
+    if not eligible(quest) then
+        return false
+    end
+    local from = giver(quest)
+    return near(from, at) or near(from, standing())
+end
+
+-- Per quest: the steps of this guide that work on it or hand it in, and
+-- the steps that accept it; `wantedList` has the quests in guide order.
+-- Built once per start.
+local wanted, wantedList
+
+-- A hand-in of a quest that is not in the log and was never done, at a
+-- step that is not near its giver: there is nothing to hand in.
+function orphan(index, el)
+    if el.quests then
+        for i = 1, #el.quests do
+            if State.Accepted(el.quests[i]) then
+                return false
+            end
+        end
+    elseif not el.quest or State.Accepted(el.quest) then
+        return false
+    end
+    local quest = el.quests and el.quests[1] or el.quest
+    -- A step of this guide that is still to accept it comes first.
+    local w = wanted and wanted[quest]
+    for _, at in ipairs(w and w.accepts or {}) do
+        if not prog.done[at] and not skipped(steps[at]) then
+            return false
+        end
+    end
+    return not offered(quest, steps[index])
+end
+
+local function buildWanted()
+    wanted, wantedList = {}, {}
+    local function entry(quest)
+        local w = wanted[quest]
+        if not w then
+            w = { uses = {}, accepts = {} }
+            wanted[quest] = w
+            wantedList[#wantedList + 1] = quest
+        end
+        return w
+    end
+    for index, step in ipairs(steps) do
+        for _, el in ipairs(step.elements) do
+            local list = el.kind == "accept" and "accepts"
+                or ((el.kind == "turnin" or el.kind == "complete") and el.obj and not el.ifOnQuest and "uses")
+            if list then
+                if el.quest then
+                    local at = entry(el.quest)[list]
+                    at[#at + 1] = index
+                end
+                for _, quest in ipairs(el.quests or {}) do
+                    local at = entry(quest)[list]
+                    at[#at + 1] = index
+                end
+            end
+        end
+    end
+end
+
+local function open(index)
+    return not prog.done[index] and not skipped(steps[index])
+end
+
+-- Adds to `into` the quests that steps still to come need, that this
+-- guide has no step to accept (for this character: another guide of the
+-- series does it), and whose giver is near step `at` or near the giver of
+-- a quest that is offered already: the whole village, not only the corner
+-- of it the step happens to be at. A quest the guide does have an accept
+-- step for is left to that step, also when it was passed over.
+local function passing(at, into)
+    local around = { at }
+    around[#around + 1] = standing() -- nothing when the position is unknown
+    for _, quest in ipairs(into) do
+        around[#around + 1] = giver(quest)
+    end
+    local waiting = {}
+    for _, quest in ipairs(wantedList) do
+        local w = wanted[quest]
+        if not into[quest] and #w.accepts == 0 and eligible(quest) then
+            local needed = false
+            for _, index in ipairs(w.uses) do
+                needed = needed or open(index)
+            end
+            local from = needed and giver(quest)
+            if from and from.points then
+                waiting[#waiting + 1] = { quest = quest, from = from }
+            end
+        end
+    end
+    local grew = true
+    while grew do
+        grew = false
+        for n = #waiting, 1, -1 do
+            local w = waiting[n]
+            for _, place in ipairs(around) do
+                if near(w.from, place) then
+                    into[w.quest] = true
+                    into[#into + 1] = w.quest
+                    around[#around + 1] = w.from
+                    table.remove(waiting, n)
+                    grew = true
+                    break
+                end
+            end
+        end
+    end
+end
+
 ---------------------------------------------------------------------------
 -- What the tracker shows
 ---------------------------------------------------------------------------
@@ -716,6 +884,9 @@ local function addLines(lines, index, j, el, step)
     local text = el.text
     local dynamic = false
 
+    if kind == "turnin" and index > 0 and done and not tests.turnin(el) then
+        return -- a hand-in of a quest that was never accepted: nothing to show
+    end
     if kind == "accept" or kind == "turnin" or kind == "abandon" then
         if text and text:find("*quest*", 1, true) then
             local name = questName(firstQuest(el))
@@ -981,6 +1152,10 @@ function refresh()
             table.remove(shown, n)
         end
     end
+    -- And the quests later steps need whose giver the main step is near.
+    if main then
+        passing(steps[main], lack)
+    end
     table.sort(lack)
 
     local nav
@@ -1135,6 +1310,7 @@ function Engine:Start(key, restart)
     prog.hist = prog.hist or {}
     prog.declined = prog.declined or {}
     pickups = {}
+    buildWanted()
     Engine.guide = guide
     Engine:Refresh()
     return true

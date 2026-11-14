@@ -125,6 +125,28 @@ local function prerequisites(id)
     return need
 end
 
+-- Can the quest be accepted as far as what it needs first goes? True when
+-- QuestieDB is not there to say.
+function State.CanAccept(id)
+    local need = prerequisites(id)
+    if need.all then
+        for i = 1, #need.all do
+            if not QL.IsQuestFlaggedCompleted(need.all[i]) then
+                return false
+            end
+        end
+    end
+    if need.any then
+        for i = 1, #need.any do
+            if QL.IsQuestFlaggedCompleted(need.any[i]) then
+                return true
+            end
+        end
+        return false
+    end
+    return true
+end
+
 -- Is this a quest the guide should leave out: one the character never
 -- took and that is grey by now, or one that can only follow such a quest?
 -- A quest that is in the log is always carried through.
