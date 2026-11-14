@@ -206,6 +206,11 @@ SlashCmdList.FOREVERQUESTS = function(input)
 		end
 		return
 	end
+	local backdrop = input and input:match("^%s*backdrop%s*(.-)%s*$")
+	if backdrop then
+		ns.BackdropCommand(backdrop)
+		return
+	end
 	if not ns.ready then
 		ns.Print("not running: QuestieDB is missing or does not fit.")
 		return

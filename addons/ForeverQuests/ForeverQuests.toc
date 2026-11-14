@@ -1,9 +1,10 @@
 ## Interface: 16001
 ## Title: ForeverQuests
-## Notes: Quest log and tracking tweaks. Spawn dots for tracked quests on the map and minimap instead of the quest areas and in-progress icons. /fq
+## Notes: Quest log and tracking tweaks. Spawn dots for tracked quests on the map and minimap instead of the quest areas and in-progress icons. A soft dark backdrop behind the quest tracker. /fq
 ## Author: Pietjan
 ## Version: 1.0
 ## Dependencies: QuestieDB
+## SavedVariables: ForeverQuestsDB
 ## SavedVariablesPerCharacter: ForeverQuestsColors
 
 Data.lua
@@ -11,4 +12,5 @@ Dots.lua
 Areas.lua
 WorldMap.lua
 Minimap.lua
+Backdrop.lua
 Core.lua
