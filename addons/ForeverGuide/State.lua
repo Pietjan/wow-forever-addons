@@ -125,6 +125,11 @@ local function prerequisites(id)
     return need
 end
 
+-- What the quest needs first: { any = list or false, all = list or false }.
+function State.Needs(id)
+    return prerequisites(id)
+end
+
 -- Can the quest be accepted as far as what it needs first goes? True when
 -- QuestieDB is not there to say.
 function State.CanAccept(id)

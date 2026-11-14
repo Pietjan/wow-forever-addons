@@ -567,8 +567,9 @@ local function lacking(index, step, into)
     return any and only
 end
 
-local function accepts(el, quest)
-    if el.kind ~= "accept" then
+-- Is the element an accept (or, with kind "turnin", a hand-in) of the quest?
+local function about(el, kind, quest)
+    if el.kind ~= kind then
         return false
     end
     if el.quest == quest then
@@ -582,24 +583,26 @@ local function accepts(el, quest)
     return false
 end
 
--- Per guide: quest -> the step that accepts it.
-local givers = {}
+-- Per guide: quest -> the step that accepts it, and the step that hands
+-- it in.
+local sources = {}
 
-local function indexGivers(list)
-    local out = {}
-    local function put(quest, step)
-        if not out[quest] or (step.points and not out[quest].points) then
-            out[quest] = step
+local function indexSources(list)
+    local out = { accept = {}, turnin = {} }
+    local function put(into, quest, step)
+        if not into[quest] or (step.points and not into[quest].points) then
+            into[quest] = step
         end
     end
     for _, step in ipairs(list) do
         for _, el in ipairs(step.elements) do
-            if el.kind == "accept" then
+            local into = out[el.kind]
+            if into then
                 if el.quest then
-                    put(el.quest, step)
+                    put(into, el.quest, step)
                 end
                 for _, quest in ipairs(el.quests or {}) do
-                    put(quest, step)
+                    put(into, quest, step)
                 end
             end
         end
@@ -607,54 +610,68 @@ local function indexGivers(list)
     return out
 end
 
-local function giver(quest)
-    local own = givers[guide.key]
+-- The step, in this guide or another of its series, that accepts
+-- ("accept") or hands in ("turnin") the quest.
+local function source(kind, quest)
+    local own = sources[guide.key]
     if not own then
-        own = indexGivers(steps)
-        givers[guide.key] = own
+        own = indexSources(steps)
+        sources[guide.key] = own
     end
-    if own[quest] then
-        return own[quest]
+    if own[kind][quest] then
+        return own[kind][quest]
     end
     for _, other in ipairs(Registry.list) do
         if other ~= guide and other.format == guide.format and other.group == guide.group then
-            local known = givers[other.key]
+            local known = sources[other.key]
             if not known then
                 local ok, parsed = pcall(parse, other)
-                known = ok and type(parsed) == "table" and indexGivers(parsed) or {}
-                givers[other.key] = known
+                known = ok and type(parsed) == "table" and indexSources(parsed) or { accept = {}, turnin = {} }
+                sources[other.key] = known
             end
-            if known[quest] then
-                return known[quest]
+            if known[kind][quest] then
+                return known[kind][quest]
             end
         end
     end
     return nil
 end
 
-local pickups = {}
+local function giver(quest)
+    return source("accept", quest)
+end
 
-local function pickupStep(quest)
-    local step = pickups[quest]
+-- A step of our own for one quest, made from the step that accepts it or
+-- hands it in: where it is, who to talk to, what the guide says there, and
+-- that one accept or hand-in.
+local borrowed = { accept = {}, turnin = {} }
+local OWN = { accept = "Accept *quest*", turnin = "Turn in *quest*" }
+
+local function borrow(kind, quest)
+    local step = borrowed[kind][quest]
     if not step then
         step = { elements = {}, pickup = quest }
-        local from = giver(quest)
-        local accept
+        local from = source(kind, quest)
+        local own
         if from then
             step.points, step.loop, step.targets = from.points, from.loop, from.targets
             step.title, step.titleIsObjective = from.title, from.titleIsObjective
             for _, el in ipairs(from.elements) do
                 if el.kind == "text" and not el.obj then
                     step.elements[#step.elements + 1] = el
-                elseif not accept and accepts(el, quest) then
-                    accept = el
+                elseif not own and about(el, kind, quest) then
+                    own = el
                 end
             end
         end
-        step.elements[#step.elements + 1] = accept or { kind = "accept", obj = true, quest = quest, text = "Accept *quest*" }
-        pickups[quest] = step
+        step.elements[#step.elements + 1] = own or { kind = kind, obj = true, quest = quest, text = OWN[kind] }
+        borrowed[kind][quest] = step
     end
     return step
+end
+
+local function pickupStep(quest)
+    return borrow("accept", quest)
 end
 
 -- Is any point of the one step within NEAR yards of a point of the other?
@@ -737,7 +754,7 @@ local function buildWanted()
     local function entry(quest)
         local w = wanted[quest]
         if not w then
-            w = { uses = {}, accepts = {} }
+            w = { uses = {}, accepts = {}, turnins = {} }
             wanted[quest] = w
             wantedList[#wantedList + 1] = quest
         end
@@ -748,13 +765,18 @@ local function buildWanted()
             local list = el.kind == "accept" and "accepts"
                 or ((el.kind == "turnin" or el.kind == "complete") and el.obj and not el.ifOnQuest and "uses")
             if list then
+                local function note(quest)
+                    local w = entry(quest)
+                    w[list][#w[list] + 1] = index
+                    if el.kind == "turnin" then
+                        w.turnins[#w.turnins + 1] = index
+                    end
+                end
                 if el.quest then
-                    local at = entry(el.quest)[list]
-                    at[#at + 1] = index
+                    note(el.quest)
                 end
                 for _, quest in ipairs(el.quests or {}) do
-                    local at = entry(quest)[list]
-                    at[#at + 1] = index
+                    note(quest)
                 end
             end
         end
@@ -765,31 +787,110 @@ local function open(index)
     return not prog.done[index] and not skipped(steps[index])
 end
 
--- Adds to `into` the quests that steps still to come need, that this
--- guide has no step to accept (for this character: another guide of the
--- series does it), and whose giver is near step `at` or near the giver of
--- a quest that is offered already: the whole village, not only the corner
--- of it the step happens to be at. A quest the guide does have an accept
--- step for is left to that step, also when it was passed over.
-local function passing(at, into)
+-- Block ids: a pickup is minus its quest, a borrowed hand-in is that
+-- minus HANDIN. prog.declined uses the same numbers, positive.
+local HANDIN = 1000000
+
+local function anyOpen(list)
+    for _, index in ipairs(list or {}) do
+        if open(index) then
+            return true
+        end
+    end
+    return false
+end
+
+-- A quest that cannot be accepted yet: adds what has to happen first to
+-- `accepts` (quests to pick up) and `handins` (quests in the log to hand
+-- in), following the prerequisites back. Only what this guide has no step
+-- of its own for: the rest it gets to by itself.
+local function chain(quest, accepts, handins, depth)
+    if depth > 4 then
+        return
+    end
+    local need = State.Needs(quest)
+    local first = {}
+    for _, other in ipairs(need.all or {}) do
+        if not State.TurnedIn(other) then
+            first[#first + 1] = other
+        end
+    end
+    if need.any then
+        local done, pick = false, nil
+        for _, other in ipairs(need.any) do
+            done = done or State.TurnedIn(other)
+            -- One of them is enough: the one in the log, else one a guide accepts.
+            if State.OnQuest(other) then
+                pick = other
+            elseif not pick and giver(other) then
+                pick = other
+            end
+        end
+        if not done then
+            first[#first + 1] = pick or need.any[1]
+        end
+    end
+    for _, other in ipairs(first) do
+        local w = wanted[other]
+        if State.OnQuest(other) then
+            if not (w and anyOpen(w.turnins)) and not prog.declined[HANDIN + other] then
+                handins[#handins + 1] = other
+            end
+        elseif not (w and #w.accepts > 0) and not State.Passed(other) and not prog.declined[other] then
+            if State.CanAccept(other) then
+                accepts[#accepts + 1] = other
+            else
+                chain(other, accepts, handins, depth + 1)
+            end
+        end
+    end
+end
+
+-- Adds to `into` the quests to pick up, and to `hand` the quests to hand
+-- in, that steps still to come need and this guide has no step for (for
+-- this character: another guide of the series has it), when the giver is
+-- near step `at`, near the character, or near the giver of a quest that is
+-- offered already: the whole village, not only the corner of it the step
+-- happens to be at. A needed quest that cannot be accepted yet brings what
+-- it needs first (chain). A quest the guide does have an accept step for
+-- is left to that step, also when it was passed over.
+local function passing(at, into, hand)
     local around = { at }
     around[#around + 1] = standing() -- nothing when the position is unknown
     for _, quest in ipairs(into) do
         around[#around + 1] = giver(quest)
     end
-    local waiting = {}
+    local waiting, seen = {}, {}
+    local function wait(kind, quest)
+        local key = kind .. quest
+        local list = kind == "accept" and into or hand
+        local from = not seen[key] and not list[quest] and source(kind, quest)
+        seen[key] = true
+        if from and from.points then
+            waiting[#waiting + 1] = { kind = kind, quest = quest, from = from, list = list }
+        end
+    end
+    local accepts, handins = {}, {}
     for _, quest in ipairs(wantedList) do
         local w = wanted[quest]
-        if not into[quest] and #w.accepts == 0 and eligible(quest) then
-            local needed = false
-            for _, index in ipairs(w.uses) do
-                needed = needed or open(index)
-            end
-            local from = needed and giver(quest)
-            if from and from.points then
-                waiting[#waiting + 1] = { quest = quest, from = from }
+        if not State.Accepted(quest) and not State.Passed(quest) and not prog.declined[quest] then
+            if #w.accepts == 0 and anyOpen(w.uses) then
+                if State.CanAccept(quest) then
+                    accepts[#accepts + 1] = quest
+                else
+                    chain(quest, accepts, handins, 1)
+                end
+            elseif anyOpen(w.accepts) and not State.CanAccept(quest) then
+                -- A step of the guide is to accept it, and what it needs first is missing.
+                chain(quest, accepts, handins, 1)
             end
         end
+    end
+    for _, quest in ipairs(accepts) do
+        wait("accept", quest)
+    end
+    for _, quest in ipairs(handins) do
+        wait("turnin", quest)
     end
     local grew = true
     while grew do
@@ -798,8 +899,8 @@ local function passing(at, into)
             local w = waiting[n]
             for _, place in ipairs(around) do
                 if near(w.from, place) then
-                    into[w.quest] = true
-                    into[#into + 1] = w.quest
+                    w.list[w.quest] = true
+                    w.list[#w.list + 1] = w.quest
                     around[#around + 1] = w.from
                     table.remove(waiting, n)
                     grew = true
@@ -1006,6 +1107,7 @@ local function emptyView(titleText, line)
     Engine.quests = {}
     Engine.arrivals = {}
     Engine.pickups = {}
+    Engine.handins = {}
 end
 
 local refreshing = false
@@ -1153,10 +1255,13 @@ function refresh()
         end
     end
     -- And the quests later steps need whose giver the main step is near.
+    -- With the quests in the log that have to be handed in on the way.
+    local hand = {}
     if main then
-        passing(steps[main], lack)
+        passing(steps[main], lack, hand)
     end
     table.sort(lack)
+    table.sort(hand)
 
     local nav
     for _, quest in ipairs(lack) do
@@ -1165,6 +1270,15 @@ function refresh()
         view.blocks[#view.blocks + 1] = block
         if step.points and not nav then
             nav = { points = step.points, loop = step.loop, step = -quest, title = block.title }
+        end
+    end
+    for _, quest in ipairs(hand) do
+        local step = borrow("turnin", quest)
+        local block = buildBlock(-(HANDIN + quest), false, step)
+        view.blocks[#view.blocks + 1] = block
+        quests[quest] = true
+        if step.points and not nav then
+            nav = { points = step.points, loop = step.loop, step = -(HANDIN + quest), title = block.title }
         end
     end
     local detour = nav ~= nil
@@ -1203,6 +1317,7 @@ function refresh()
     Engine.quests = quests
     Engine.arrivals = arrivals
     Engine.pickups = lack
+    Engine.handins = hand
     refreshing = false
 
     -- Tell the others only when something they show has changed.
@@ -1309,7 +1424,7 @@ function Engine:Start(key, restart)
     end
     prog.hist = prog.hist or {}
     prog.declined = prog.declined or {}
-    pickups = {}
+    borrowed = { accept = {}, turnin = {} }
     buildWanted()
     Engine.guide = guide
     Engine:Refresh()
@@ -1376,6 +1491,9 @@ function Engine:Wants(kind, quest)
         return false
     end
     if kind == "accept" and Engine.pickups and Engine.pickups[quest] then
+        return true
+    end
+    if kind == "turnin" and Engine.handins and Engine.handins[quest] then
         return true
     end
     for _, index in ipairs(Engine.shown or {}) do
