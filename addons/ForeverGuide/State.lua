@@ -269,9 +269,37 @@ local SKILL_NAMES = {
     engineering = "Engineering", leatherworking = "Leatherworking", tailoring = "Tailoring",
 }
 
+-- Their skill lines in the game's tables (SkillLine); a profession can also
+-- have a line of its own under that one, so both are looked at.
+local SKILL_IDS = {
+    riding = 762, firstaid = 129, cooking = 185, fishing = 356, mining = 186, herbalism = 182,
+    skinning = 393, alchemy = 171, blacksmithing = 164, enchanting = 333, engineering = 202,
+    leatherworking = 165, tailoring = 197,
+}
+
 -- Returns nil when the rank cannot be read on this client.
 function State.Skill(name)
-    local wanted = (SKILL_NAMES[name:lower():gsub("%s", "")] or name):lower()
+    local key = name:lower():gsub("%s", "")
+    local wanted = (SKILL_NAMES[key] or name):lower()
+    local id = SKILL_IDS[key]
+    local info = C_SkillInfo
+    if info and info.GetNumSkillLines and info.GetSkillLineInfo then
+        local best = 0
+        local function look(line)
+            if type(line) == "table" and not line.isHeader and type(line.rank) == "number"
+                and ((id and (line.skillID == id or line.parentSkillLineID == id))
+                    or (type(line.name) == "string" and line.name:lower() == wanted)) then
+                best = math.max(best, line.rank)
+            end
+        end
+        if id and info.GetSkillLineInfoByID then
+            look(info.GetSkillLineInfoByID(id)) -- also found under a folded header
+        end
+        for i = 1, info.GetNumSkillLines() do
+            look(info.GetSkillLineInfo(i))
+        end
+        return best
+    end
     if GetNumSkillLines and GetSkillLineInfo then
         for i = 1, GetNumSkillLines() do
             local skillName, isHeader, _, rank = GetSkillLineInfo(i)

@@ -394,8 +394,13 @@ function commands.skill(step, text, name, value, skip)
     level = tonumber(level)
     if level and name and tonumber(skip) then
         cond(step, { kind = "skill", skill = name, level = level, below = op == "<" })
+        note(step, text)
+    elseif level and name then
+        -- Without the skip flag it is something to do: reach that rank.
+        add(step, { kind = "skill", obj = true, skill = name, level = level, below = op == "<", text = text })
+    else
+        note(step, text)
     end
-    note(step, text)
 end
 
 function commands.bindlocation(step, text, area, flags)

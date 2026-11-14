@@ -142,6 +142,14 @@ function tests.train(el)
     return State.KnowsSpell(el.spell) == el.known
 end
 
+function tests.skill(el)
+    local rank = State.Skill(el.skill)
+    if not rank then
+        return false -- cannot be read on this client: left to the player
+    end
+    return (rank >= el.level) == not el.below
+end
+
 function tests.zone(el)
     return C_Map.GetBestMapForUnit("player") == el.map
 end
@@ -920,7 +928,7 @@ local LABELS = {
     manual = "Guide", abandon = "Abandon quest", destroy = "Clean up", equip = "Equip", aura = "Buff",
     fly = "Flight master", fp = "Flight path", hearth = "Hearthstone", bind = "Innkeeper",
     vendor = "Vendor", trainer = "Trainer", stable = "Stable master", bank = "Bank",
-    death = "Spirit healer", cast = "Cast",
+    death = "Spirit healer", cast = "Cast", skill = "Skill",
 }
 local NAMED = { accept = true, turnin = true, fly = true, fp = true, bind = true, vendor = true,
     trainer = true, stable = true, bank = true, train = true }
@@ -1045,6 +1053,10 @@ local function addLines(lines, index, j, el, step)
                 text = ("Get within %d experience of level %d"):format(-el.xp, el.level)
             end
             dynamic = true
+        end
+    elseif kind == "skill" then
+        if not text then
+            text = ("Get %s %s %d"):format(el.skill, el.below and "below" or "to", el.level)
         end
     elseif kind == "train" then
         if not text then
