@@ -13,6 +13,8 @@
 -- class line, the faction line and the "(Player)" after the race, and
 -- its guild line is green. Every other line under a unit's name (level,
 -- type, faction and the like) is dimmed, so the name is what you see first.
+-- The level number keeps a colour: the one the nameplate gives it for how
+-- that level compares with yours.
 -- A unit flagged for PvP shows its faction crest at the right of its
 -- name instead of a "PvP" line of its own.
 -- Item and spell tooltips show their ID while Alt is held.
@@ -91,6 +93,76 @@ local function Coloured(text, class)
 		return text
 	end
 	return ("|cff%02x%02x%02x%s|r"):format(colour.r * 255, colour.g * 255, colour.b * 255, text)
+end
+
+-- The colour of a level against yours, by the rule and in the colours of
+-- Forever's own nameplates (NameplateLevelFrameMixin:GetDifficultyColor in
+-- Blizzard_NamePlates/Camelot). The game's GetCreatureDifficultyColor is the
+-- retail rule: it calls four levels below you yellow where the nameplate
+-- shows green.
+local DIFFICULTY = {
+	TRIVIAL = { r = 0.5, g = 0.5, b = 0.5 },
+	EASY = { r = 0.25, g = 0.75, b = 0.25 },
+	FAIR = { r = 1, g = 0.82, b = 0 },
+	DIFFICULT = { r = 1, g = 0.5, b = 0.25 },
+	IMPOSSIBLE = { r = 1, g = 0.1, b = 0.1 },
+}
+
+local function DifficultyColour(key)
+	local colour = _G[key .. "_DIFFICULTY_COLOR"] -- the game's own, when it has them
+	if type(colour) == "table" and type(colour.r) == "number" then
+		return colour
+	end
+	return DIFFICULTY[key]
+end
+
+-- level: the unit's, or nil for one too far above yours to be shown ("??").
+local function LevelColour(level)
+	if not level then
+		return DifficultyColour("IMPOSSIBLE")
+	end
+	local mine = (UnitEffectiveLevel or UnitLevel)("player")
+	if type(mine) ~= "number" or Secret(mine) then
+		return nil
+	end
+	local difference = level - mine
+	local trivial = C_QuestLog and C_QuestLog.GetTrivialRange and C_QuestLog.GetTrivialRange()
+	if type(trivial) == "number" and not Secret(trivial) and difference < -trivial then
+		return DifficultyColour("TRIVIAL")
+	elseif difference <= -3 then
+		return DifficultyColour("EASY")
+	elseif difference <= 2 then
+		return DifficultyColour("FAIR")
+	elseif difference <= 4 then
+		return DifficultyColour("DIFFICULT")
+	end
+	return DifficultyColour("IMPOSSIBLE")
+end
+
+-- The level line with its number in that colour. nil when the level is not
+-- known or is not in the text.
+local function LevelColoured(text, unit)
+	if not UnitLevel then
+		return nil
+	end
+	local level = UnitLevel(unit)
+	if type(level) ~= "number" or Secret(level) then
+		return nil
+	end
+	local colour, from, to
+	if level > 0 then
+		colour = LevelColour(level)
+		from, to = text:find("%f[%d]" .. level .. "%f[%D]")
+	else
+		colour = LevelColour(nil)
+		from, to = text:find("??", 1, true)
+	end
+	if not (colour and from) then
+		return nil
+	end
+	return text:sub(1, from - 1)
+		.. ("|cff%02x%02x%02x%s|r"):format(colour.r * 255, colour.g * 255, colour.b * 255, text:sub(from, to))
+		.. text:sub(to + 1)
 end
 
 ---------------------------------------------------------------------------
@@ -284,7 +356,11 @@ local function Trim(lines, unit, into)
 		into[kind] = {}
 		levelText = levelText .. " " .. creature
 	end
-	if level and (isPlayer or kind) then
+	local coloured = level and LevelColoured(levelText, unit)
+	if coloured then
+		levelText = coloured
+	end
+	if level and (isPlayer or kind or coloured) then
 		into[level] = { { left = levelText, leftColour = DIM } }
 	end
 	-- The crest goes on the name line, which the game has not drawn yet:
