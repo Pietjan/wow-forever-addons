@@ -8,7 +8,8 @@ version from its .toc, whether that version is released from the git tags
 (<Addon>-v<version>, made by `make release/<addon>`), its picture from the
 committed files in docs/mockups, and "needs extra files" from .gitignore.
 The page is plain HTML with one stylesheet (docs/site.css), served by GitHub
-Pages from docs/. Run it again after a release and commit the result.
+Pages from docs/. Each addon is one row, with its lower-case name as the
+row's id, so index.html#compacttip links straight to it. Run it again after a release and commit the result.
 """
 import html
 import subprocess
@@ -58,12 +59,16 @@ def addons(repo):
     return found
 
 
-def card(addon, repo):
+def anchor(name):
+    """The id of an addon's row: its name in lower case, as in index.html#foreversparkles."""
+    return name.lower()
+
+
+def row(addon, repo):
     e = html.escape
-    parts = ['<article class="addon">']
-    if addon["picture"]:
-        parts.append(f'<img src="{e(addon["picture"])}" alt="{e(addon["name"])} mock-up" loading="lazy">')
-    parts.append(f'<h2>{e(addon["name"])} <span class="version">{e(addon["version"])}</span></h2>')
+    parts = [f'<article class="addon" id="{e(anchor(addon["name"]))}">', '<div class="text">']
+    parts.append(f'<h2><a href="#{e(anchor(addon["name"]))}">{e(addon["name"])}</a> '
+                 f'<span class="version">{e(addon["version"])}</span></h2>')
     parts.append(f'<p>{e(addon["notes"])}</p>')
     if addon["extra"]:
         parts.append(f'<p class="note">Needs files that are not in the download; see the '
@@ -73,13 +78,16 @@ def card(addon, repo):
                      f'<a href="{e(addon["release"])}">Release notes</a></p>')
     else:
         parts.append('<p class="links note">This version is not released yet.</p>')
+    parts.append("</div>")
+    if addon["picture"]:
+        parts.append(f'<img src="{e(addon["picture"])}" alt="{e(addon["name"])} mock-up" loading="lazy">')
     parts.append("</article>")
     return "\n".join(parts)
 
 
 def page(repo, found):
     e = html.escape
-    cards = "\n".join(card(addon, repo) for addon in found)
+    rows = "\n".join(row(addon, repo) for addon in found)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -95,7 +103,7 @@ def page(repo, found):
 <p><strong>To install:</strong> unzip into the game's <code>Interface/AddOns</code> folder, so that it holds a folder with the addon's name, then <code>/reload</code> or restart the game.</p>
 </header>
 <main>
-{cards}
+{rows}
 </main>
 <footer>
 <p>The pictures are mock-ups, not screenshots. Source, issues and older versions: <a href="https://github.com/{e(repo)}">github.com/{e(repo)}</a>.</p>
