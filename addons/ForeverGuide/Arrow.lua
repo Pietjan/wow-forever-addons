@@ -1,5 +1,6 @@
 -- Arrow.lua: the direction arrow. It is the game's own gold quest arrow
--- (the one on the minimap edge), turned towards the current goal, with the
+-- (the one on the minimap edge; its red twin for the corpse), turned
+-- towards the current goal, with the
 -- distance under it in the tracker's font. What the goal is stands in the
 -- tracker already (and in the arrow's tooltip).
 local _, ns = ...
@@ -8,6 +9,7 @@ local Maps = ns.Maps
 local Nav = ns.Nav
 
 local ARROW = "minimap-questarrow"
+local CORPSE = "minimap-deadarrow" -- the same arrow in red
 local HERE = "Waypoint-MapPin-Tracked"
 local ELSEWHERE = "Waypoint-MapPin-Untracked"
 
@@ -57,7 +59,7 @@ local function draw()
     if distance <= math.max(8, math.min(target.radius or 8, 15)) then
         setAtlas(HERE, 34)
     else
-        setAtlas(ARROW, 48)
+        setAtlas(target.corpse and CORPSE or ARROW, 48)
         arrow:SetRotation(bearing - facing)
     end
     detail:SetFormattedText("%d yd", distance)
@@ -133,7 +135,9 @@ end)
 frame:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_BOTTOM", 0, -18)
     local own = Nav.waypoint
-    if own then
+    if Nav.target and Nav.target.corpse then
+        GameTooltip:SetText("Your corpse")
+    elseif own then
         GameTooltip:SetText(("Waypoint %.1f, %.1f"):format(own.x, own.y))
         GameTooltip:AddLine("/way clear to remove it.", 1, 1, 1)
     else

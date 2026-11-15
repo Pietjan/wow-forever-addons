@@ -152,6 +152,44 @@ function Nav:ClearWaypoint()
     return true
 end
 
+---------------------------------------------------------------------------
+-- The corpse: while the player is a ghost the arrow goes there, before the
+-- waypoint and the guide. The map pin stays where it was.
+---------------------------------------------------------------------------
+local corpse
+
+local function corpsePoint()
+    if not UnitIsGhost("player") then
+        corpse = nil
+        return nil
+    end
+    if corpse then
+        return corpse
+    end
+    -- The corpse may lie in another zone than the graveyard: ask for it on
+    -- the player's map, then on the maps above it.
+    local map = C_Map.GetBestMapForUnit("player")
+    for _ = 1, 4 do
+        if not map or map == 0 then
+            break
+        end
+        local pos = C_DeathInfo.GetCorpseMapPosition(map)
+        if pos then
+            local x, y = pos:GetXY()
+            local p = { map = map, x = x * 100, y = y * 100, radius = 8, corpse = true }
+            if Maps.Resolve(p) then
+                corpse = p
+                return p
+            end
+        end
+        local info = C_Map.GetMapInfo(map)
+        map = info and info.parentMapID
+    end
+    return nil
+end
+
+local goal -- what the pin follows: the waypoint or the guide's point
+
 function Nav:Update()
     if not ns.db then
         return
@@ -173,14 +211,14 @@ function Nav:Update()
         end
     end
 
-    local target = Nav.waypoint or choose(inst, px, py)
-    if target ~= Nav.target then
-        Nav.target = target
+    local now = Nav.waypoint or choose(inst, px, py)
+    if now ~= goal then
+        goal = now
         -- The pin goes on a real destination, not on a point along a route:
         -- the first place the step names that may carry one. A place the
         -- arrow is not meant to point at still counts; on a step with a
         -- patrol route it is where the map should show the goal.
-        local pin = target
+        local pin = now
         if pin and pin.noPin then
             pin = nil
             for _, p in ipairs(points or {}) do
@@ -191,6 +229,11 @@ function Nav:Update()
             end
         end
         setPin(pin)
+    end
+
+    local target = corpsePoint() or now
+    if target ~= Nav.target then
+        Nav.target = target
         ns.Fire("Target", target)
     end
     syncPin()
@@ -215,7 +258,7 @@ ns.Listen("Setting", function(key)
     if key == "pin" then
         if ns.db.pin then
             pinned = nil
-            Nav.target = nil
+            goal = nil
             Nav:Update()
         else
             setPin(nil)
