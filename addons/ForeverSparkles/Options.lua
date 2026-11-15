@@ -5,6 +5,40 @@
 
 local _, ns = ...
 
+-- Where the preview sits: its middle, from the top right corner of the part
+-- of the options window that holds the settings. That is under the Defaults
+-- button, beside the sliders.
+local PREVIEW_X, PREVIEW_Y = -95, -135
+
+-- The sparkle of the page that is open, drawn in the options window itself.
+-- The addon's own frame, a child of the window so it shows and hides with
+-- it; it only asks the window which page is open.
+local function Preview(kindOfPage)
+	local window = SettingsPanel
+	if not (window and window.Container and window.GetCurrentCategory) then
+		return
+	end
+	local state = { glints = {}, fade = 0, usable = true }
+	local frame = CreateFrame("Frame", nil, window)
+	frame:SetSize(1, 1)
+	frame:SetPoint("CENTER", window.Container, "TOPRIGHT", PREVIEW_X, PREVIEW_Y)
+	frame:SetFrameLevel((window:GetFrameLevel() or 0) + 50)
+	frame:SetScript("OnUpdate", function(self, elapsed)
+		local ok, page = pcall(window.GetCurrentCategory, window)
+		local kind = ok and page and kindOfPage[page] or nil
+		if kind ~= state.category then
+			state.category, state.fade = kind, 0
+			for _, glint in ipairs(state.glints) do
+				glint.span = nil
+				glint.texture:Hide()
+			end
+		end
+		if kind then
+			ns.Draw(state, self, elapsed)
+		end
+	end)
+end
+
 function ns.RegisterSettings()
 	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterVerticalLayoutSubcategory
 		and Settings.RegisterProxySetting and Settings.CreateCheckbox and Settings.CreateSlider and Settings.CreateDropdown) then
@@ -69,9 +103,12 @@ function ns.RegisterSettings()
 
 	-- One page per kind ----------------------------------------------------
 
+	local kindOfPage = {} -- settings page -> kind
+
 	for _, kind in ipairs(ns.ORDER) do
 		local look, defaults = db.categories[kind], ns.CATEGORY_DEFAULTS[kind]
 		local page = Settings.RegisterVerticalLayoutSubcategory(category, ns.TITLE[kind])
+		kindOfPage[page] = kind
 		local function id(key) return kind .. "_" .. key end
 
 		Checkbox(page, id("enabled"), "Sparkle", nil, look, "enabled", defaults.enabled, ns.Sync)
@@ -99,4 +136,5 @@ function ns.RegisterSettings()
 	end
 
 	Settings.RegisterAddOnCategory(category)
+	Preview(kindOfPage)
 end

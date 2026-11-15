@@ -276,23 +276,21 @@ local function Reseed(glint, look, staggered)
 	glint.age = staggered and -random() * glint.span or 0
 end
 
-local function Animate(frame, elapsed)
-	local look = db.categories[sparkle.category]
+-- One frame of a cluster of glints around the middle of `frame`.
+-- state: { glints = {}, fade = 0..1, category = kind, usable = bool }; the
+-- sparkle on a nameplate is one, the preview in the options window another.
+local function Draw(state, frame, elapsed)
+	local look = db.categories[state.category]
 	if not look then
 		return
 	end
 	if elapsed > 0.1 then
 		elapsed = 0.1 -- a hitch should not skip a glint's whole life
 	end
-	if sparkle.height ~= look.height then
-		sparkle.height = look.height
-		frame:ClearAllPoints()
-		frame:SetPoint("CENTER", sparkle.plate, "CENTER", 0, look.height)
-	end
-	sparkle.fade = math.min(1, sparkle.fade + elapsed / FADE_IN)
-	local level = look.brightness * sparkle.fade * (sparkle.usable and 1 or look.unusable)
+	state.fade = math.min(1, state.fade + elapsed / FADE_IN)
+	local level = look.brightness * state.fade * (state.usable and 1 or look.unusable)
 	local r, g, b = Color(look.color)
-	local glints = sparkle.glints
+	local glints = state.glints
 	for i = 1, math.max(look.count, #glints) do
 		local glint = glints[i]
 		if not glint then
@@ -329,6 +327,20 @@ local function Animate(frame, elapsed)
 			end
 		end
 	end
+end
+ns.Draw = Draw
+
+local function Animate(frame, elapsed)
+	local look = db.categories[sparkle.category]
+	if not look then
+		return
+	end
+	if sparkle.height ~= look.height then
+		sparkle.height = look.height
+		frame:ClearAllPoints()
+		frame:SetPoint("CENTER", sparkle.plate, "CENTER", 0, look.height)
+	end
+	Draw(sparkle, frame, elapsed)
 end
 
 local function Detach()
