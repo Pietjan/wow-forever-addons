@@ -44,17 +44,22 @@ ns.DEFAULTS = {
 -- height    from the nameplate to the middle of the cluster (pixels, up is positive)
 -- drift     pixels a second a glint floats up
 -- unusable  brightness left when the game shows its greyed-out cursor
-local function Look(color, size, spread, count)
+-- Every kind starts out the same; its page is where it is made to differ.
+local function Look()
 	return {
-		enabled = true, color = color, size = size, spread = spread, count = count,
+		enabled = true, color = "ffffdc5e", size = 34, spread = 46, count = 7,
 		brightness = 1, speed = 1, life = 1, height = -40, drift = 10, unusable = 0.4,
 	}
 end
-ns.CATEGORY_DEFAULTS = {
-	herb = Look("ff9dff7a", 50, 70, 14),
-	ore = Look("ffffc070", 50, 70, 14),
-	quest = Look("ffffe14d", 34, 46, 7),
-	corpse = Look("fffff0b0", 34, 46, 7),
+ns.CATEGORY_DEFAULTS = { herb = Look(), ore = Look(), quest = Look(), corpse = Look() }
+
+-- Version 1 gave each kind a colour of its own, and herbs and ore a bigger
+-- look. What was never changed from those moves to the shared defaults.
+local VERSION_1_DEFAULTS = {
+	herb = { color = "ff9dff7a", size = 50, spread = 70, count = 14 },
+	ore = { color = "ffffc070", size = 50, spread = 70, count = 14 },
+	quest = { color = "ffffe14d" },
+	corpse = { color = "fffff0b0" },
 }
 
 local db
@@ -562,7 +567,16 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 			db.categories[category] = db.categories[category] or {}
 			Fill(db.categories[category], defaults)
 		end
-		db.version = 1
+		if db.version == 1 then
+			for category, was in pairs(VERSION_1_DEFAULTS) do
+				for key, value in pairs(was) do
+					if db.categories[category][key] == value then
+						db.categories[category][key] = ns.CATEGORY_DEFAULTS[category][key]
+					end
+				end
+			end
+		end
+		db.version = 2
 		SLASH_FOREVERSPARKLES1 = "/fsparkles"
 		SlashCmdList.FOREVERSPARKLES = Command
 		local ok, err = pcall(ns.RegisterSettings)
