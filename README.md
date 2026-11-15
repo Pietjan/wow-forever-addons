@@ -15,6 +15,7 @@ Downloads, one zip per addon: https://pietjan.github.io/wow-forever-addons/
 | ForeverChat | The default chat in Forever's own style, with short channel names and one chat setup shared by all your characters. /fchat |
 | ForeverGuide | Leveling guides under the quest tracker. Reads RestedXP and WoW-Pro guides, tracks the quests of the current step, points an arrow and sets the map pin. /fg |
 | ForeverQuests | Quest log and tracking tweaks. Spawn dots for tracked quests on the map and minimap instead of the quest areas and in-progress icons. /fq |
+| ForeverSparkles | A sparkle over herbs, ore veins, quest objects and corpses with loot as you come near. Each kind has its own page of sliders: glint size, spread, number of glints, brightness, colour, pace, lifetime, height and drift. Can also keep the game's own loot sparkle on. /fsparkles |
 | LootRolls | Movable group loot roll bars in the XLoot layout: icon, timer bar with the item name, Need/Greed/Pass with how many chose each and who (hover). /lootrolls |
 | NameOnly | Friendly player nameplates show just the name: your font, size and position. /nameonly |
 | NodeSkill | Colours a herb or ore node's name on the minimap tooltip red when your skill is too low to gather it. |
