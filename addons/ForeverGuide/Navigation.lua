@@ -120,11 +120,51 @@ local function choose(inst, px, py)
     return best or low or lastRoute
 end
 
+---------------------------------------------------------------------------
+-- The player's own waypoint (/way): while it is set the arrow and the pin
+-- go there instead of to the guide's goal. It is dropped on arrival.
+---------------------------------------------------------------------------
+local ARRIVED = 10 -- yards
+
+-- x, y are zone coordinates (0..100) on `map` (a uiMapID), or on the map
+-- the player is on when none is given. Returns the point, or nil when the
+-- map is unknown or the place cannot be resolved.
+function Nav:SetWaypoint(x, y, map)
+    map = map or C_Map.GetBestMapForUnit("player")
+    if not map then
+        return nil
+    end
+    local p = { map = map, x = x, y = y, radius = ARRIVED }
+    if not Maps.Resolve(p) then
+        return nil
+    end
+    Nav.waypoint = p
+    Nav:Update()
+    return p
+end
+
+function Nav:ClearWaypoint()
+    if not Nav.waypoint then
+        return false
+    end
+    Nav.waypoint = nil
+    Nav:Update()
+    return true
+end
+
 function Nav:Update()
     if not ns.db then
         return
     end
     local inst, px, py = Maps.Player()
+
+    if Nav.waypoint then
+        local distance = Maps.Distance(Nav.waypoint, inst, px, py)
+        if distance and distance <= ARRIVED then
+            Nav.waypoint = nil
+            ns.Print("waypoint reached.")
+        end
+    end
 
     for _, arrival in ipairs(Engine.arrivals) do
         local distance = Maps.Distance(arrival.point, inst, px, py)
@@ -133,7 +173,7 @@ function Nav:Update()
         end
     end
 
-    local target = choose(inst, px, py)
+    local target = Nav.waypoint or choose(inst, px, py)
     if target ~= Nav.target then
         Nav.target = target
         -- The pin goes on a real destination, not on a point along a route:
@@ -143,7 +183,7 @@ function Nav:Update()
         local pin = target
         if pin and pin.noPin then
             pin = nil
-            for _, p in ipairs(points) do
+            for _, p in ipairs(points or {}) do
                 if not p.noPin then
                     pin = p
                     break

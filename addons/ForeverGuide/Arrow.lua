@@ -132,7 +132,13 @@ frame:SetScript("OnMouseUp", function(self, button)
 end)
 frame:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_BOTTOM", 0, -18)
-    GameTooltip:SetText(Nav.title or "Guide")
+    local own = Nav.waypoint
+    if own then
+        GameTooltip:SetText(("Waypoint %.1f, %.1f"):format(own.x, own.y))
+        GameTooltip:AddLine("/way clear to remove it.", 1, 1, 1)
+    else
+        GameTooltip:SetText(Nav.title or "Guide")
+    end
     GameTooltip:AddLine("Drag to move. Right-click for guide options.", 1, 1, 1)
     GameTooltip:Show()
 end)

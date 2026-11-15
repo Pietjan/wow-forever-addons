@@ -198,3 +198,37 @@ SlashCmdList.FOREVERGUIDE = function(message)
         Menu.Open(UIParent)
     end
 end
+
+-- /way 41.4, 33.6 points the arrow (and the map pin) at a place on the
+-- map the player is on, /way The Barrens 41.4, 33.6 at a place in another
+-- zone; /way clear gives the arrow back to the guide.
+SLASH_FOREVERGUIDEWAY1 = "/way"
+SlashCmdList.FOREVERGUIDEWAY = function(message)
+    message = message or ""
+    if message:lower():match("^%s*clear%s*$") then
+        if not ns.Nav:ClearWaypoint() then
+            ns.Print("no waypoint set.")
+        end
+        return
+    end
+    local zone, x, y = message:match("^%s*(.-)%s*(%d+%.?%d*)%s*[,%s]%s*(%d+%.?%d*)%s*$")
+    x, y = tonumber(x), tonumber(y)
+    if not (x and y and x <= 100 and y <= 100) then
+        ns.Print("usage: /way [zone] 41.4, 33.6  or  /way clear")
+        return
+    end
+    local map
+    if zone ~= "" then
+        map = ns.Maps.Find(zone)
+        if not (map and ns.Maps.Name(map)) then
+            ns.Print(("no zone called \"%s\"."):format(zone))
+            return
+        end
+    end
+    local p = ns.Nav:SetWaypoint(x, y, map)
+    if p then
+        ns.Print(("waypoint at %.1f, %.1f in %s."):format(x, y, ns.Maps.Name(p.map) or "this zone"))
+    else
+        ns.Print("cannot set a waypoint here.")
+    end
+end
