@@ -269,6 +269,10 @@ function conds.items(c)
     return not ok
 end
 
+function conds.equipped(c)
+    return GetInventoryItemID("player", c.slot) == c.item
+end
+
 function conds.spell(c)
     return State.KnowsSpell(c.spell) == c.known
 end
@@ -399,14 +403,73 @@ function conds.taxi(c)
     return State.KnowsTaxi(c.name) == c.want
 end
 
+-- A RestedXP step "hearth to X" is written to drop out when the
+-- hearthstone is set somewhere else. The guide binds it in an earlier
+-- guide, so a character who joins later never gets home: the step goes, and
+-- with it the only word that the next work is in X. For that character the
+-- step stays, as a trip to X that ends on arrival. Returns the area of X.
+local function detour(step)
+    if not step or not step.conds or not guide or guide.format ~= "rxp" then
+        return nil
+    end
+    if step.hearth == nil then
+        step.hearth = false
+        for _, el in ipairs(step.elements) do
+            if el.kind == "latch" and el.on == "hearth" then
+                step.hearth = true
+            end
+        end
+    end
+    if not step.hearth then
+        return nil
+    end
+    for i = 1, #step.conds do
+        local c = step.conds[i]
+        if c.kind == "bound" and c.want == false and conds.bound(c) then
+            return c.area
+        end
+    end
+    return nil
+end
+
+-- The hearthstone a guide counts on from before it began: its first
+-- hearth step comes before any step that binds the stone, and says where it
+-- should be bound. Returns that step's index and the area, for RestedXP
+-- guides that name the area; nil when the guide binds it itself first.
+local function expectedBind()
+    if guide.format ~= "rxp" then
+        return nil
+    end
+    for index, step in ipairs(steps) do
+        for _, el in ipairs(step.elements) do
+            if el.kind == "latch" and el.on == "bind" then
+                return nil
+            elseif el.kind == "latch" and el.on == "hearth" then
+                for _, c in ipairs(step.conds or {}) do
+                    if c.kind == "bound" and c.want == false and c.area and C_Map.GetAreaInfo(c.area) then
+                        return index, c.area
+                    end
+                end
+                return nil
+            end
+        end
+    end
+    return nil
+end
+
 local function skipped(step)
     local list = step.conds
     if list then
+        local trip = detour(step)
         for i = 1, #list do
             local c = list[i]
             local test = conds[c.kind]
             if test and test(c) then
-                return true
+                -- Bound elsewhere: no reason to drop the step, unless the
+                -- character is there already.
+                if not (trip and c.kind == "bound" and not inArea(trip)) then
+                    return true
+                end
             end
         end
     end
@@ -419,6 +482,13 @@ end
 local orphan -- below, with the pickups
 
 local function elementDone(index, j, el)
+    if el.kind == "latch" and el.on == "hearth" and index > 0 then
+        -- The hearthstone does not go there: only arriving counts.
+        local trip = detour(steps[index])
+        if trip then
+            return inArea(trip)
+        end
+    end
     if prog.latch[index * 100 + j] then
         return true
     end
@@ -591,12 +661,12 @@ local function about(el, kind, quest)
     return false
 end
 
--- Per guide: quest -> the step that accepts it, and the step that hands
--- it in.
+-- Per guide: quest -> the step that accepts it, the step that hands it in,
+-- and the (first) step that does its objectives.
 local sources = {}
 
 local function indexSources(list)
-    local out = { accept = {}, turnin = {} }
+    local out = { accept = {}, turnin = {}, complete = {} }
     local function put(into, quest, step)
         if not into[quest] or (step.points and not into[quest].points) then
             into[quest] = step
@@ -619,7 +689,8 @@ local function indexSources(list)
 end
 
 -- The step, in this guide or another of its series, that accepts
--- ("accept") or hands in ("turnin") the quest.
+-- ("accept"), hands in ("turnin") or does the objectives of ("complete")
+-- the quest.
 local function source(kind, quest)
     local own = sources[guide.key]
     if not own then
@@ -634,7 +705,7 @@ local function source(kind, quest)
             local known = sources[other.key]
             if not known then
                 local ok, parsed = pcall(parse, other)
-                known = ok and type(parsed) == "table" and indexSources(parsed) or { accept = {}, turnin = {} }
+                known = ok and type(parsed) == "table" and indexSources(parsed) or { accept = {}, turnin = {}, complete = {} }
                 sources[other.key] = known
             end
             if known[kind][quest] then
@@ -652,7 +723,7 @@ end
 -- A step of our own for one quest, made from the step that accepts it or
 -- hands it in: where it is, who to talk to, what the guide says there, and
 -- that one accept or hand-in.
-local borrowed = { accept = {}, turnin = {} }
+local borrowed = { accept = {}, turnin = {}, complete = {} }
 local OWN = { accept = "Accept *quest*", turnin = "Turn in *quest*" }
 
 local function borrow(kind, quest)
@@ -680,6 +751,38 @@ end
 
 local function pickupStep(quest)
     return borrow("accept", quest)
+end
+
+-- A step of our own for the work of one quest, between its pickup and its
+-- hand-in: made from the first step, in this guide or another of its
+-- series, that does its objectives. Where that is, and every objective of
+-- this quest it lists; what it says in words only when the step is about
+-- this quest alone. With no such step: the quest's objectives as the log
+-- has them, and no place.
+local function workStep(quest)
+    local step = borrowed.complete[quest]
+    if not step then
+        step = { elements = {}, pickup = quest }
+        local from = source("complete", quest)
+        if from then
+            step.points, step.loop, step.targets = from.points, from.loop, from.targets
+            local alone = true
+            for _, el in ipairs(from.elements) do
+                if el.obj and not about(el, "complete", quest) then
+                    alone = false
+                end
+            end
+            for _, el in ipairs(from.elements) do
+                if about(el, "complete", quest) or (alone and el.kind == "text" and not el.obj) then
+                    step.elements[#step.elements + 1] = el
+                end
+            end
+        else
+            step.elements[1] = { kind = "complete", obj = true, quest = quest }
+        end
+        borrowed.complete[quest] = step
+    end
+    return step
 end
 
 -- Is any point of the one step within NEAR yards of a point of the other?
@@ -798,6 +901,9 @@ end
 -- Block ids: a pickup is minus its quest, a borrowed hand-in is that
 -- minus HANDIN. prog.declined uses the same numbers, positive.
 local HANDIN = 1000000
+-- The block that says where the guide expects the hearthstone: id -BIND,
+-- and BIND in prog.declined once it is ticked off.
+local BIND = 2000000
 
 local function anyOpen(list)
     for _, index in ipairs(list or {}) do
@@ -953,6 +1059,9 @@ local function title(index, step)
     if step.title then
         return step.title
     end
+    if index > 0 and detour(step) then
+        return LABELS.area
+    end
     for _, el in ipairs(step.elements) do
         if el.obj then
             local kind = el.kind == "latch" and (el.on:match("^cast") and "cast" or el.on) or el.kind
@@ -993,6 +1102,12 @@ local function addLines(lines, index, j, el, step)
     local text = el.text
     local dynamic = false
 
+    if kind == "latch" and el.on == "hearth" and index > 0 then
+        local trip = detour(step)
+        if trip then
+            text = ("Travel to %s (your hearthstone is set elsewhere)"):format(C_Map.GetAreaInfo(trip))
+        end
+    end
     if kind == "turnin" and index > 0 and done and not tests.turnin(el) then
         return -- a hand-in of a quest that was never accepted: nothing to show
     end
@@ -1114,6 +1229,7 @@ end
 ---------------------------------------------------------------------------
 local function emptyView(titleText, line)
     Engine.view = { blocks = { { id = 0, placeholder = true, title = titleText, lines = { { key = "e1", text = line } } } } }
+    Engine.view.lead = Engine.view.blocks[1]
     Engine.shown = {}
     Engine.nav = nil
     Engine.quests = {}
@@ -1250,19 +1366,34 @@ function refresh()
 
     local view = { blocks = {}, name = guide.name, step = main or count, count = count }
     local quests, arrivals = {}, {}
+    -- In the guide's order: the steps to do on the way come before the
+    -- main step they lead to.
     local shown = {}
-    if main and not blocked then
-        shown[#shown + 1] = main
-    end
     for _, index in ipairs(active) do
         shown[#shown + 1] = index
     end
+    if main and not blocked then
+        shown[#shown + 1] = main
+    end
 
     -- Quests these steps work on that were never accepted: their pickups
-    -- come first, and a step with nothing else to do waits for them.
+    -- come before the step, and a step with nothing else to do waits for
+    -- them. `order` keeps every step's place, also of one that waits;
+    -- `owner` is the step a pickup is for.
     local lack = {}
+    local order, owner, waits = {}, {}, {}
+    for n, index in ipairs(shown) do
+        order[n] = index
+        local had = #lack
+        if lacking(index, steps[index], lack) then
+            waits[index] = true
+        end
+        for k = had + 1, #lack do
+            owner[lack[k]] = index
+        end
+    end
     for n = #shown, 1, -1 do
-        if lacking(shown[n], steps[shown[n]], lack) then
+        if waits[shown[n]] then
             table.remove(shown, n)
         end
     end
@@ -1275,31 +1406,84 @@ function refresh()
     table.sort(lack)
     table.sort(hand)
 
+    -- The guide hearths to a place it never binds: say so up front, while
+    -- there is time to set the stone there. Gone once it is bound there,
+    -- ticked off, or the hearth step is behind us.
+    local notice
+    if Engine.bindArea and not done[Engine.bindStep] and not prog.declined[BIND] then
+        local place = C_Map.GetAreaInfo(Engine.bindArea)
+        if place and place ~= GetBindLocation() then
+            notice = {
+                id = -BIND, main = false, title = LABELS.hearth,
+                lines = { { key = "e1", text = "This guide expects your hearthstone in " .. place, obj = true, done = false } },
+            }
+            view.blocks[#view.blocks + 1] = notice
+        end
+    end
+
+    -- Where a pickup or hand-in is drawn: on top when it is right where
+    -- the character stands, else directly above the step it is for (the
+    -- main step, for what later steps need), so the list reads in the order
+    -- things are done. `first` is the one "skip" goes by.
     local nav
+    local spot = standing()
+    local inOrder = {}
+    for _, index in ipairs(order) do
+        inOrder[index] = true
+    end
+    local top, above, after, first = {}, {}, {}, nil
+    local function place(block, step, at)
+        first = first or block
+        local list = after
+        if spot and near(step, spot) then
+            list = top
+        elseif at and inOrder[at] then
+            above[at] = above[at] or {}
+            list = above[at]
+        end
+        list[#list + 1] = block
+    end
     for _, quest in ipairs(lack) do
         local step = pickupStep(quest)
         local block = buildBlock(-quest, false, step)
-        view.blocks[#view.blocks + 1] = block
+        place(block, step, owner[quest] or main)
         if step.points and not nav then
             nav = { points = step.points, loop = step.loop, step = -quest, title = block.title }
         end
     end
     for _, quest in ipairs(hand) do
-        local step = borrow("turnin", quest)
+        -- In the log but not done: its work first, the hand-in once it is ready.
+        local step = State.ReadyToTurnIn(quest) and borrow("turnin", quest) or workStep(quest)
         local block = buildBlock(-(HANDIN + quest), false, step)
-        view.blocks[#view.blocks + 1] = block
+        place(block, step, main)
         quests[quest] = true
         if step.points and not nav then
             nav = { points = step.points, loop = step.loop, step = -(HANDIN + quest), title = block.title }
         end
     end
     local detour = nav ~= nil
+    for _, block in ipairs(top) do
+        view.blocks[#view.blocks + 1] = block
+    end
+    -- The block that "skip" and the header glow go by: a pickup or hand-in
+    -- on the way, else the main step, else whatever is drawn first. Never
+    -- the hearthstone notice, which has its own tick box.
+    view.lead = first
 
-    for n, index in ipairs(shown) do
+    for n, index in ipairs(order) do
+        for _, block in ipairs(above[index] or {}) do
+            view.blocks[#view.blocks + 1] = block
+        end
         local step = steps[index]
-        local block = buildBlock(index, index == main)
+        local block = not waits[index] and buildBlock(index, index == main) or nil
         if block then
             view.blocks[#view.blocks + 1] = block
+            if index == main and not view.lead then
+                view.lead = block
+            end
+        end
+        if waits[index] then
+            step = { elements = {} } -- waits for its pickup: nothing of its own counts yet
         end
         for j, el in ipairs(step.elements) do
             if el.kind == "turnin" or el.kind == "complete" or (el.kind == "collect" and el.quest) then
@@ -1319,9 +1503,14 @@ function refresh()
             nav = { points = step.points, loop = step.loop, step = index, title = block and block.title or title(index, step) }
         end
     end
-    if #view.blocks == 0 then
-        view.blocks[1] = { id = 0, title = "On the way", lines = { { key = "e1", text = "Follow the arrow" } } }
+    for _, block in ipairs(after) do
+        view.blocks[#view.blocks + 1] = block
     end
+    if #view.blocks == (notice and 1 or 0) then
+        view.blocks[#view.blocks + 1] = { id = 0, title = "On the way", lines = { { key = "e1", text = "Follow the arrow" } } }
+    end
+
+    view.lead = view.lead or view.blocks[notice and 2 or 1] or view.blocks[1]
 
     Engine.view = view
     Engine.shown = shown
@@ -1436,8 +1625,9 @@ function Engine:Start(key, restart)
     end
     prog.hist = prog.hist or {}
     prog.declined = prog.declined or {}
-    borrowed = { accept = {}, turnin = {} }
+    borrowed = { accept = {}, turnin = {}, complete = {} }
     buildWanted()
+    Engine.bindStep, Engine.bindArea = expectedBind()
     Engine.guide = guide
     Engine:Refresh()
     return true
@@ -1542,25 +1732,114 @@ function Engine:CompleteStep(index)
     end
 end
 
--- Reopen the step that was finished last.
+-- Every step of the guide, in order, for the step viewer: the block the
+-- tracker would draw for it and where it stands ("current", "done",
+-- "left out" for a step the guide passed over, "open" for what is to come).
+function Engine:Outline()
+    local list = {}
+    if not guide then
+        return list
+    end
+    local current = {}
+    for _, index in ipairs(Engine.shown or {}) do
+        current[index] = true
+    end
+    for index, step in ipairs(steps) do
+        local block = buildBlock(index, false)
+        if block then
+            if current[index] then
+                block.state = "current"
+            elseif prog.done[index] then
+                block.state = skipped(step) and "left out" or "done"
+            else
+                block.state = "open"
+            end
+            list[#list + 1] = block
+        end
+    end
+    return list
+end
+
+-- Would step `index` stay open once it is reopened, or would the next
+-- refresh finish it again? Asked with the step's own marks set aside; the
+-- rules are those of Engine:Refresh.
+local function staysOpen(index)
+    local step = steps[index]
+    if not step or step.hidden or skipped(step) then
+        return false
+    end
+    local wasDone = prog.done[index]
+    local kept = {}
+    for j = 1, #step.elements do
+        kept[j] = prog.latch[index * 100 + j]
+        prog.latch[index * 100 + j] = nil
+    end
+    prog.done[index] = nil
+    local open
+    if step.sticky then
+        if step.with then
+            open = not (prog.done[step.with] or (hasObjectives(step) and complete(index, step)))
+        elseif guide.format == "rxp" and step.completewith and not hasObjectives(step) then
+            open = false
+        else
+            open = not complete(index, step)
+        end
+    else
+        open = not complete(index, step) and not (isTravel(step) and pointless(index))
+    end
+    prog.done[index] = wasDone
+    for j = 1, #step.elements do
+        prog.latch[index * 100 + j] = kept[j]
+    end
+    return open
+end
+
+-- The step "Previous step" goes to: the last finished one that stays open,
+-- and its place in the history. Steps that would close again at once (the
+-- quest is handed in, the spell is known) are passed over.
+local function backTarget()
+    local hist = prog.hist
+    for n = #hist, 1, -1 do
+        local index = hist[n]
+        if index < 0 then
+            if prog.declined[-index] then
+                return index, n
+            end
+        elseif staysOpen(index) then
+            return index, n
+        end
+    end
+    -- Nothing remembered that helps: the previous step in the guide.
+    local index = (Engine.view and Engine.view.step or prog.base) - 1
+    while index >= 1 and steps[index].hidden do
+        index = index - 1
+    end
+    if index >= 1 and prog.done[index] and staysOpen(index) then
+        return index
+    end
+end
+
+function Engine:CanGoBack()
+    return guide ~= nil and backTarget() ~= nil
+end
+
+-- Reopen the step that was finished last and stays open.
 function Engine:Back()
     if not guide then
         return
     end
-    local index = table.remove(prog.hist)
-    if index and index < 0 then
-        prog.declined[-index] = nil
-        return Engine:Refresh()
-    end
+    local index, at = backTarget()
     if not index then
-        -- Nothing remembered: step back to the previous step in the guide.
-        index = (Engine.view.step or prog.base) - 1
-        while index >= 1 and steps[index].hidden do
-            index = index - 1
+        return
+    end
+    if at then
+        for n = #prog.hist, at, -1 do
+            prog.hist[n] = nil
         end
     end
-    if index < 1 then
-        return
+    if index < 0 then
+        prog.declined[-index] = nil
+        return Engine:Refresh()
     end
     prog.done[index] = nil
     for j = 1, #steps[index].elements do

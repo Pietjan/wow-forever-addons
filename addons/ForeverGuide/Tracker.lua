@@ -35,7 +35,10 @@ end
 
 function ForeverGuideStepButtonMixin:OnEnter()
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    if self.stepIndex < 0 then
+    if self.stepIndex == -2000000 then -- Engine's hearthstone notice
+        GameTooltip:SetText("Never mind")
+        GameTooltip:AddLine("Carry on with the hearthstone where it is.", 1, 1, 1, true)
+    elseif self.stepIndex < 0 then
         GameTooltip:SetText("Skip this quest")
         GameTooltip:AddLine("Carry on without picking it up.", 1, 1, 1, true)
     else
@@ -348,7 +351,8 @@ local function layout()
 
     -- A new main step gets a short glow on the header, as a newly tracked
     -- quest does.
-    local main = first and first.main and first.id or nil
+    local lead = view.lead or first
+    local main = lead and lead.main and lead.id or nil
     if main and main ~= lastMain and lastMain ~= nil and glow then
         glow.anim:Stop()
         glow.anim:Play()

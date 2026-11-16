@@ -223,7 +223,29 @@ function State.SpellName(id)
     return GetSpellInfo and (GetSpellInfo(id)) or nil
 end
 
-function State.KnowsSpell(id)
+-- Hunter pet abilities: a guide names either the spell the hunter knows
+-- (Beast Training) or the one the pet casts, and wants that exact rank. A
+-- hunter who can teach that rank or a higher one has it covered, whichever
+-- pet is out. petRanks[id] lists the hunter's spells that cover `id`.
+local petRanks
+
+local function coveringRanks(id)
+    if not petRanks then
+        petRanks = {}
+        for _, ranks in ipairs(ns.PET_RANKS) do
+            for rank, pair in ipairs(ranks) do
+                local covering = {}
+                for higher = rank, #ranks do
+                    covering[#covering + 1] = ranks[higher][1]
+                end
+                petRanks[pair[1]], petRanks[pair[2]] = covering, covering
+            end
+        end
+    end
+    return petRanks[id]
+end
+
+local function knows(id)
     if IsPlayerSpell and IsPlayerSpell(id) then
         return true
     end
@@ -232,6 +254,21 @@ function State.KnowsSpell(id)
     end
     if C_SpellBook and C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(id) then
         return true
+    end
+    return false
+end
+
+function State.KnowsSpell(id)
+    if knows(id) then
+        return true
+    end
+    local covering = coveringRanks(id)
+    if covering then
+        for _, spell in ipairs(covering) do
+            if knows(spell) then
+                return true
+            end
+        end
     end
     return false
 end

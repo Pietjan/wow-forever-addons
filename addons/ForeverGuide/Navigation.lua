@@ -188,13 +188,154 @@ local function corpsePoint()
     return nil
 end
 
+---------------------------------------------------------------------------
+-- The focused quest (Focus in the quest log, the game's super tracking):
+-- the arrow goes there when neither the waypoint nor the guide has a goal.
+-- The place is where the game itself marks the quest: its icon on the
+-- player's map, else its next waypoint, else its icon on the quest's own
+-- map. The map pin is not involved; the game shows its own marker.
+--
+-- For some finished quests the game marks no place at all (one handed in
+-- at an object on another continent). Then the place is the nearest spot
+-- QuestieDB, when installed, knows for whoever takes the quest.
+---------------------------------------------------------------------------
+local focus
+
+-- QuestieDB keys spawns by AreaTable ID with 0-100 coordinates on that
+-- zone's map; the table from area to uiMapID is a Lua source string.
+local areaMaps
+
+local function areaMap(area)
+    if not areaMaps then
+        areaMaps = {}
+        local ok, zones = pcall(LibQuestieDB.Support.Get, "ZoneDB")
+        local private = ok and zones and zones.private or {}
+        -- The override is Questie's own choice and wins; 0 means "no map".
+        for _, key in ipairs({ "areaIdToUiMapId", "areaIdToUiMapIdOverride" }) do
+            local source = private[key]
+            if type(source) == "string" then
+                local chunk = loadstring(source)
+                local good, result = pcall(chunk or error)
+                source = good and result
+            end
+            for id, map in pairs(type(source) == "table" and source or {}) do
+                areaMaps[id] = map
+            end
+        end
+    end
+    local map = areaMaps[area]
+    return map and map ~= 0 and map or nil
+end
+
+local handIns = {} -- quest -> the points where it can be handed in
+
+local function addSpawns(list, quest, spawns)
+    for area, spots in pairs(type(spawns) == "table" and spawns or {}) do
+        local map = areaMap(area)
+        for _, spot in ipairs(map and type(spots) == "table" and spots or {}) do
+            local x, y = spot[1], spot[2]
+            -- -1, -1 marks "somewhere inside an instance".
+            if x and y and x >= 0 and y >= 0 then
+                local p = { map = map, x = x, y = y, radius = 8, quest = quest }
+                if Maps.Resolve(p) then
+                    list[#list + 1] = p
+                end
+            end
+        end
+    end
+end
+
+local function readHandIns(quest)
+    local list = {}
+    local finishers = QuestDB.finishedBy(quest) or {}
+    for _, npc in ipairs(finishers[1] or {}) do
+        addSpawns(list, quest, NpcDB.spawns(npc))
+    end
+    for _, object in ipairs(finishers[2] or {}) do
+        addSpawns(list, quest, ObjectDB.spawns(object))
+    end
+    return list
+end
+
+-- The nearest hand-in spot; one on another continent when none is on this.
+local function handIn(quest, inst, px, py)
+    if not (LibQuestieDB and QuestDB and NpcDB and ObjectDB) then
+        return nil
+    end
+    local list = handIns[quest]
+    if not list then
+        local ok, result = pcall(readHandIns, quest)
+        list = ok and result or {}
+        handIns[quest] = list
+    end
+    local best, bestDistance
+    for _, p in ipairs(list) do
+        local distance = Maps.Distance(p, inst, px, py)
+        if not best or (distance and (not bestDistance or distance < bestDistance)) then
+            best, bestDistance = p, distance
+        end
+    end
+    return best
+end
+
+local function questOnMap(quest, map)
+    if not (map and map ~= 0 and C_QuestLog.GetQuestsOnMap) then
+        return nil
+    end
+    local ok, onMap = pcall(C_QuestLog.GetQuestsOnMap, map)
+    for _, info in ipairs(ok and type(onMap) == "table" and onMap or {}) do
+        if info.questID == quest and info.x and info.y then
+            return map, info.x, info.y
+        end
+    end
+    return nil
+end
+
+local function questPlace(quest, playerMap)
+    local map, x, y = questOnMap(quest, playerMap)
+    if map then
+        return map, x, y
+    end
+    if C_QuestLog.GetNextWaypoint then
+        local ok
+        ok, map, x, y = pcall(C_QuestLog.GetNextWaypoint, quest)
+        if ok and map and x and y then
+            return map, x, y
+        end
+    end
+    return questOnMap(quest, GetQuestUiMapID and GetQuestUiMapID(quest))
+end
+
+local function focusPoint(playerMap, inst, px, py)
+    local quest = C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID()
+    if not quest or quest == 0 then
+        focus = nil
+        return nil
+    end
+    local map, x, y = questPlace(quest, playerMap)
+    if not map then
+        focus = C_QuestLog.IsComplete(quest) and handIn(quest, inst, px, py) or nil
+        return focus
+    end
+    x, y = x * 100, y * 100
+    -- The same table as long as the place is the same, so the arrow's
+    -- target only changes when the place does.
+    if focus and focus.quest == quest and focus.map == map
+        and math.abs(focus.x - x) < 0.01 and math.abs(focus.y - y) < 0.01 then
+        return focus
+    end
+    local p = { map = map, x = x, y = y, radius = 8, quest = quest }
+    focus = Maps.Resolve(p) and p or nil
+    return focus
+end
+
 local goal -- what the pin follows: the waypoint or the guide's point
 
 function Nav:Update()
     if not ns.db then
         return
     end
-    local inst, px, py = Maps.Player()
+    local inst, px, py, playerMap = Maps.Player()
 
     if Nav.waypoint then
         local distance = Maps.Distance(Nav.waypoint, inst, px, py)
@@ -231,7 +372,7 @@ function Nav:Update()
         setPin(pin)
     end
 
-    local target = corpsePoint() or now
+    local target = corpsePoint() or now or focusPoint(playerMap, inst, px, py)
     if target ~= Nav.target then
         Nav.target = target
         ns.Fire("Target", target)

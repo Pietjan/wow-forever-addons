@@ -10,6 +10,7 @@
 Core.lua
 Text.lua
 Maps.lua
+PetRanks.lua
 State.lua
 ParserRXP.lua
 ParserWoWPro.lua
@@ -26,5 +27,6 @@ Navigation.lua
 Arrow.lua
 Tracker.lua
 Tracker.xml
+Steps.lua
 Menu.lua
 Options.lua

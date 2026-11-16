@@ -101,14 +101,20 @@ local function build(_, root)
         if view.step and view.count then
             disable(root:CreateButton(("Step %d of %d"):format(view.step, view.count)))
         end
-        local main = view.blocks[1]
+        local main = view.lead or view.blocks[1]
         if main and main.id ~= 0 then
             root:CreateButton("Skip this step", function()
                 Engine:CompleteStep(main.id)
             end)
         end
-        root:CreateButton("Previous step", function()
+        local back = root:CreateButton("Previous step", function()
             Engine:Back()
+        end)
+        if not Engine:CanGoBack() then
+            disable(back)
+        end
+        root:CreateButton("View all steps", function()
+            ns.Steps.Toggle()
         end)
         divider(root)
     else
@@ -173,12 +179,14 @@ SLASH_FOREVERGUIDE2 = "/foreverguide"
 SlashCmdList.FOREVERGUIDE = function(message)
     local command = (message or ""):lower():match("^%s*(%S*)")
     if command == "skip" or command == "next" then
-        local main = Engine.view.blocks[1]
+        local main = Engine.view.lead or Engine.view.blocks[1]
         if main and main.id ~= 0 then
             Engine:CompleteStep(main.id)
         end
     elseif command == "back" then
         Engine:Back()
+    elseif command == "steps" then
+        ns.Steps.Toggle()
     elseif command == "pause" then
         Engine:Pause()
     elseif command == "resume" or command == "continue" then

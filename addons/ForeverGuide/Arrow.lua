@@ -140,6 +140,8 @@ frame:SetScript("OnEnter", function(self)
     elseif own then
         GameTooltip:SetText(("Waypoint %.1f, %.1f"):format(own.x, own.y))
         GameTooltip:AddLine("/way clear to remove it.", 1, 1, 1)
+    elseif Nav.target and Nav.target.quest then
+        GameTooltip:SetText(C_QuestLog.GetTitleForQuestID(Nav.target.quest) or "Focused quest")
     else
         GameTooltip:SetText(Nav.title or "Guide")
     end

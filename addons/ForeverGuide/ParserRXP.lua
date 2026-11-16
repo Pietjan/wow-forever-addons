@@ -484,7 +484,13 @@ end
 function commands.equip(step, text, slot, id)
     slot, id = tonumber(slot), tonumber(id)
     if slot and id then
-        add(step, { kind = "equip", obj = true, slot = slot, item = id, text = text })
+        if text and text ~= "" then
+            add(step, { kind = "equip", obj = true, slot = slot, item = id, text = text })
+        else
+            -- Without text of its own the line is no objective: wearing
+            -- the item finishes the whole step, as in RXPGuides.
+            cond(step, { kind = "equipped", slot = slot, item = id })
+        end
     end
 end
 
