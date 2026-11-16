@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: HealerMana
+## Notes: The mana of your group's healers as a column of rows: class icon, name, percentage (or dead or offline), and an icon while drinking, innervated or soulstoned. /healermana to move it.
+## Author: Pietjan
+## Version: 1.0
+## SavedVariables: HealerManaDB
+
+HealerMana.lua
