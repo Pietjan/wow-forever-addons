@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: TargetDebuffs
+## Notes: The debuffs you put on your target as a free-standing row of icons that the mouse passes through. /targetdebuffs to move it.
+## Author: Pietjan
+## Version: 1.0
+## SavedVariables: TargetDebuffsDB
+
+TargetDebuffs.lua
