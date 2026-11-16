@@ -12,4 +12,5 @@ Skin.lua
 Sync.lua
 History.lua
 Scroll.lua
+Flash.lua
 Options.lua
