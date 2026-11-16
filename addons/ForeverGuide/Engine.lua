@@ -408,8 +408,26 @@ end
 -- guide, so a character who joins later never gets home: the step goes, and
 -- with it the only word that the next work is in X. For that character the
 -- step stays, as a trip to X that ends on arrival. Returns the area of X.
+--
+-- A hearth step that does not say where the stone should be goes by the
+-- steps before it that bind it (step.homes, set when the guide starts):
+-- with the stone in none of those places, using it leads somewhere the
+-- guide does not mean, so that step too is a trip, to the last of them.
 local function detour(step)
-    if not step or not step.conds or not guide or guide.format ~= "rxp" then
+    if not step or not guide or guide.format ~= "rxp" then
+        return nil
+    end
+    if step.homes then
+        local bound = GetBindLocation()
+        for i = 1, #step.homes do
+            if C_Map.GetAreaInfo(step.homes[i]) == bound then
+                return nil
+            end
+        end
+        local last = step.homes[#step.homes]
+        return C_Map.GetAreaInfo(last) and last or nil
+    end
+    if not step.conds then
         return nil
     end
     if step.hearth == nil then
@@ -455,6 +473,60 @@ local function expectedBind()
         end
     end
     return nil
+end
+
+-- Gives every hearth step that does not say where the hearthstone should
+-- be the places the guide has bound it before that step (step.homes).
+local function markHomes()
+    if guide.format ~= "rxp" then
+        return
+    end
+    local homes = {}
+    for _, step in ipairs(steps) do
+        local binds, hearths, own, area = false, false, false, nil
+        for _, el in ipairs(step.elements) do
+            binds = binds or (el.kind == "latch" and el.on == "bind")
+            hearths = hearths or (el.kind == "latch" and el.on == "hearth")
+        end
+        for _, c in ipairs(step.conds or {}) do
+            if c.kind == "bound" and c.area then
+                area = c.area
+                own = own or c.want == false
+            end
+        end
+        if hearths and not own and #homes > 0 then
+            step.homes = { unpack(homes) }
+        end
+        if binds and area then
+            homes[#homes + 1] = area
+        end
+    end
+end
+
+-- The zone a step is in, when that is not where the character is: its
+-- name, for a line under the step. Nil when any of its places is on the
+-- character's map, or on the zone a cave or building the character is in
+-- belongs to.
+local function elsewhere(step)
+    local here = C_Map.GetBestMapForUnit("player")
+    if not here or not step or not step.points then
+        return nil
+    end
+    local function parent(map)
+        local info = C_Map.GetMapInfo(map)
+        -- A zone inside a zone (a city) is a place of its own.
+        return info and info.mapType ~= 3 and info.parentMapID or nil
+    end
+    local other
+    for _, p in ipairs(step.points) do
+        if p.map and Maps.Resolve(p) then
+            if p.map == here or parent(here) == p.map or parent(p.map) == here then
+                return nil
+            end
+            other = other or p.map
+        end
+    end
+    return other and Maps.Name(other) or nil
 end
 
 local function skipped(step)
@@ -1432,8 +1504,16 @@ function refresh()
         inOrder[index] = true
     end
     local top, above, after, first = {}, {}, {}, nil
+    -- Says where a step is when that is another zone than the character's.
+    local function locate(block, step)
+        local zone = block and elsewhere(step)
+        if zone then
+            table.insert(block.lines, 1, { key = "where", text = "In " .. zone })
+        end
+    end
     local function place(block, step, at)
         first = first or block
+        locate(block, step)
         local list = after
         if spot and near(step, spot) then
             list = top
@@ -1478,6 +1558,7 @@ function refresh()
         local step = steps[index]
         local block = not waits[index] and buildBlock(index, index == main) or nil
         if block then
+            locate(block, step)
             view.blocks[#view.blocks + 1] = block
             if index == main and not view.lead then
                 view.lead = block
@@ -1559,7 +1640,7 @@ function Engine:Finished()
     if nextGuide and ns.db.autoNext then
         ns.Print(("%s is done. Next: %s"):format(finished.name, nextGuide.name))
         C_Timer.After(0, function()
-            Engine:Start(nextGuide.key)
+            Engine:Start(nextGuide.key, false, true)
         end)
         return
     end
@@ -1589,21 +1670,29 @@ end
 ---------------------------------------------------------------------------
 -- On a first start, pass over everything before the first quest step that
 -- is still open, so a character that is already under way lands in place.
+-- With no quest step open it lands right after the guide's last quest
+-- step: what closes a guide (the trip home, the hearthstone) has nothing to
+-- do with quests and is judged step by step like any other.
 local function fastForward()
+    local last = 0
     for index, step in ipairs(steps) do
-        if not skipped(step) then
-            for _, el in ipairs(step.elements) do
-                local kind = el.kind
-                if el.obj and (kind == "accept" or kind == "turnin" or kind == "complete") and not tests[kind](el) then
+        for _, el in ipairs(step.elements) do
+            local kind = el.kind
+            if el.obj and (kind == "accept" or kind == "turnin" or kind == "complete") then
+                last = index
+                if not skipped(step) and not tests[kind](el) then
                     return index
                 end
             end
         end
     end
-    return #steps + 1
+    return last + 1
 end
 
-function Engine:Start(key, restart)
+-- `follow`: the guide starts because the one before it has just finished.
+-- The character is at its beginning, so nothing is passed over: its bank,
+-- vendor and travel steps are for this character too.
+function Engine:Start(key, restart, follow)
     local g = Registry.Get(key)
     if not g then
         return false
@@ -1625,7 +1714,7 @@ function Engine:Start(key, restart)
     if restart or not prog or prog.signature ~= signature then
         prog = { done = {}, latch = {}, hist = {}, declined = {}, base = 1, signature = signature }
         ns.char.progress[key] = prog
-        local first = fastForward()
+        local first = follow and 1 or fastForward()
         for index = 1, first - 1 do
             prog.done[index] = true
         end
@@ -1635,6 +1724,7 @@ function Engine:Start(key, restart)
     prog.declined = prog.declined or {}
     borrowed = { accept = {}, turnin = {}, complete = {} }
     buildWanted()
+    markHomes()
     Engine.bindStep, Engine.bindArea = expectedBind()
     Engine.guide = guide
     Engine:Refresh()

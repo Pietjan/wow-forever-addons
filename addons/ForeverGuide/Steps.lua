@@ -17,14 +17,14 @@ local NUMBER_WIDTH = 34     -- the column with the step numbers
 local LINE_INDENT = 10
 local LINE_SPACING = 2
 local BETWEEN_STEPS = 10
-local ABOVE_CURRENT = 60    -- how much of the earlier steps stays in view on opening
+local ABOVE_CURRENT = 8     -- room above the current step on opening
 
 local COLOR = {
     current = { 1, 0.82, 0 },
     open = { 0.75, 0.61, 0 },
-    done = { 0.5, 0.5, 0.5 },
+    done = { 0.7, 0.7, 0.7 },
     line = { 0.8, 0.8, 0.8 },
-    lineDone = { 0.45, 0.45, 0.45 },
+    lineDone = { 0.8, 0.8, 0.8 }, -- as readable as the rest: the title's colour says it is done
 }
 
 local frame, scroll, content, marker
@@ -53,9 +53,26 @@ local function row(pool, n, font)
     return r
 end
 
+-- The game's scroll bar turns an offset into a share of the scroll range
+-- and scrolls to that share. The range only follows the list's new height
+-- a frame later, so an offset set right after a layout is measured against
+-- the old range (none at all on first opening) and lands at the top or in
+-- the wrong place. So: have the range brought up to date first, and set
+-- the offset once more on the next frame.
 local function scrollTo(offset)
-    local range = math.max(0, number(content:GetHeight(), 0) - number(scroll:GetHeight(), 0))
-    scroll:SetVerticalScroll(math.max(0, math.min(range, offset)))
+    local function apply()
+        if scroll.UpdateScrollChildRect then
+            scroll:UpdateScrollChildRect()
+        end
+        local range = math.max(0, number(content:GetHeight(), 0) - number(scroll:GetHeight(), 0))
+        scroll:SetVerticalScroll(math.max(0, math.min(range, offset)))
+    end
+    apply()
+    C_Timer.After(0, function()
+        if frame:IsShown() then
+            apply()
+        end
+    end)
 end
 
 local function layout()

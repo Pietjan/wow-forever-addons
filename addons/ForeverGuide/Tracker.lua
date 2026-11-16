@@ -188,7 +188,7 @@ local function onTitleClick(self, mouseButton)
     elseif mouseButton == "RightButton" or data.placeholder and not Engine.view.nextKey then
         ns.Menu.Open(self)
     elseif data.placeholder then
-        Engine:Start(Engine.view.nextKey)
+        Engine:Start(Engine.view.nextKey, false, true)
     elseif ns.Quiet() then
         -- Show where this step is.
         local target = ns.Nav.target
