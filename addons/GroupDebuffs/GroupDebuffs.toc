@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: GroupDebuffs
+## Notes: The debuffs your group's classes should keep on the target, as a column or row of icons: dim while missing, lit with its timer while it is on. Options > AddOns, or /groupdebuffs
+## Author: Pietjan
+## Version: 1.0
+## SavedVariables: GroupDebuffsDB
+
+Data.lua
+GroupDebuffs.lua
