@@ -13,4 +13,5 @@ Sync.lua
 History.lua
 Scroll.lua
 Flash.lua
+Community.lua
 Options.lua

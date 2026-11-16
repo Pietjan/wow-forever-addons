@@ -1,6 +1,6 @@
 -- ForeverChat: Blizzard's chat, kept as it is and finished off.
 --
--- Six parts, each in its own file and each working on the default chat
+-- Seven parts, each in its own file and each working on the default chat
 -- frames, so the game's chat settings, tabs, Edit Mode and other addons
 -- keep working:
 --
@@ -17,6 +17,7 @@
 --   History.lua  the lines in the chat windows survive a reload.
 --   Scroll.lua   a window left scrolled up goes back to the newest line.
 --   Flash.lua    a whisper shown in several tabs is one notification.
+--   Community.lua  a community channel that logged in dead is connected.
 --
 -- On Forever, chat text and sender names are secret values to addon code
 -- during boss fights and PvP matches, and Blizzard's chat code only works
@@ -176,6 +177,7 @@ events:SetScript("OnEvent", function(self, event, name)
 	ns.History.Init()
 	ns.Scroll.Init()
 	ns.Flash.Init()
+	ns.Community.Init()
 
 	SLASH_FOREVERCHAT1 = "/fchat"
 	SLASH_FOREVERCHAT2 = "/foreverchat"
