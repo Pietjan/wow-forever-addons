@@ -6,6 +6,13 @@ local _, ns = ...
 local TEXTURE = "Interface\\AddOns\\ForeverQuests\\dot" -- white disc, dark rim; tinted per quest
 -- The game's own turn-in pin: a dark round button with the "?" on top.
 local TURN_IN_BUTTON = "UI-QuestPoi-QuestNumber"
+-- The same button for the focused (super tracked) quest, and the two
+-- glows the game puts on a quest's pin while the quest is hovered in the
+-- quest log (POIButtonTemplate's highlight, QuestPinTemplate's LinkGlow).
+local TURN_IN_FOCUSED = "UI-QuestPoi-QuestNumber-SuperTracked"
+local HOVER_INNER = "UI-QuestPoi-InnerGlow"
+local HOVER_OUTER = "UI-QuestPoi-OuterGlow"
+local HOVER_OUTER_SIZE = 75 / 32 -- times the marker size, as on the game's pin
 local TURN_IN_ICON = "UI-QuestIcon-TurnIn-Normal"
 -- The plain yellow "?" on its own, for small markers (minimap).
 local TURN_IN_PLAIN = "QuestTurnin"
@@ -58,6 +65,33 @@ local function OnLeave(dot)
 	end
 end
 
+-- The round turn-in button follows the game's own pins: another button
+-- for the focused quest, a glow while its quest is hovered in the log.
+local function UpdateTurnInState(dot, questID)
+	local focused = (C_SuperTrack.GetSuperTrackedQuestID and C_SuperTrack.GetSuperTrackedQuestID() == questID) or false
+	if dot.focused ~= focused then
+		dot.focused = focused
+		dot.texture:SetAtlas(focused and TURN_IN_FOCUSED or TURN_IN_BUTTON)
+	end
+	local hovered = ns.hovered == questID
+	if hovered and not dot.hoverInner then
+		dot.hoverInner = dot:CreateTexture(nil, "OVERLAY", nil, 1)
+		dot.hoverInner:SetAllPoints()
+		dot.hoverInner:SetAtlas(HOVER_INNER)
+		dot.hoverInner:SetBlendMode("ADD")
+		dot.hoverOuter = dot:CreateTexture(nil, "BACKGROUND")
+		dot.hoverOuter:SetPoint("CENTER")
+		dot.hoverOuter:SetAtlas(HOVER_OUTER)
+		dot.hoverOuter:SetBlendMode("ADD")
+	end
+	if dot.hoverInner then
+		local size = dot.turnInSize * HOVER_OUTER_SIZE
+		dot.hoverOuter:SetSize(size, size)
+		dot.hoverInner:SetShown(hovered)
+		dot.hoverOuter:SetShown(hovered)
+	end
+end
+
 local function SetPointData(dot, point)
 	dot.point = point
 	if point.target.turnIn then
@@ -67,16 +101,23 @@ local function SetPointData(dot, point)
 			if dot.plainTurnIn then
 				dot.texture:SetAtlas(TURN_IN_PLAIN)
 			else
-				dot.texture:SetAtlas(TURN_IN_BUTTON)
+				dot.focused = nil
 				dot.icon:SetAtlas(TURN_IN_ICON)
 				dot.icon:Show()
 			end
 			dot:SetSize(dot.turnInSize, dot.turnInSize)
 		end
+		if not dot.plainTurnIn then
+			UpdateTurnInState(dot, point.target.quest.questID)
+		end
 		return
 	end
 	if dot.style ~= "dot" then
 		dot.style = "dot"
+		if dot.hoverInner then
+			dot.hoverInner:Hide()
+			dot.hoverOuter:Hide()
+		end
 		dot.texture:SetTexture(TEXTURE, "CLAMP", "CLAMP", "TRILINEAR")
 		dot.texture:SetTexCoord(0, 1, 0, 1)
 		dot.icon:Hide()

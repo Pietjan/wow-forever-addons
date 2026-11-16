@@ -176,6 +176,7 @@ events:RegisterEvent("QUEST_LOG_UPDATE")
 events:RegisterEvent("QUEST_ACCEPTED")
 events:RegisterEvent("QUEST_REMOVED")
 events:RegisterEvent("CVAR_UPDATE")
+events:RegisterEvent("SUPER_TRACKING_CHANGED") -- the focused quest's marker looks different
 events:SetScript("OnEvent", function(_, event, arg)
 	if event == "PLAYER_LOGIN" then
 		Start()

@@ -188,15 +188,42 @@ function ns.SetUpWorldMap()
 		pingedOpen, pingedObjectives = nil, nil
 		ns.Rebuild()
 	end)
-	-- Hovering a quest in that log highlights it.
+	-- Hovering a quest in that log highlights it: its title, or the round
+	-- icon in front of it. The icon is a button of its own that only tells
+	-- the game's highlight manager, as the map's own quest pins do; a pin
+	-- under the mouse is not a hover in the log, so only the log's icon
+	-- counts. Title and icon are kept apart, since moving from one to the
+	-- other may enter the new one before leaving the old.
+	local overTitle, overIcon
+	local function Hover()
+		local questID = overTitle or overIcon
+		if ns.hovered ~= questID then
+			ns.hovered = questID
+			ns.Rebuild()
+		end
+	end
 	hooksecurefunc(WorldMapFrame, "SetHighlightedQuestID", function(_, questID)
-		ns.hovered = questID
-		ns.Rebuild()
+		overTitle = questID
+		Hover()
 	end)
 	hooksecurefunc(WorldMapFrame, "ClearHighlightedQuestID", function()
-		ns.hovered = nil
-		ns.Rebuild()
+		overTitle = nil
+		Hover()
 	end)
+	EventRegistry:RegisterCallback("SetHighlightedQuestPOI", function(_, questID)
+		local contents = QuestScrollFrame and QuestScrollFrame.Contents
+		local icon = contents and contents.FindButtonByQuestID and contents:FindButtonByQuestID(questID)
+		if icon and icon:IsMouseOver() then
+			overIcon = questID
+			Hover()
+		end
+	end, ns)
+	EventRegistry:RegisterCallback("ClearHighlightedQuestPOI", function()
+		if overIcon then
+			overIcon = nil
+			Hover()
+		end
+	end, ns)
 	EventRegistry:RegisterCallback("MapCanvas.PingQuestID", PingQuest, ns)
 	InstallQuestMapOverride()
 	if QuestMapFrame_ShowQuestDetails then
