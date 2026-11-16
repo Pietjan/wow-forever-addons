@@ -1462,6 +1462,7 @@ function refresh()
         end
     end
     local detour = nav ~= nil
+    local led = false -- a trip on the way has the arrow
     for _, block in ipairs(top) do
         view.blocks[#view.blocks + 1] = block
     end
@@ -1499,8 +1500,15 @@ function refresh()
                 arrivals[#arrivals + 1] = { point = el.point, key = index * 100 + j }
             end
         end
-        if step.points and not detour and (not nav or (nav.step ~= main and index == main)) then
-            nav = { points = step.points, loop = step.loop, step = index, title = block and block.title or title(index, step) }
+        -- Where the arrow goes: a trip on the way (fly, go to a place) comes
+        -- first, since it is how the main step is reached; else the main
+        -- step; else whatever is on the way and has a place.
+        if step.points and not detour and not led then
+            local trip = index ~= main and isTravel(step)
+            if trip or index == main or not nav then
+                nav = { points = step.points, loop = step.loop, step = index, title = block and block.title or title(index, step) }
+                led = trip
+            end
         end
     end
     for _, block in ipairs(after) do
