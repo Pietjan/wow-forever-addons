@@ -3,12 +3,15 @@
 -- Click the icon you want, right-click to clear, move away to cancel.
 --
 -- A rewrite of the 2.x addon by MrFIXlT and Zimzarina (concept by Qzot) for
--- WoW Forever. Since patch 12.0 SetRaidTarget() is a protected function, so
--- an icon can only be set by a secure button that the player clicks or
--- presses a key bound to. The menu's icons are such buttons, which also
--- means the menu cannot be opened in combat: protected frames cannot be
--- shown or moved by addon code while fighting. The key bindings work in
--- combat.
+-- WoW Forever. Addon code cannot call SetRaidTarget() there (/run of it does
+-- nothing, while the game's /tm works), so an icon can only be set by a
+-- secure button that the player clicks or presses a key bound to. The menu's
+-- icons are such buttons, which makes the menu a protected frame: in combat
+-- addon code can neither show, move nor hide it. Only secure code can, so in
+-- combat the menu opens on a double-click on a unit frame (a secure snippet
+-- wrapped around the frame's OnDoubleClick) and closes through secure code
+-- too. Clicks on units in the world reach no secure code; there the menu
+-- opens out of combat only. The key bindings work in combat.
 
 local ADDON_NAME = ...
 
@@ -99,7 +102,8 @@ end
 -- The radial menu
 ------------------------------------------------------------------------------
 
-local menu = CreateFrame("Button", "SRTIRadialMenu", UIParent)
+-- A secure handler, so that secure snippets can show and hide it in combat.
+local menu = CreateFrame("Button", "SRTIRadialMenu", UIParent, "SecureHandlerBaseTemplate")
 menu:SetSize(2 * (RADIUS + HIT_SIZE / 2), 2 * (RADIUS + HIT_SIZE / 2))
 menu:SetFrameStrata("DIALOG")
 menu:SetClampedToScreen(true)
@@ -231,6 +235,14 @@ local function SelectedIcon()
 	return nil
 end
 
+-- What the menu shows for the target, however it was opened.
+local function Prepare()
+	menu.guid = GUID("target")
+	ShowCurrentMark()
+	menu.selected = nil
+	SetPortraitTexture(menu.portrait, "target")
+end
+
 -- Open the menu for the target (the click that opens it also targets the
 -- unit). Returns false when it cannot open.
 function SRTI.Open()
@@ -245,19 +257,15 @@ function SRTI.Open()
 	end
 	if InCombatLockdown() then
 		if not SRTI.warnedCombat then
-			Print("the menu cannot open during combat; the key bindings still work")
+			Print("in combat the menu opens only on a double-click on a unit frame; the key bindings still work")
 			SRTI.warnedCombat = true
 		end
 		return false
 	end
 
-	menu.guid = GUID("target")
-	ShowCurrentMark()
-	menu.selected = nil
+	Prepare()
 	menu.state = "showing"
 	menu.stateSince = GetTime()
-
-	SetPortraitTexture(menu.portrait, "target")
 	menu:SetScale(db.scale)
 	local x, y = GetCursorPosition()
 	local scale = menu:GetEffectiveScale()
@@ -270,7 +278,27 @@ function SRTI.Open()
 	return true
 end
 
+-- Secure code showed the menu (in combat): no fade, it is simply there.
+menu:SetScript("OnShow", function(self)
+	if self.state then
+		return
+	end
+	Prepare()
+	self.state = "open"
+	self.stateSince = GetTime()
+	self:SetAlpha(1)
+	Sound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+end)
+
 menu:SetScript("OnUpdate", function(self)
+	-- In combat only secure code may move or hide the menu: it closes when
+	-- the cursor has left it for a moment, or on a click. The icons stay
+	-- where they are; only which one the unit has is kept up to date.
+	if InCombatLockdown() then
+		ShowCurrentMark()
+		return
+	end
+
 	local now = GetTime()
 	local progress = math.min((now - self.stateSince) / FADE_TIME, 1)
 
@@ -340,7 +368,137 @@ menu:SetScript("OnHide", function(self)
 	self.state = nil
 	self.guid = nil
 	self.linger = nil
+	self.selected = nil
+	-- Leave the icons in their open places, which is how the menu shows
+	-- when secure code opens it in combat.
+	if not InCombatLockdown() then
+		Layout(1)
+	end
 end)
+Layout(1)
+
+------------------------------------------------------------------------------
+-- Opening and closing in combat: secure snippets
+------------------------------------------------------------------------------
+
+-- Run on the second click of a double-click on a unit frame. The first click
+-- has targeted the unit. Out of combat the addon's own code opens the menu
+-- (with its fade), so this only acts in combat.
+local SECURE_OPEN = [[
+	if owner:GetAttribute("srti-debug") then
+		print("SRTI secure double-click:", button, "combat", PlayerInCombat(),
+			"target", UnitExists("target"), "shown", owner:IsShown(),
+			"double", owner:GetAttribute("srti-double"))
+	end
+	if button ~= "LeftButton" or not owner:GetAttribute("srti-double") then
+		return
+	end
+	if not owner:GetAttribute("srti-canmark") then
+		return
+	end
+	if not PlayerInCombat() or owner:IsShown() or not UnitExists("target") then
+		return
+	end
+	owner:ClearAllPoints()
+	owner:SetPoint("CENTER", "$cursor")
+	owner:Show()
+	owner:RegisterAutoHide(owner:GetAttribute("srti-linger"))
+]]
+
+-- Any click on the menu closes it; in combat this is the only code that can.
+local SECURE_CLICK = [[ return nil, true ]]
+local SECURE_CLOSE = [[
+	if PlayerInCombat() then
+		owner:Hide()
+	end
+]]
+
+SecureHandlerWrapScript(menu, "OnClick", menu, SECURE_CLICK, SECURE_CLOSE)
+SecureHandlerWrapScript(menu.center, "OnClick", menu, SECURE_CLICK, SECURE_CLOSE)
+for _, button in ipairs(menu.buttons) do
+	SecureHandlerWrapScript(button, "OnClick", menu, SECURE_CLICK, SECURE_CLOSE)
+end
+
+-- Settings the snippets read; attributes of a protected frame can only be
+-- set out of combat.
+local function SyncSecure()
+	if InCombatLockdown() then
+		return
+	end
+	menu:SetAttribute("srti-double", db.double and true or nil)
+	menu:SetAttribute("srti-linger", LINGER_TIME)
+	-- Secure code cannot ask for the raid role, so it gets the role as it is
+	-- when combat starts. A promotion during the fight shows after it.
+	local canMark = not IsInRaid() or UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")
+	menu:SetAttribute("srti-canmark", canMark and true or nil)
+	menu:SetAttribute("srti-debug", db.debug and true or nil)
+	menu:SetScale(db.scale)
+end
+
+-- Unit frames get the snippet on their OnDoubleClick. Wrapping is only
+-- allowed out of combat, so frames that turn up in combat wait for its end.
+local wrapped, pendingWrap = {}, {}
+
+local function WrapUnitFrame(frame)
+	if wrapped[frame] then
+		return
+	end
+	if InCombatLockdown() then
+		pendingWrap[frame] = true
+		return
+	end
+	if (frame.IsForbidden and frame:IsForbidden()) or frame:GetObjectType() ~= "Button" then
+		return
+	end
+	local _, explicit = frame:IsProtected()
+	if not explicit then
+		return
+	end
+	local unit = frame:GetAttribute("unit")
+	if unit == nil or (not IsSecret(unit) and unit:match("^nameplate")) then
+		return
+	end
+	SecureHandlerWrapScript(frame, "OnDoubleClick", menu, SECURE_OPEN)
+	frame:HookScript("OnDoubleClick", function(self, button)
+		if db.debug then
+			Print("double-click on %s (%s), menu shown %s", self:GetName() or "?", tostring(button), tostring(menu:IsShown()))
+		end
+	end)
+	wrapped[frame] = true
+end
+
+-- A unit frame and every unit frame inside it (target of target, say).
+local function WrapUnitFramesIn(frame)
+	if not frame or (frame.IsForbidden and frame:IsForbidden()) then
+		return
+	end
+	local unit = frame.GetAttribute and frame:GetAttribute("unit")
+	if IsSecret(unit) or unit ~= nil then
+		WrapUnitFrame(frame)
+	end
+	for _, child in ipairs({ frame:GetChildren() }) do
+		WrapUnitFramesIn(child)
+	end
+end
+
+local UNIT_FRAME_ROOTS = { "PlayerFrame", "PetFrame", "TargetFrame", "FocusFrame", "PartyFrame" }
+
+local function WrapAllUnitFrames()
+	for _, name in ipairs(UNIT_FRAME_ROOTS) do
+		WrapUnitFramesIn(_G[name])
+	end
+	for frame in pairs(pendingWrap) do
+		pendingWrap[frame] = nil
+		WrapUnitFrame(frame)
+	end
+end
+
+-- Raid and party frames in the raid style are made as they are needed.
+if CompactUnitFrame_SetUpFrame then
+	hooksecurefunc("CompactUnitFrame_SetUpFrame", function(frame)
+		WrapUnitFrame(frame)
+	end)
+end
 
 ------------------------------------------------------------------------------
 -- Opening the menu: modifier-click or double-click on a unit
@@ -422,13 +580,21 @@ local clicks = CreateFrame("Frame")
 clicks:RegisterEvent("GLOBAL_MOUSE_UP")
 clicks:RegisterEvent("PLAYER_REGEN_DISABLED")
 clicks:RegisterEvent("PLAYER_REGEN_ENABLED")
+clicks:RegisterEvent("PLAYER_LOGIN")
 clicks:SetScript("OnEvent", function(_, event, button)
 	if event == "PLAYER_REGEN_DISABLED" then
-		-- Hide while that is still allowed; the fade would be too late.
+		-- Hide while that is still allowed; the fade would be too late. The
+		-- options as they are now go to the secure snippets.
 		menu:Hide()
+		SyncSecure()
 		return
 	elseif event == "PLAYER_REGEN_ENABLED" then
 		SRTI.warnedCombat = nil
+		WrapAllUnitFrames()
+		return
+	elseif event == "PLAYER_LOGIN" then
+		SyncSecure()
+		WrapAllUnitFrames()
 		return
 	end
 	if button ~= "LeftButton" then
@@ -563,6 +729,7 @@ SlashCmdList.SRTI = function(msg)
 		PrintOptions()
 	elseif word == "debug" then
 		db.debug = not db.debug or nil
+		SyncSecure()
 		Print("debug output %s", db.debug and "on" or "off")
 	elseif TOGGLES[word] then
 		db[TOGGLES[word]] = not db[TOGGLES[word]]
