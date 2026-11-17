@@ -1,7 +1,8 @@
 -- SellAdvice: one line in an item's tooltip saying what brings the most
 -- for it: disenchanting, the vendor or the auction house. The options that
 -- lost show only while Alt is held. Among quest choices, the one worth the
--- most gets a gold coin on its icon.
+-- most gets a gold coin on its icon. In Baganator, when the bags are full,
+-- a red cross marks the bag item that is cheapest to drop.
 --
 -- - Vendor: the item's sell price from the client.
 -- - Auction: Auctionator's last scanned price, less the house's 5% cut.
@@ -187,8 +188,9 @@ end
 -- What an item can bring: options sorted best first ({ key, value }, the
 -- value for one item), why the others have no value, the disenchant
 -- materials, the item level and how many the tooltip is about. Nil while
--- the item is not cached.
-local function Options(link, data)
+-- the item is not cached. `slot` ({ count, bound }) describes a bag slot
+-- read from the container instead of from tooltip data.
+local function Options(link, data, slot)
 	local _, _, quality, level, _, _, _, _, _, _, sellPrice, classID, _, bindType = C_Item.GetItemInfo(link)
 	if not quality then
 		return nil
@@ -201,7 +203,7 @@ local function Options(link, data)
 		missing.vendor = "cannot be sold"
 	end
 	-- 1 binds on pickup, 4 is a quest item.
-	local bound = bindType == 1 or bindType == 4 or IsBound(data)
+	local bound = bindType == 1 or bindType == 4 or (slot and slot.bound) or IsBound(data)
 	if bindType == 1 or bindType == 4 then
 		missing.auction = bindType == 1 and "binds on pickup" or "quest item"
 	elseif bound then
@@ -234,7 +236,7 @@ local function Options(link, data)
 	end)
 	-- The auction has to pay for its risk: a listing that does not sell
 	-- costs the deposit.
-	local count = StackCount(data)
+	local count = slot and slot.count or StackCount(data)
 	local ruledOut = false
 	if options[1] and options[1].key == "auction" then
 		local other = options[2] and options[2].value or 0
@@ -350,3 +352,115 @@ if QuestInfo_Display then
 		pcall(UpdateQuestChoices)
 	end)
 end
+
+-- Cheapest to drop ------------------------------------------------------------
+
+-- When the bags are full, the bag item worth least for the whole stack
+-- (the best of vendor, auction and disenchant, as in the tooltip) gets a
+-- red cross in Baganator. Grey items first; with no grey left, any item but
+-- quest items, bags, tools, fishing poles and soulbound weapons or armour.
+-- Items worth nothing anywhere are left alone: they are usually special
+-- (keys, shards, the hearthstone).
+local FIRST_BAG, LAST_BAG = 0, NUM_BAG_SLOTS or 4
+local cheapest -- { bag, slot } or nil
+local rescanning = false
+
+local function NeverJunk(itemID, classID, subclassID, bindType, bound)
+	return classID == 12 or bindType == 4 -- quest
+		or classID == 1 or classID == 11 -- bags and quivers
+		or ns.tools[itemID]
+		or (classID == 2 and subclassID == 20) -- fishing pole
+		or ((classID == 2 or classID == 4) and bound)
+end
+
+-- True when no general bag has a free slot (a herb or soul bag's free slots
+-- do not take loot of other kinds).
+local function BagsFull()
+	for bag = FIRST_BAG, LAST_BAG do
+		local free, family = C_Container.GetContainerNumFreeSlots(bag)
+		if Plain(free) and free > 0 and Plain(family) == 0 then
+			return false
+		end
+	end
+	return true
+end
+
+-- The cheapest item to drop, and whether some item was not cached yet.
+local function FindCheapest()
+	if not BagsFull() then
+		return nil, false
+	end
+	local best = { [true] = nil, [false] = nil } -- grey -> { bag, slot, value }
+	local pending = false
+	for bag = FIRST_BAG, LAST_BAG do
+		for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
+			local info = C_Container.GetContainerItemInfo(bag, slot)
+			local link = info and Plain(info.hyperlink)
+			if link then
+				local _, _, quality, _, _, _, _, _, _, _, _, classID, subclassID, bindType = C_Item.GetItemInfo(link)
+				local itemID = C_Item.GetItemInfoInstant(link)
+				local bound = Plain(info.isBound) == true
+				if not quality then
+					pending = true
+				elseif not NeverJunk(itemID, classID, subclassID, bindType, bound) then
+					local options = Options(link, nil, { count = Plain(info.stackCount) or 1, bound = bound })
+					if not options then
+						pending = true
+					elseif options[1] then
+						local value = options[1].value * (Plain(info.stackCount) or 1)
+						local grey = quality == 0
+						if not best[grey] or value < best[grey][3] then
+							best[grey] = { bag, slot, value }
+						end
+					end
+				end
+			end
+		end
+	end
+	return best[true] or best[false], pending
+end
+
+local function Rescan()
+	local ok, found, pending = pcall(FindCheapest)
+	if not ok then
+		found, pending = nil, false
+	end
+	local changed = (found and found[1]) ~= (cheapest and cheapest[1]) or (found and found[2]) ~= (cheapest and cheapest[2])
+	cheapest = found
+	if changed and Baganator and Baganator.API and Baganator.API.RequestItemButtonsRefresh then
+		Baganator.API.RequestItemButtonsRefresh({ Baganator.Constants.RefreshReason.ItemWidgets })
+	end
+	if pending and not rescanning then
+		rescanning = true
+		C_Timer.After(0.5, function()
+			rescanning = false
+			Rescan()
+		end)
+	end
+end
+
+local function RegisterBaganator()
+	if not (Baganator and Baganator.API and Baganator.API.RegisterCornerWidget) then
+		return
+	end
+	Baganator.API.RegisterCornerWidget("Cheapest to drop (SellAdvice)", "selladvice_drop", function(cross, details)
+		local location = details.itemLocation
+		return cheapest ~= nil and location ~= nil
+			and location.bagID == cheapest[1] and location.slotIndex == cheapest[2]
+	end, function(itemButton)
+		local cross = itemButton:CreateTexture(nil, "OVERLAY")
+		cross:SetTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
+		cross:SetSize(16, 16)
+		return cross
+	end, { corner = "top_left", priority = 1 })
+end
+
+local events = CreateFrame("Frame")
+events:RegisterEvent("PLAYER_LOGIN")
+events:SetScript("OnEvent", function(self, event)
+	if event == "PLAYER_LOGIN" then
+		pcall(RegisterBaganator)
+		self:RegisterEvent("BAG_UPDATE_DELAYED")
+	end
+	Rescan()
+end)

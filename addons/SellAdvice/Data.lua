@@ -234,3 +234,10 @@ ns.noDisenchant = {
 	[281732] = true, [281733] = true, [285352] = true, [285353] = true, [287620] = true, [287621] = true, [287622] = true, [287623] = true, [287624] = true, [287625] = true,
 	[287626] = true, [287627] = true, [287628] = true, [287648] = true, [289303] = true,
 }
+
+-- Tools a profession or spell needs (they have a totem category); never junk.
+ns.tools = {
+	[2901] = true, [5175] = true, [5176] = true, [5177] = true, [5178] = true, [5956] = true, [6206] = true, [6218] = true, [6219] = true, [6339] = true,
+	[7005] = true, [9149] = true, [10498] = true, [11130] = true, [11145] = true, [13503] = true, [16207] = true, [259229] = true, [260811] = true, [269716] = true,
+	[285280] = true, [285281] = true,
+}

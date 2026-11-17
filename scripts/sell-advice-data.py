@@ -8,8 +8,9 @@ Sources, all from the profession guide's folder:
   server decides them, the client does not say).
 - cache/<newest build>/ItemDisenchantLoot.csv: the game's brackets, so a
   bracket the game does not have is left out.
-- cache/<newest build>/ItemSparse.csv: material names to item IDs, and the
-  items flagged as not disenchantable.
+- cache/<newest build>/ItemSparse.csv: material names to item IDs, the
+  items flagged as not disenchantable, and the tools (items with a totem
+  category: mining picks, rods, totems, hammers), which are never junk.
 """
 import csv
 import re
@@ -48,6 +49,7 @@ def main():
         and int(row["OverallQualityID"]) in (2, 3, 4)
         and kinds.get(int(row["ID"])) in (2, 4)
     )
+    tools = sorted(int(row["ID"]) for row in sparse if int(row["TotemCategoryID"]))
     brackets = {
         (int(r["Class"]), int(r["Quality"]), int(r["MinLevel"]), int(r["MaxLevel"]))
         for r in rows(cache / "ItemDisenchantLoot.csv")
@@ -102,10 +104,13 @@ def main():
     out += ["}", "", "-- Weapons and armour of uncommon or better that cannot be disenchanted.", "ns.noDisenchant = {"]
     for i in range(0, len(no_de), 10):
         out.append("\t" + " ".join(f"[{item}] = true," for item in no_de[i:i + 10]))
+    out += ["}", "", "-- Tools a profession or spell needs (they have a totem category); never junk.", "ns.tools = {"]
+    for i in range(0, len(tools), 10):
+        out.append("\t" + " ".join(f"[{item}] = true," for item in tools[i:i + 10]))
     out += ["}", ""]
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text("\n".join(out))
-    print(f"{OUT}: {len(table)} brackets, {len(pairs)} essence pairs, {len(no_de)} items that do not disenchant")
+    print(f"{OUT}: {len(table)} brackets, {len(pairs)} essence pairs, {len(no_de)} items that do not disenchant, {len(tools)} tools")
 
 
 if __name__ == "__main__":
