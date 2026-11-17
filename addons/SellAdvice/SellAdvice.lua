@@ -260,6 +260,17 @@ local function AddAdvice(tooltip, data)
 	if type(link) ~= "string" then
 		return
 	end
+	-- On a recipe the tooltip's hyperlink is the crafted item's, while its
+	-- ID is the recipe's (Auctionator works around the same thing): price
+	-- the recipe.
+	local id = data and Plain(data.id)
+	if type(id) == "number" and C_Item.GetItemInfoInstant(link) ~= id then
+		local _, recipeLink = C_Item.GetItemInfo(id)
+		if not recipeLink then
+			return -- not cached yet; the tooltip refreshes once it is
+		end
+		link = Plain(recipeLink)
+	end
 	local options, missing, parts, level, count, ruledOut = Options(link, data)
 	if not options then
 		return -- not cached yet; the tooltip refreshes once it is
