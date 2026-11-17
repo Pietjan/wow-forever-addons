@@ -1,6 +1,6 @@
--- ForeverSparkles: a cluster of twinkling glints over the herb, ore vein,
--- quest object or lootable corpse you are walking up to. Every kind has its
--- own look, set on its page under Options > AddOns > ForeverSparkles.
+-- ForeverSparkles: a cluster of twinkling glints over the herb, ore vein or
+-- quest object you are walking up to. Every kind has its own look, set on its
+-- page under Options > AddOns > ForeverSparkles.
 --
 -- How it finds things: the game's "interact key" targeting (soft targeting)
 -- picks the nearest thing you could interact with as the unit "softinteract"
@@ -23,8 +23,8 @@ local SQUASH = 0.7 -- the cluster is this much flatter than it is wide
 local FADE_IN = 0.3 -- seconds for a new sparkle to come up
 local RECHECK = 0.25 -- seconds between looks at the target, besides the events
 
-ns.ORDER = { "herb", "ore", "quest", "corpse" }
-ns.TITLE = { herb = "Herbs", ore = "Ore veins", quest = "Quest objects", corpse = "Corpses with loot" }
+ns.ORDER = { "herb", "ore", "quest" }
+ns.TITLE = { herb = "Herbs", ore = "Ore veins", quest = "Quest objects" }
 
 ns.DEFAULTS = {
 	enabled = true,
@@ -51,7 +51,7 @@ local function Look()
 		brightness = 1, speed = 1, life = 1, height = -40, drift = 10, unusable = 0.4,
 	}
 end
-ns.CATEGORY_DEFAULTS = { herb = Look(), ore = Look(), quest = Look(), corpse = Look() }
+ns.CATEGORY_DEFAULTS = { herb = Look(), ore = Look(), quest = Look() }
 
 -- Version 1 gave each kind a colour of its own, and herbs and ore a bigger
 -- look. What was never changed from those moves to the shared defaults.
@@ -59,7 +59,6 @@ local VERSION_1_DEFAULTS = {
 	herb = { color = "ff9dff7a", size = 50, spread = 70, count = 14 },
 	ore = { color = "ffffc070", size = 50, spread = 70, count = 14 },
 	quest = { color = "ffffe14d" },
-	corpse = { color = "fffff0b0" },
 }
 
 local db
@@ -236,12 +235,6 @@ local function Classify(unit)
 			return "quest", usable ~= false
 		end
 		return nil
-	end
-	if Safe(UnitIsDead, unit) == true then
-		local guid = Safe(UnitGUID, unit)
-		if guid and Safe(CanLootUnit, guid) == true then
-			return "corpse", true
-		end
 	end
 	return nil
 end
@@ -563,6 +556,10 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		Fill(db, ns.DEFAULTS)
 		db.saved = db.saved or {}
 		db.categories = db.categories or {}
+		-- Version 2 had corpses with loot too. They were dropped: a corpse
+		-- only has the unit plate (name, empty health bar, level) to hang
+		-- the sparkle on, and the game's own loot sparkle is left for them.
+		db.categories.corpse = nil
 		for category, defaults in pairs(ns.CATEGORY_DEFAULTS) do
 			db.categories[category] = db.categories[category] or {}
 			Fill(db.categories[category], defaults)

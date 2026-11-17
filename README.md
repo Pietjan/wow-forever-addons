@@ -15,7 +15,7 @@ Downloads, one zip per addon: https://pietjan.github.io/wow-forever-addons/
 | ForeverChat | The default chat in Forever's own style, with short channel names and one chat setup shared by all your characters. /fchat |
 | ForeverGuide | Leveling guides under the quest tracker. Reads RestedXP and WoW-Pro guides, tracks the quests of the current step, points an arrow and sets the map pin. /fg |
 | ForeverQuests | Quest log and tracking tweaks. Spawn dots for tracked quests on the map and minimap instead of the quest areas and in-progress icons. /fq |
-| ForeverSparkles | A sparkle over herbs, ore veins, quest objects and corpses with loot as you come near. Each kind has its own page of sliders: glint size, spread, number of glints, brightness, colour, pace, lifetime, height and drift. Can also keep the game's own loot sparkle on. /fsparkles |
+| ForeverSparkles | A sparkle over herbs, ore veins and quest objects as you come near. Each kind has its own page of sliders: glint size, spread, number of glints, brightness, colour, pace, lifetime, height and drift. Can also keep the game's own loot sparkle on. /fsparkles |
 | GroupDebuffs | The debuffs your group's classes should keep on the target, as a column or row of icons: dim while missing, lit with its timer while it is on. Options > AddOns, or /groupdebuffs |
 | HealerMana | The mana of your group's healers as a column of rows: class icon, name, percentage (or dead or offline), and an icon while drinking, innervated or soulstoned. /healermana to move it. |
 | LootFeed | A short list of what you just picked up: items with how many you now carry, money, reputation, experience and honor, and what your group loots. Each line fades after a few seconds. /lootfeed |
