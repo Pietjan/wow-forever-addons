@@ -4,8 +4,9 @@
 --
 -- It only swaps while one of the two (or nothing) is being tracked: pick
 -- any other tracking, such as Find Fish, and it stays out of the way until
--- you come back to herbs or minerals. It also waits out combat, death and
--- any cast or channel, since the swap itself would interrupt those.
+-- you come back to herbs or minerals. It also waits out combat, death,
+-- an open loot window and any cast or channel, since the swap itself would
+-- interrupt those.
 
 local ADDON_NAME = ...
 
@@ -130,6 +131,7 @@ end
 -- these calls return may be secret while something is going on, so an error
 -- reading them also counts as busy; a skipped swap costs nothing.
 local holdUntil = 0
+local looting = false -- the loot window is open
 
 local function Hold(seconds)
 	holdUntil = math.max(holdUntil, GetTime() + seconds)
@@ -141,6 +143,9 @@ local function Busy()
 	end)
 	if not ok or busy then
 		Hold(db.hold) -- and a moment longer once the cast ends
+		return true
+	end
+	if looting then
 		return true
 	end
 	return GetTime() < holdUntil
@@ -374,6 +379,8 @@ loader:RegisterEvent("ADDON_LOADED")
 loader:RegisterEvent("PLAYER_LOGIN")
 loader:RegisterEvent("PLAYER_LEAVING_WORLD")
 loader:RegisterEvent("MINIMAP_UPDATE_TRACKING")
+loader:RegisterEvent("LOOT_OPENED")
+loader:RegisterEvent("LOOT_CLOSED")
 for _, event in ipairs({ "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_SUCCEEDED",
 	"UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_CHANNEL_STOP" }) do
 	loader:RegisterUnitEvent(event, "player")
@@ -433,6 +440,13 @@ loader:SetScript("OnEvent", function(self, event, name, _, spellID)
 				db.enabled = not db.enabled
 				Status()
 			end
+		end
+	elseif event == "LOOT_OPENED" then
+		looting = true
+	elseif event == "LOOT_CLOSED" then
+		looting = false
+		if db then
+			Hold(db.hold)
 		end
 	elseif event == "PLAYER_LEAVING_WORLD" then
 		-- A reload or logout: do not leave the sound off.
