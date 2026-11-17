@@ -609,6 +609,17 @@ local function isTravel(step)
     return step.travel
 end
 
+-- Does the step name a place the arrow points at by itself (not a ",0"
+-- place, an optional one, or a route that only leads somewhere)?
+local function pointed(step)
+    for _, p in ipairs(step.points or {}) do
+        if not p.noArrow and not p.low and not p.route then
+            return true
+        end
+    end
+    return false
+end
+
 -- Is travel step `index` a trip to work that is finished already? It is
 -- when the steps between it and the next trip all are; a trip that is
 -- followed by another trip goes by what that one leads to.
@@ -1581,11 +1592,13 @@ function refresh()
                 arrivals[#arrivals + 1] = { point = el.point, key = index * 100 + j }
             end
         end
-        -- Where the arrow goes: a trip on the way (fly, go to a place) comes
-        -- first, since it is how the main step is reached; else the main
-        -- step; else whatever is on the way and has a place.
+        -- Where the arrow goes: the first step on the way that it can point
+        -- at (a trip, or an NPC to talk to first), in the guide's order;
+        -- else the main step; else whatever is on the way and has a place.
+        -- A step whose places are all ",0" (look out for it while passing)
+        -- does not lead: the arrow would have nowhere to point.
         if step.points and not detour and not led then
-            local trip = index ~= main and isTravel(step)
+            local trip = index ~= main and (isTravel(step) or pointed(step))
             if trip or index == main or not nav then
                 nav = { points = step.points, loop = step.loop, step = index, title = block and block.title or title(index, step) }
                 led = trip
