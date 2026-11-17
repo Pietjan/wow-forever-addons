@@ -3,11 +3,17 @@
 -- In a group the game lists every quest once per party member: a title, a
 -- name, that member's count, the next name, and so on. Two quests and four
 -- players are twelve lines. This folds them into one line per objective
--- that names only the people who still need it:
+-- with your own count on it, and a line under it for each other player
+-- who still needs it, names in one column and counts in the other:
 --
---     Deviate Hides           Intru 18/20
---     Deviate Eradication            done
+--     Deviate Hides                 3/20
+--       Intru                      18/20
+--       Nausikaa                    0/20
+--     Deviate Scale            Intru 1/5
+--     Deviate Eradication           done
 --
+-- An objective only one other player needs stays on one line, with the
+-- name before the count.
 -- Names are in class colour, in those lines and on a player's own tooltip.
 -- A player's tooltip loses what the colour and the game already tell: the
 -- class line, the faction line and the "(Player)" after the race, and
@@ -17,13 +23,16 @@
 -- that level compares with yours.
 -- A unit flagged for PvP shows its faction crest at the right of its
 -- name instead of a "PvP" line of its own.
+-- The game's threat line ("9% Threat") is left out.
 -- Item and spell tooltips show their ID while Alt is held.
 --
 -- How: the game hands a tooltip to addons as typed lines before it draws
 -- them, and lets a callback swallow a line. The quest lines are swallowed
 -- and the folded ones are added in their place. Nothing of the game's is
--- written to. Tooltip text can be secret in combat; a tooltip with a
--- secret quest line is left exactly as the game made it.
+-- written to. The tooltip of a world object for a quest (a seed to pick
+-- up) has the same quest lines and gets the same folding.
+-- Tooltip text can be secret in combat; in a tooltip with a
+-- secret quest line the quest lines are left exactly as the game made them.
 
 local Processor = TooltipDataProcessor
 local Types = Enum and Enum.TooltipDataLineType
@@ -39,7 +48,6 @@ local WHITE = { 1, 1, 1 }
 local YELLOW = { 1, 0.82, 0 }
 local DIM = { 0.7, 0.7, 0.7 } -- secondary lines: readable, but behind the name
 local GUILD = { 0.25, 1, 0.25 } -- the green of guild chat
-local YOU = "you"
 local DONE = "done"
 
 local function Secret(value)
@@ -237,22 +245,30 @@ local function Fold(lines, classes, mine)
 			if #objective.pending == 0 then
 				folded[#folded + 1] = { left = label, right = DONE, leftColour = GREY, rightColour = GREY }
 			else
-				local parts = {}
-				for _, entry in ipairs(objective.pending) do
-					local name
-					if entry.me then
-						name = YOU
-					else
-						name = Coloured(entry.name:match("^(%S+)") or entry.name, classes[entry.name])
-					end
-					parts[#parts + 1] = entry.count and (name .. " " .. entry.count) or name
+				local labelColour = objective.mine and WHITE or YELLOW
+				local function name(entry)
+					return Coloured(entry.name:match("^(%S+)") or entry.name, classes[entry.name])
 				end
-				folded[#folded + 1] = {
-					left = label,
-					right = table.concat(parts, "  "),
-					leftColour = objective.mine and WHITE or YELLOW,
-					rightColour = WHITE,
-				}
+				-- Yours is first in the list, when you still need it.
+				local pending = objective.pending
+				local own = pending[1].me and pending[1] or nil
+				local others = own and #pending - 1 or #pending
+				if not own and others == 1 then
+					local entry = pending[1]
+					folded[#folded + 1] = {
+						left = label, right = entry.count and (name(entry) .. " " .. entry.count) or name(entry),
+						leftColour = labelColour, rightColour = WHITE,
+					}
+				else
+					-- The objective with your own count, then the others, a
+					-- line each: names at the left so they line up, counts
+					-- at the right.
+					folded[#folded + 1] = { left = label, right = own and own.count or nil, leftColour = labelColour, rightColour = WHITE }
+					for n = own and 2 or 1, #pending do
+						local entry = pending[n]
+						folded[#folded + 1] = { left = "  " .. name(entry), right = entry.count, leftColour = WHITE, rightColour = WHITE }
+					end
+				end
 			end
 		end
 	end
@@ -388,9 +404,35 @@ local crestFor, crestText
 
 -- The lines to dim once the game has drawn them, keyed the same way. Only
 -- the colour is set, the text is not read, so a secret line is fine. The
--- name, the threat line and quest lines keep their own colours.
+-- name and quest lines keep their own colours.
 local dim = {}
-local BRIGHT = { [Types.UnitName or -1] = true, [Types.UnitThreat or -1] = true, [TITLE] = true, [PLAYER] = true, [OBJECTIVE] = true }
+local BRIGHT = { [Types.UnitName or -1] = true, [TITLE] = true, [PLAYER] = true, [OBJECTIVE] = true }
+
+-- Folds the quest lines among `lines`: the first is replaced by the folded
+-- rows, the rest by nothing.
+local function FoldQuests(lines)
+	local ok, taken, folded = pcall(function()
+		return Fold(lines, Group())
+	end)
+	if ok and taken then
+		for i, line in ipairs(taken) do
+			replace[line] = i == 1 and folded or {}
+		end
+	end
+end
+
+-- A world object you gather or click for a quest (seen in game: kind
+-- Object, with the same typed quest lines as a unit): its quest lines are
+-- folded too. Nothing else about it is changed.
+if Enum.TooltipDataType.Object then
+	Processor.AddTooltipPreCall(Enum.TooltipDataType.Object, function(tooltip, data)
+		replace, dim = {}, {}
+		if tooltip ~= GameTooltip or type(data) ~= "table" or type(data.lines) ~= "table" then
+			return
+		end
+		FoldQuests(data.lines)
+	end)
+end
 
 Processor.AddTooltipPreCall(Enum.TooltipDataType.Unit, function(tooltip, data)
 	replace, dim = {}, {}
@@ -398,14 +440,7 @@ Processor.AddTooltipPreCall(Enum.TooltipDataType.Unit, function(tooltip, data)
 	if tooltip ~= GameTooltip or type(data) ~= "table" or type(data.lines) ~= "table" then
 		return
 	end
-	local ok, taken, folded = pcall(function()
-		return Fold(data.lines, Group())
-	end)
-	if ok and taken then
-		for i, line in ipairs(taken) do
-			replace[line] = i == 1 and folded or {}
-		end
-	end
+	FoldQuests(data.lines)
 	local trimmed = {}
 	if UnitExists("mouseover") then
 		local fine, crest = pcall(Trim, data.lines, "mouseover", trimmed)
@@ -415,6 +450,15 @@ Processor.AddTooltipPreCall(Enum.TooltipDataType.Unit, function(tooltip, data)
 			end
 			if crest then
 				crestFor, crestText = data, crest
+			end
+		end
+	end
+	-- The threat line goes. Its type says what it is; its text, which may
+	-- be secret, is not read.
+	if Types.UnitThreat then
+		for _, line in ipairs(data.lines) do
+			if line.type == Types.UnitThreat then
+				replace[line] = {}
 			end
 		end
 	end
@@ -504,4 +548,123 @@ Processor.AddTooltipPostCall(Enum.TooltipDataType.Item, IDLine("Item ID"))
 Processor.AddTooltipPostCall(Enum.TooltipDataType.Spell, IDLine("Spell ID"))
 if Enum.TooltipDataType.UnitAura then
 	Processor.AddTooltipPostCall(Enum.TooltipDataType.UnitAura, IDLine("Spell ID"))
+end
+
+---------------------------------------------------------------------------
+-- Test mode (/compacttip test): the folded quest lines of a made-up party
+-- of four, at the end of every unit's tooltip, so the layout can be judged
+-- without a group. They go through the same folding as the game's own
+-- lines. Off again with the same command, or a reload.
+---------------------------------------------------------------------------
+local testing = false
+
+local SAMPLE_CLASSES = { Intru = "MAGE", Ambush = "WARRIOR", Nausikaa = "DRUID" }
+local SAMPLE_MINE = { Yourself = true }
+local function Sample()
+	local function line(kind, text, completed)
+		return { type = kind, leftText = text, completed = completed or false }
+	end
+	return {
+		-- three of the four still need it
+		line(TITLE, "Deviate Hides"),
+		line(PLAYER, "Yourself"), line(OBJECTIVE, "3/20 Deviate Hide"),
+		line(PLAYER, "Ambush"), line(OBJECTIVE, "20/20 Deviate Hide", true),
+		line(PLAYER, "Intru"), line(OBJECTIVE, "18/20 Deviate Hide"),
+		line(PLAYER, "Nausikaa"), line(OBJECTIVE, "0/20 Deviate Hide"),
+		-- everyone is done
+		line(TITLE, "Deviate Eradication"),
+		line(PLAYER, "Yourself"), line(OBJECTIVE, "7/7 Deviate Ravager slain", true),
+		line(PLAYER, "Intru"), line(OBJECTIVE, "7/7 Deviate Ravager slain", true),
+		-- two objectives: one only you need, one only someone else
+		line(TITLE, "Serpentbloom"),
+		line(PLAYER, "Yourself"), line(OBJECTIVE, "Serpentbloom: 2/10"), line(OBJECTIVE, "Deviate Scale: 5/5", true),
+		line(PLAYER, "Intru"), line(OBJECTIVE, "Serpentbloom: 10/10", true), line(OBJECTIVE, "Deviate Scale: 1/5"),
+		-- you are done, two others are not
+		line(TITLE, "Leaders of the Fang"),
+		line(PLAYER, "Yourself"), line(OBJECTIVE, "4/4 Gem", true),
+		line(PLAYER, "Ambush"), line(OBJECTIVE, "1/4 Gem"),
+		line(PLAYER, "Nausikaa"), line(OBJECTIVE, "2/4 Gem"),
+		-- an objective without a count, yours and someone else's
+		line(TITLE, "The Glowing Shard"),
+		line(PLAYER, "Yourself"), line(OBJECTIVE, "Speak to the hermit"),
+		line(PLAYER, "Intru"), line(OBJECTIVE, "Speak to the hermit"),
+	}
+end
+
+Processor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip)
+	if not testing or tooltip ~= GameTooltip then
+		return
+	end
+	local ok, taken, folded = pcall(Fold, Sample(), SAMPLE_CLASSES, SAMPLE_MINE)
+	if not (ok and taken) then
+		return
+	end
+	for _, row in ipairs(folded) do
+		local l = row.leftColour
+		if row.right then
+			local r = row.rightColour
+			tooltip:AddDoubleLine(row.left, row.right, l[1], l[2], l[3], r[1], r[2], r[3])
+		else
+			tooltip:AddLine(row.left, l[1], l[2], l[3])
+		end
+	end
+end)
+
+---------------------------------------------------------------------------
+-- /compacttip dump: prints what the game hands over for each tooltip, its
+-- kind and every line with its type, to see how a tooltip is made before
+-- changing what is done with it. A tooltip is printed once, not again
+-- while it stays the same. Secret text is not read.
+---------------------------------------------------------------------------
+local dumping = false
+local dumped
+
+local function NameOf(enum, value)
+	for name, v in pairs(enum or {}) do
+		if v == value then
+			return name
+		end
+	end
+	return "?"
+end
+
+Processor.AddTooltipPreCall(Processor.AllTypes, function(tooltip, data)
+	if not dumping or tooltip ~= GameTooltip or type(data) ~= "table" or type(data.lines) ~= "table" then
+		return
+	end
+	local out = { ("tooltip kind %s (%s)"):format(tostring(data.type), NameOf(Enum.TooltipDataType, data.type)) }
+	for _, line in ipairs(data.lines) do
+		local text = line.leftText
+		if Secret(text) then
+			text = "<secret>"
+		end
+		out[#out + 1] = ("  [%s %s] %s"):format(tostring(line.type), NameOf(Types, line.type), tostring(text))
+	end
+	local all = table.concat(out, "\n")
+	if all == dumped then
+		return
+	end
+	dumped = all
+	for _, text in ipairs(out) do
+		print(text)
+	end
+end)
+
+SLASH_COMPACTTIP1 = "/compacttip"
+SlashCmdList.COMPACTTIP = function(msg)
+	local word = (msg or ""):lower():match("^%s*(%S*)")
+	if word == "dump" then
+		dumping = not dumping
+		dumped = nil
+		print("|cff33ff99CompactTip|r: " .. (dumping and "dump on: each tooltip's kind and lines are printed here. /compacttip dump to leave" or "dump off"))
+	elseif word == "test" then
+		testing = not testing
+		if testing then
+			print("|cff33ff99CompactTip|r: test mode on: every unit's tooltip ends with the quest lines of a made-up party of four. /compacttip test to leave")
+		else
+			print("|cff33ff99CompactTip|r: test mode off")
+		end
+	else
+		print("|cff33ff99CompactTip|r: /compacttip test shows sample quest lines in unit tooltips; /compacttip dump prints how each tooltip is made")
+	end
 end
