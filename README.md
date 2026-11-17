@@ -21,7 +21,6 @@ Downloads, one zip per addon: https://pietjan.github.io/wow-forever-addons/
 | LootFeed | A short list of what you just picked up: items with how many you now carry, money, reputation, experience and honor, and what your group loots. Each line fades after a few seconds. /lootfeed |
 | LootRolls | Movable group loot roll bars in the XLoot layout: icon, timer bar with the item name, Need/Greed/Pass with how many chose each and who (hover). /lootrolls |
 | NameOnly | Friendly player nameplates show just the name: your font, size and position. /nameonly |
-| NodeSkill | Colours a herb or ore node's name on the minimap tooltip red when your skill is too low to gather it. |
 | PetAuras | Your pet's buffs and debuffs as small icons under the pet frame, drawn by the game's own aura buttons. |
 | PlateTarget | Enemy nameplates show who the enemy is targeting, under the bar (below the cast bar while casting); class colours; YOU when it is you, green for tanks, red otherwise. |
 | QuestTarget | Marks the nameplates of enemies you still need for a quest. |
