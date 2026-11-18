@@ -2,7 +2,7 @@
 ## Title: FishClick
 ## Notes: With a fishing pole equipped, double-click into the world to cast your line. /fish
 ## Author: Pietjan
-## Version: 1.0
+## Version: 1.1
 ## SavedVariables: FishClickDB
 
 FishClick.lua

@@ -2,7 +2,7 @@
 ## Title: SellAdvice
 ## Notes: One line in item tooltips: disenchant, vendor or auction, whichever brings the most, from Auctionator's scanned prices. A gold coin marks the quest choice worth the most. With full bags, a red cross in Baganator marks the item cheapest to drop. Hold Alt for the workings.
 ## Author: Pietjan
-## Version: 1.0
+## Version: 1.1
 ## OptionalDeps: Auctionator, Baganator
 
 Data.lua

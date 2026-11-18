@@ -2,7 +2,7 @@
 ## Title: ThreatColor
 ## Notes: Enemy nameplate bars coloured by your threat: green, yellow, orange, red. /threatcolor
 ## Author: Pietjan
-## Version: 1.0
+## Version: 1.1
 ## Dependencies: Blizzard_NamePlates
 ## SavedVariables: ThreatColorDB
 
