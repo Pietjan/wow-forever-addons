@@ -128,9 +128,9 @@ end
 -- The game works it out (C_AuctionHouse.CalculateCommodityDeposit answers
 -- away from the auction house too). Where it gives nothing, the rule that
 -- its answers for a 5 copper item fit: 60% of the vendor price, at least
--- one silver.
+-- one copper.
 local LONGEST = 3
-local MIN_DEPOSIT = 100
+local MIN_DEPOSIT = 1
 
 local function Deposit(itemID, count, sellPrice)
 	local calculate = C_AuctionHouse and C_AuctionHouse.CalculateCommodityDeposit
