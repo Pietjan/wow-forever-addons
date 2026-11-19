@@ -16,8 +16,13 @@
 --   when that is worth more, and the other way round. Characters without
 --   Disenchant see it too, marked "on an enchanter", unless the item is
 --   bound (binds on pickup, quest item or soulbound) and so cannot be sent.
+-- - Essences: also the auction in their other form, three lesser for one
+--   greater and back, as "Convert to greater" or "Convert to lesser". It
+--   is the advice when it brings more than listing them as they are.
 --
--- Amounts are for the stack the tooltip is about.
+-- Amounts are for the stack the tooltip is about. Lesser essences count as
+-- thirds of a greater one, also in a stack that does not divide by three:
+-- converting takes them from every bag.
 --
 -- Hold Alt for every option, why one has no value, and the disenchant
 -- materials with their prices.
@@ -68,6 +73,16 @@ local function MaterialPrice(itemID)
 		return math.max(own, (AuctionPrice(lesser) or 0) * 3)
 	end
 	return own
+end
+
+-- An essence's other form: its item ID, how many of it `per` of this one
+-- make, and the key of the option to list it that way.
+local function OtherForm(itemID)
+	if ns.essences[itemID] then
+		return ns.essences[itemID], 1, 3, "greater"
+	elseif greaterOf[itemID] then
+		return greaterOf[itemID], 3, 1, "lesser"
+	end
 end
 
 -- Average worth of disenchanting one item, after the cut, and the
@@ -159,7 +174,9 @@ local function ItemName(itemID)
 	return C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemID) or ("item " .. itemID)
 end
 
-local LABEL = { disenchant = "Disenchant", auction = "Auction", vendor = "Vendor" }
+local LABEL = { disenchant = "Disenchant", auction = "Auction", greater = "Convert to greater", lesser = "Convert to lesser", vendor = "Vendor" }
+-- The options that are an auction listing: as it is, or in its other form.
+local LISTING = { auction = true, greater = true, lesser = true }
 local GREY = 0.6
 
 -- Alt held: every option with its value or why it has none, and the
@@ -170,7 +187,7 @@ local function AddDetails(tooltip, options, missing, parts, level, count)
 		local color = i == 1 and "|cff40c040" or "|cffffffff"
 		tooltip:AddDoubleLine(color .. LABEL[option.key] .. "|r", Money(option.value * count), 1, 1, 1, 1, 1, 1)
 	end
-	for _, key in ipairs({ "disenchant", "auction", "vendor" }) do
+	for _, key in ipairs({ "disenchant", "auction", "greater", "lesser", "vendor" }) do
 		if missing[key] then
 			tooltip:AddDoubleLine(LABEL[key], missing[key], GREY, GREY, GREY, GREY, GREY, GREY)
 		end
@@ -215,6 +232,16 @@ local function Options(link, data, slot)
 		else
 			missing.auction = Auctionator and "no price scanned" or "Auctionator not loaded"
 		end
+		-- An essence can be listed in its other form too.
+		local other, makes, per, key = OtherForm(itemID)
+		if other then
+			local otherPrice = AuctionPrice(other)
+			if otherPrice then
+				options[#options + 1] = { key = key, value = math.floor(otherPrice * makes / per * CUT), item = other, makes = makes, per = per }
+			else
+				missing[key] = Auctionator and "no price scanned" or "Auctionator not loaded"
+			end
+		end
 	end
 	local canDisenchant = IsPlayerSpell and IsPlayerSpell(DISENCHANT_SPELL)
 	if bound and not canDisenchant then
@@ -232,21 +259,42 @@ local function Options(link, data, slot)
 		missing.disenchant = "not uncommon+ armour or weapon"
 	end
 	table.sort(options, function(a, b)
-		return a.value > b.value
+		if a.value ~= b.value then
+			return a.value > b.value
+		end
+		-- Level: an essence stays as it is.
+		return a.item == nil and b.item ~= nil
 	end)
 	-- The auction has to pay for its risk: a listing that does not sell
-	-- costs the deposit.
+	-- costs the deposit. It is weighed against the best option that is not
+	-- a listing; an essence's two listings do not rule each other out.
 	local count = slot and slot.count or StackCount(data)
 	local ruledOut = false
-	if options[1] and options[1].key == "auction" then
-		local other = options[2] and options[2].value or 0
-		local gain = (options[1].value - other) * count
-		local deposit = Deposit(itemID, count, sellPrice)
-		if gain <= deposit then
-			table.remove(options, 1)
-			ruledOut = true
-			missing.auction = ("%s more than %s, deposit %s"):format(Money(gain), other > 0 and LABEL[options[1].key]:lower() or "nothing", Money(deposit))
+	while options[1] and LISTING[options[1].key] do
+		local top, other = options[1], nil
+		for i = 2, #options do
+			if not LISTING[options[i].key] then
+				other = options[i]
+				break
+			end
 		end
+		local otherValue = other and other.value or 0
+		local gain = (top.value - otherValue) * count
+		local deposit
+		if top.item then
+			-- Listed in its other form: that item's deposit, for as many as
+			-- these make.
+			local _, _, _, _, _, _, _, _, _, _, otherSell = C_Item.GetItemInfo(top.item)
+			deposit = Deposit(top.item, math.max(1, math.floor(count * top.makes / top.per)), otherSell)
+		else
+			deposit = Deposit(itemID, count, sellPrice)
+		end
+		if gain > deposit then
+			break
+		end
+		table.remove(options, 1)
+		ruledOut = true
+		missing[top.key] = ("%s more than %s, deposit %s"):format(Money(gain), otherValue > 0 and LABEL[other.key]:lower() or "nothing", Money(deposit))
 	end
 	return options, missing, parts, level, count, ruledOut
 end
