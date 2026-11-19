@@ -3,7 +3,7 @@
 ## Notes: Leveling guides under the quest tracker. Reads RestedXP and WoW-Pro guides, tracks the quests of the current step, points an arrow and sets the map pin. /fg
 ## Author: Pietjan
 ## Version: 1.3
-## OptionalDeps: QuestieDB
+## OptionalDeps: QuestieDB, TomTom
 ## SavedVariables: ForeverGuideDB
 ## SavedVariablesPerCharacter: ForeverGuideCharDB
 
@@ -24,6 +24,7 @@ Watches.lua
 Auto.lua
 Cleanup.lua
 Navigation.lua
+TomTom.lua
 Arrow.lua
 Tracker.lua
 Tracker.xml

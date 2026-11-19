@@ -121,35 +121,94 @@ local function choose(inst, px, py)
 end
 
 ---------------------------------------------------------------------------
--- The player's own waypoint (/way): while it is set the arrow and the pin
--- go there instead of to the guide's goal. It is dropped on arrival.
+-- The player's own waypoints (/way, and other addons through the TomTom
+-- stand-in in TomTom.lua): while any is set the arrow and the pin go to
+-- the nearest of them instead of to the guide's goal. Each is dropped on
+-- arrival. Nav.waypoint is the one currently chosen.
 ---------------------------------------------------------------------------
 local ARRIVED = 10 -- yards
+
+local waypoints = {}
+
+local function clearWaypoints()
+    for i = #waypoints, 1, -1 do
+        waypoints[i] = nil
+    end
+end
 
 -- x, y are zone coordinates (0..100) on `map` (a uiMapID), or on the map
 -- the player is on when none is given. Returns the point, or nil when the
 -- map is unknown or the place cannot be resolved.
-function Nav:SetWaypoint(x, y, map)
+local function newWaypoint(x, y, map, title)
     map = map or C_Map.GetBestMapForUnit("player")
     if not map then
         return nil
     end
-    local p = { map = map, x = x, y = y, radius = ARRIVED }
+    local p = { map = map, x = x, y = y, radius = ARRIVED, title = title }
     if not Maps.Resolve(p) then
         return nil
     end
-    Nav.waypoint = p
+    return p
+end
+
+-- Nearest of the waypoints; one on another continent only when none is
+-- on this one.
+local function nearestWaypoint(inst, px, py)
+    local best, bestDistance
+    for _, p in ipairs(waypoints) do
+        local distance = Maps.Distance(p, inst, px, py)
+        if distance and (not bestDistance or distance < bestDistance) then
+            best, bestDistance = p, distance
+        end
+    end
+    return best or waypoints[1]
+end
+
+-- Replaces every waypoint with this one.
+function Nav:SetWaypoint(x, y, map, title)
+    local p = newWaypoint(x, y, map, title)
+    if not p then
+        return nil
+    end
+    clearWaypoints()
+    waypoints[1] = p
     Nav:Update()
     return p
 end
 
+-- Adds one to those already set.
+function Nav:AddWaypoint(x, y, map, title)
+    local p = newWaypoint(x, y, map, title)
+    if not p then
+        return nil
+    end
+    waypoints[#waypoints + 1] = p
+    Nav:Update()
+    return p
+end
+
+function Nav:RemoveWaypoint(p)
+    for i, q in ipairs(waypoints) do
+        if q == p then
+            table.remove(waypoints, i)
+            Nav:Update()
+            return true
+        end
+    end
+    return false
+end
+
 function Nav:ClearWaypoint()
-    if not Nav.waypoint then
+    if #waypoints == 0 then
         return false
     end
-    Nav.waypoint = nil
+    clearWaypoints()
     Nav:Update()
     return true
+end
+
+function Nav:WaypointCount()
+    return #waypoints
 end
 
 ---------------------------------------------------------------------------
@@ -337,13 +396,15 @@ function Nav:Update()
     end
     local inst, px, py, playerMap = Maps.Player()
 
-    if Nav.waypoint then
-        local distance = Maps.Distance(Nav.waypoint, inst, px, py)
+    for i = #waypoints, 1, -1 do
+        local p = waypoints[i]
+        local distance = Maps.Distance(p, inst, px, py)
         if distance and distance <= ARRIVED then
-            Nav.waypoint = nil
-            ns.Print("waypoint reached.")
+            table.remove(waypoints, i)
+            ns.Print((p.title or "waypoint") .. " reached.")
         end
     end
+    Nav.waypoint = nearestWaypoint(inst, px, py)
 
     for _, arrival in ipairs(Engine.arrivals) do
         local distance = Maps.Distance(arrival.point, inst, px, py)

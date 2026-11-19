@@ -138,8 +138,16 @@ frame:SetScript("OnEnter", function(self)
     if Nav.target and Nav.target.corpse then
         GameTooltip:SetText("Your corpse")
     elseif own then
-        GameTooltip:SetText(("Waypoint %.1f, %.1f"):format(own.x, own.y))
-        GameTooltip:AddLine("/way clear to remove it.", 1, 1, 1)
+        GameTooltip:SetText(own.title or ("Waypoint %.1f, %.1f"):format(own.x, own.y))
+        if own.title then
+            GameTooltip:AddLine(("%s %.1f, %.1f"):format(ns.Maps.Name(own.map) or "", own.x, own.y), 1, 1, 1)
+        end
+        local count = Nav:WaypointCount()
+        if count > 1 then
+            GameTooltip:AddLine(("Nearest of %d waypoints. /way clear removes them all."):format(count), 1, 1, 1)
+        else
+            GameTooltip:AddLine("/way clear to remove it.", 1, 1, 1)
+        end
     elseif Nav.target and Nav.target.quest then
         GameTooltip:SetText(C_QuestLog.GetTitleForQuestID(Nav.target.quest) or "Focused quest")
     else
