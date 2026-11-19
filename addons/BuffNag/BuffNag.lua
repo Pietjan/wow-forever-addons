@@ -7,7 +7,8 @@
 -- window (Escape > Options > Cooldown Manager, or /bn): the buffs on offer
 -- are the ones the game lists for your class there, the group buffs it
 -- knows, a food buff, a flask, elixirs, scrolls and weapon enchants (the
--- last four only when a fitting item is in the bags), and a hunter's pet. Buffs are matched by name,
+-- last four only when a fitting item is in the bags), a hunter's pet, and
+-- the minimap's tracking when none is on. Buffs are matched by name,
 -- so any rank counts. The bar hides in combat, while resting, mounted, on a
 -- flight path or dead.
 
@@ -280,6 +281,29 @@ local function ScanSpellbook()
 	end
 end
 
+-- The tracking spells the character has (Find Herbs, Find Minerals, a
+-- hunter's tracking), from the minimap's own list, and whether one of them
+-- is on. That list also holds the minimap's filters for vendors, trainers
+-- and so on, which are not tracking in this sense. When the game will not
+-- say, there is nothing to nag about.
+local function TrackingSpells()
+	local list, active = {}, false
+	local ok = pcall(function()
+		for index = 1, C_Minimap.GetNumTrackingTypes() do
+			local info = C_Minimap.GetTrackingInfo(index)
+			if type(info) == "table" and info.type == "spell" and info.name then
+				active = active or info.active == true
+				list[#list + 1] = { kind = "tracking", value = info.name, icon = info.texture, text = info.name, index = index,
+					state = "Nothing is being tracked" }
+			end
+		end
+	end)
+	if not ok then
+		return {}, false
+	end
+	return list, active
+end
+
 ------------------------------------------------------------------------------
 -- The catalogue: everything that can be nagged about
 ------------------------------------------------------------------------------
@@ -531,6 +555,14 @@ local function BuildCatalog()
 			auraNames = {}, castNames = {}, party = false, unlessNames = chewing, seedDefault = true, feedSpell = feedPet,
 		})
 	end
+	-- Tracking on the minimap: there once the character has a tracking spell.
+	local tracking = TrackingSpells()
+	if #tracking > 0 then
+		AddEntry({
+			key = "tracking", name = "Tracking", icon = tracking[1].icon or QUESTION_MARK, kind = "tracking", source = "extra",
+			auraNames = {}, castNames = {}, party = false, unlessNames = {}, seedDefault = true,
+		})
+	end
 end
 
 -- A new character starts with the class buffs this file knows, food and
@@ -544,7 +576,7 @@ local function SeedChoices()
 			-- Seeded by an earlier version: count everything it had as
 			-- offered, except the entries added since.
 			for _, key in ipairs(catalogOrder) do
-				if key ~= "flask" and key ~= "elixir" and key ~= "pet" and key ~= "scroll" then
+				if key ~= "flask" and key ~= "elixir" and key ~= "pet" and key ~= "scroll" and key ~= "tracking" then
 					cdb.offered[key] = true
 				end
 			end
@@ -1003,6 +1035,16 @@ local function FamilyCandidates(entry, items, familyNames, blockerNames, mark)
 	return list
 end
 
+-- No tracking spell on: the ones that could be turned on.
+local function TrackingCandidates(entry)
+	entry.expiring = false
+	local list, active = TrackingSpells()
+	if active then
+		return {}
+	end
+	return list
+end
+
 local function ElixirCandidates(entry)
 	return FamilyCandidates(entry, ELIXIRS, ELIXIR_FAMILY_NAMES)
 end
@@ -1323,7 +1365,7 @@ local function IconTooltip(button)
 	GameTooltip:SetOwner(button, "ANCHOR_BOTTOM")
 	GameTooltip:SetText(button.entry.name)
 	if button.missingText then
-		local prefix = button.entry.kind == "pet" and "" or "Missing: "
+		local prefix = (button.entry.kind == "pet" or button.entry.kind == "tracking") and "" or "Missing: "
 		GameTooltip:AddLine(prefix .. button.missingText, 1, 1, 1, true)
 	end
 	if button.applyText then
@@ -1375,6 +1417,9 @@ local function BarIcon(i)
 			if GameTooltip:GetOwner() == self then
 				IconTooltip(self)
 			end
+		elseif mouseButton == "LeftButton" and not down and self.entry and self.entry.fix and self.entry.fix.kind == "tracking" then
+			-- Tracking is turned on the way the minimap's own menu does it.
+			pcall(C_Minimap.SetTracking, self.entry.fix.index, true)
 		end
 	end)
 	button:RegisterForDrag("LeftButton")
@@ -1398,9 +1443,11 @@ end
 local function Missing(entry, choice)
 	local missing = {}
 	entry.endsAt, entry.endDuration = nil, nil
-	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "scroll" or entry.kind == "food" or entry.kind == "pet" or entry.kind == "weapon" or entry.kind == "offhand" then
+	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "scroll" or entry.kind == "food" or entry.kind == "pet" or entry.kind == "tracking" or entry.kind == "weapon" or entry.kind == "offhand" then
 		local list
-		if entry.kind == "flask" then
+		if entry.kind == "tracking" then
+			list = TrackingCandidates(entry)
+		elseif entry.kind == "flask" then
 			list = FlaskCandidates(entry)
 		elseif entry.kind == "elixir" then
 			list = ElixirCandidates(entry)
@@ -1426,7 +1473,7 @@ local function Missing(entry, choice)
 					labels[i] = candidate.text
 				end
 				entry.fix.count, entry.fix.list = #list, table.concat(labels, ", ")
-			elseif entry.kind == "pet" then
+			elseif entry.kind == "pet" or entry.kind == "tracking" then
 				entry.fix.count, entry.fix.list = 1, entry.fix.state
 			else
 				entry.fix.count, entry.fix.list = 1, entry.fix.text
@@ -1556,6 +1603,9 @@ function Refresh()
 					button:SetAttribute("spell", entry.fix.value)
 					button:SetAttribute("unit", castUnit)
 					button.applyText = ("Click to cast %s on %s."):format(entry.fix.text, ShortName(castUnit))
+				elseif entry.fix and entry.fix.kind == "tracking" then
+					button:SetAttribute("type", nil) -- no secure action: the click handler turns it on
+					button.applyText = "Click to turn on " .. entry.fix.text .. "."
 				else
 					button:SetAttribute("type", nil)
 				end
@@ -2335,6 +2385,7 @@ loader:RegisterEvent("PLAYER_UPDATE_RESTING")
 loader:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
 loader:RegisterEvent("PLAYER_CONTROL_GAINED")
 loader:RegisterEvent("BAG_UPDATE_DELAYED")
+loader:RegisterEvent("MINIMAP_UPDATE_TRACKING")
 pcall(loader.RegisterEvent, loader, "COOLDOWN_VIEWER_DATA_LOADED")
 pcall(loader.RegisterEvent, loader, "UNIT_HAPPINESS") -- hunter pet fed, or getting hungry
 pcall(loader.RegisterUnitEvent, loader, "UNIT_PET", "player")
