@@ -11,7 +11,9 @@
 -- replace them within range and nothing is legible beyond it. It then
 -- restyles the name on every such plate: font, size, outline, shadow and
 -- an offset from where Blizzard puts it. The raid marker stays, as it
--- does in Blizzard's mode, unless you turn it off here.
+-- does in Blizzard's mode, unless you turn it off here. Forever
+-- characters have a first name and a surname; the surname can be left
+-- off these plates.
 --
 -- NPC nameplates and NPC floating names are left to the game's own
 -- options. (An NPC name-only mode was tried and dropped: Forever shows
@@ -40,6 +42,7 @@ local DEFAULTS = {
 	x = 0, -- offset from where Blizzard puts the name
 	y = 0,
 	raidIcon = true, -- keep the raid marker above the name
+	firstName = false, -- leave the surname off the name
 }
 
 local FONTS = {
@@ -77,6 +80,58 @@ local function Print(text)
 	DEFAULT_CHAT_FRAME:AddMessage("|cff80c0ffNameOnly|r " .. text)
 end
 
+-- Forever characters have a first name and a surname. UnitName returns
+-- the two apart, and Blizzard's CompactUnitFrame_UpdateName writes both
+-- on the plate, joined; this writes the first one back over them. Text
+-- set on the font string touches none of Blizzard's own fields. A secret
+-- name (by the API's notes a player's is not) can only be handed on, not
+-- tested.
+local IsSecret = issecretvalue or function() return false end
+
+local function ShortenName(unitFrame)
+	local unit = unitFrame.unit
+	if not unit then
+		return
+	end
+	local first = UnitName(unit)
+	if IsSecret(first) or first then
+		unitFrame.name:SetText(first)
+		unitFrame.nameOnlyShortened = true
+	end
+end
+
+-- Put the full name back on a plate whose name was shortened, as Blizzard
+-- would write it. Blizzard only rewrites the name on its own occasions
+-- (a new unit, the mouse over the plate), not when the surname is turned
+-- back on here or the plate leaves name-only mode.
+local function RestoreName(unitFrame)
+	if not unitFrame.nameOnlyShortened then
+		return
+	end
+	unitFrame.nameOnlyShortened = nil
+	local unit = unitFrame.unit
+	if unit then
+		local ok, full = pcall(GetUnitName, unit, true)
+		if ok and (IsSecret(full) or full) then
+			unitFrame.name:SetText(full)
+		end
+	end
+end
+
+-- After each CompactUnitFrame_UpdateName. Raid and party frames come
+-- through there too, and so do nameplates addons may not touch
+-- (forbidden, on which any other call is an error): only the plates this
+-- addon has hooked are its own.
+local function OnUpdateName(frame)
+	if frame:IsForbidden() or not frame.nameOnlyHooked then
+		return
+	end
+	frame.nameOnlyShortened = nil -- Blizzard has just written the full name
+	if db.firstName and frame.IsShowOnlyName and frame:IsShowOnlyName() then
+		ShortenName(frame)
+	end
+end
+
 -- Style the name of one nameplate unit frame, or hand it back to Blizzard
 -- when the plate is not in name-only mode.
 local function Style(unitFrame)
@@ -85,6 +140,7 @@ local function Style(unitFrame)
 		return
 	end
 	if not (unitFrame.IsShowOnlyName and unitFrame:IsShowOnlyName()) then
+		RestoreName(unitFrame)
 		if unitFrame.nameOnlyStyled then
 			-- Blizzard has already re-anchored the name; put its font back
 			-- too, shadow included, by reapplying the font object it set.
@@ -97,6 +153,14 @@ local function Style(unitFrame)
 		return
 	end
 	unitFrame.nameOnlyStyled = true
+
+	-- The plate may have entered name-only mode after Blizzard last wrote
+	-- its name, and the setting may just have changed.
+	if db.firstName then
+		ShortenName(unitFrame)
+	else
+		RestoreName(unitFrame)
+	end
 
 	-- Blizzard's font is already on the name when this runs; only replace
 	-- it when a face, size or outline has been chosen. Whatever is not
@@ -234,16 +298,16 @@ end
 
 local function Status()
 	local font = FONTS[db.font] and (db.font .. " (" .. FONTS[db.font][2] .. ")") or "default"
-	Print(("font %s, size %s, outline %s, shadow %s, offset %d %d, raid marker %s"):format(
+	Print(("font %s, size %s, outline %s, shadow %s, offset %d %d, raid marker %s, surname %s"):format(
 		font, db.size > 0 and tostring(db.size) or "default", db.outline, db.shadow and "on" or "off",
-		db.x, db.y, db.raidIcon and "shown" or "hidden"))
+		db.x, db.y, db.raidIcon and "shown" or "hidden", db.firstName and "hidden" or "shown"))
 end
 
 local function Usage()
 	Status()
 	Print("/nameonly size 8-32 | font friz, arial, skurri or morpheus | outline none, thin or thick")
 	Print("Each of those also takes 'default' for Blizzard's own.")
-	Print("/nameonly shadow on|off | x -50..50 | y -50..50 | raidicon on|off | setup | cvars | reset")
+	Print("/nameonly shadow on|off | x -50..50 | y -50..50 | raidicon on|off | firstname on|off | setup | cvars | reset")
 	Print("The addon sets the nameplate and floating-name options it needs at every login; setup reapplies them now.")
 end
 
@@ -282,15 +346,17 @@ local function Command(msg)
 			return Print("Outline is none, thin, thick or default.")
 		end
 		db.outline = arg
-	elseif cmd == "shadow" or cmd == "raidicon" then
+	elseif cmd == "shadow" or cmd == "raidicon" or cmd == "firstname" then
 		local value = OnOff(arg)
 		if value == nil then
 			return Print(cmd .. " is on or off.")
 		end
 		if cmd == "shadow" then
 			db.shadow = value
-		else
+		elseif cmd == "raidicon" then
 			db.raidIcon = value
+		else
+			db.firstName = value
 		end
 	elseif cmd == "x" or cmd == "y" then
 		local n = Number(arg, -50, 50)
@@ -392,6 +458,7 @@ local function RegisterSettings()
 	Slider("x", "Sideways", "Moves the name from where the game puts it; positive is to the right.", -50, 50, 1, Offset, nil, nil, Styled("x"))
 	Slider("y", "Up or down", "Moves the name from where the game puts it; positive is up.", -50, 50, 1, Offset, nil, nil, Styled("y"))
 	Checkbox("raidIcon", "Raid marker above the name", nil, nil, nil, Styled("raidIcon"))
+	Checkbox("firstName", "First name only", "Leaves the surname off friendly players' names on their nameplates.", nil, nil, Styled("firstName"))
 
 	Settings.RegisterAddOnCategory(category)
 end
@@ -426,6 +493,9 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		SLASH_NAMEONLY1 = "/nameonly"
 		SLASH_NAMEONLY2 = "/nonly"
 		SlashCmdList.NAMEONLY = Command
+		if type(CompactUnitFrame_UpdateName) == "function" then
+			hooksecurefunc("CompactUnitFrame_UpdateName", OnUpdateName)
+		end
 		local ok, err = pcall(RegisterSettings)
 		if not ok then
 			Print(("options panel unavailable (%s); use /nameonly instead"):format(tostring(err)))
