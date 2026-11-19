@@ -10,6 +10,7 @@ Downloads, one zip per addon: https://pietjan.github.io/wow-forever-addons/
 | BuffNag | Shows an icon, and pings, while a buff you chose is missing on you or your party. Configured from a tab in the Cooldown Manager's settings. /bn |
 | BulkInbox | A list beside the inbox of every item and sum of money in your mail: take all, the money, or the rows you mark. One take at a time, C.O.D. never paid, stops cleanly on full bags. /bulkinbox |
 | CompactTip | Unit tooltips you can read at a glance: one line per quest objective naming only who still needs it, names in class colour, and item and spell IDs while Alt is held. |
+| CombatScroll | Scrolling combat text in two columns: what you take falls on the left, your own damage and healing rise on the right with the spell's icon. Needs its own combat log filter (/cscroll setup). /cscroll |
 | CooldownNag | An icon pops up a few seconds before an ability you chose comes off cooldown, and stays a moment once it is ready. Configured from a tab in the Cooldown Manager's settings. /cdn |
 | FishClick | With a fishing pole equipped, double-click into the world to cast your line. /fish |
 | ForeverChat | The default chat in Forever's own style, with short channel names and one chat setup shared by all your characters. /fchat |
