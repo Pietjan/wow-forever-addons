@@ -40,6 +40,8 @@ local DEFAULTS = { -- account wide: the bar and the sound
 -- satisfies the buff; "know" spells, one of which has to be in the
 -- spellbook; "cast" is tried in order on a click. "mana" skips units
 -- without mana, "unless" excuses a unit (eating excuses missing food).
+-- "radius" is for a buff without a range, cast around yourself: the yards
+-- it reaches, from the game's data.
 local SEEDS = {
 	-- priest
 	{ scope = "party", auras = { 1243, 21562 }, know = { 1243 }, cast = { 1243 } },
@@ -62,7 +64,7 @@ local SEEDS = {
 	-- warlock
 	{ scope = "self", label = "Demon Armor", auras = { 687, 706 }, know = { 687, 706 }, cast = { 706, 687 } },
 	-- warrior
-	{ scope = "party", auras = { 6673 }, know = { 6673 }, cast = { 6673 }, default = false },
+	{ scope = "party", auras = { 6673 }, know = { 6673 }, cast = { 6673 }, default = false, radius = 20 },
 	-- hunter
 	{ scope = "self", label = "Aspect", auras = { 13165, 13163, 5118, 13159, 13161, 20043, 469145, 34074 }, know = { 13165, 13163, 5118 }, cast = { 13165, 13163 } },
 	{ scope = "self", auras = { 19506 }, know = { 19506 }, cast = { 19506 } },
@@ -423,6 +425,7 @@ local function BuildCatalog()
 				end
 			end
 			matched.mana = matched.mana or seed.mana
+			matched.radius = matched.radius or seed.radius
 			matched.seedDefault = seed.default ~= false
 			matched.party = matched.party or seed.scope == "party"
 		elseif known then
@@ -430,7 +433,7 @@ local function BuildCatalog()
 			AddEntry({
 				key = "spell:" .. firstName, name = firstName, icon = SpellIcon(seed.cast[1]), kind = "aura", source = "seed",
 				auraNames = auraNames, castNames = castNames, party = seed.scope == "party", mana = seed.mana,
-				unlessNames = {}, seedDefault = seed.default ~= false,
+				radius = seed.radius, unlessNames = {}, seedDefault = seed.default ~= false,
 			})
 		end
 	end
@@ -669,40 +672,53 @@ local function UnitUsable(unit)
 	return ok and usable
 end
 
+-- One question to the game, nil when it will not answer: an error, or a
+-- secret value, which cannot be tested.
+local function Ask(fn, ...)
+	local ok, first, second = pcall(fn, ...)
+	if ok and not IsSecret(first) and not IsSecret(second) then
+		return first, second
+	end
+end
+
+local FOLLOW_DISTANCE = 4 -- CheckInteractDistance: within 28 yards
+
 -- Whether a party member is close enough to be buffed with a spell. Far
 -- ones are not nagged about: nothing can be done for them from here, and
 -- the ticker brings them back once they come close. Asked of the spell
--- itself; when the game will not say, near it is.
-local function UnitNear(unit, spellName)
+-- itself. A spell without a range (Battle Shout, cast around yourself)
+-- cannot be asked: there the distance decides, against the buff's radius
+-- when that is known, else against the follow distance. UnitInRange is
+-- no help, its answer is secret. Only a yes counts: when the game will
+-- not say, far it is.
+local function UnitNear(unit, spellName, radius)
 	if unit == "player" then
 		return true
 	end
-	local ok, near = pcall(function()
-		if spellName then
-			if C_Spell and C_Spell.IsSpellInRange then
-				local inRange = C_Spell.IsSpellInRange(spellName, unit)
-				if inRange ~= nil then
-					return inRange
-				end
-			elseif IsSpellInRange then
-				local inRange = IsSpellInRange(spellName, unit)
-				if inRange ~= nil then
-					return inRange == 1 or inRange == true
-				end
+	if spellName then
+		local inRange
+		if C_Spell and C_Spell.IsSpellInRange then
+			inRange = Ask(C_Spell.IsSpellInRange, spellName, unit)
+		elseif IsSpellInRange then
+			inRange = Ask(IsSpellInRange, spellName, unit)
+			if inRange ~= nil then
+				inRange = inRange == 1 or inRange == true
 			end
 		end
-		if UnitInRange then
-			local inRange, checked = UnitInRange(unit)
-			if checked then
-				return inRange and true or false
-			end
+		if inRange ~= nil then
+			return inRange
 		end
-		return true
-	end)
-	if not ok then
-		return true
 	end
-	return near
+	if radius and UnitDistanceSquared then
+		local distance, checked = Ask(UnitDistanceSquared, unit)
+		if checked and type(distance) == "number" then
+			return distance <= radius * radius
+		end
+	end
+	if CheckInteractDistance then
+		return Ask(CheckInteractDistance, unit, FOLLOW_DISTANCE) == true
+	end
+	return false
 end
 
 local function UnitHasMana(unit)
@@ -1433,7 +1449,7 @@ local function Missing(entry, choice)
 	local allExpiring = true
 	local castSpell = entry.fix and entry.fix.value
 	for _, unit in ipairs(units) do
-		if UnitUsable(unit) and (not entry.mana or UnitHasMana(unit)) and UnitNear(unit, castSpell) then
+		if UnitUsable(unit) and (not entry.mana or UnitHasMana(unit)) and UnitNear(unit, castSpell, entry.radius) then
 			local has, present, endTime, duration = UnitHas(unit, entry.auraNames, true)
 			if has == false and not UnitHas(unit, entry.unlessNames, 0) then
 				missing[#missing + 1] = unit
@@ -2241,16 +2257,24 @@ SlashCmdList.BUFFNAG = function(msg)
 					end
 					return n
 				end)
-				local okRange, inRange, checked = pcall(UnitInRange, unit)
-				Print("  %s (%s): usable %s, UnitInRange %s/%s, buffs readable %s (%s)", unit, ShortName(unit), tostring(UnitUsable(unit)),
-					okRange and tostring(inRange) or "error", okRange and tostring(checked) or tostring(inRange), tostring(okAura), tostring(auraCount))
+				-- The game's own answers to what UnitNear asks, as they come.
+				local function Answer(fn, ...)
+					local ok, value = pcall(fn, ...)
+					return not ok and "error" or IsSecret(value) and "secret" or tostring(value)
+				end
+				local distance, checked = Ask(UnitDistanceSquared, unit)
+				Print("  %s (%s): usable %s, UnitInRange %s, distance %s, follow distance %s, buffs readable %s (%s)", unit, ShortName(unit),
+					tostring(UnitUsable(unit)), Answer(UnitInRange, unit),
+					(checked and type(distance) == "number") and ("%.0f yd"):format(math.sqrt(distance)) or "unknown",
+					Answer(CheckInteractDistance, unit, FOLLOW_DISTANCE), tostring(okAura), tostring(auraCount))
 				for _, key in ipairs(catalogOrder) do
 					local entry, choice = catalog[key], cdb.nag[key]
 					if choice and choice.party and entry.kind == "aura" then
 						local has, present = UnitHas(unit, entry.auraNames, true)
-						local spell = entry.castNames[1]
-						Print("    %s: %s, %s", entry.name, has == nil and "unreadable" or has and "ok" or present and "running out" or "missing",
-							UnitNear(unit, spell) and "in range" or "far")
+						local spell = (entry.fix and entry.fix.value) or entry.castNames[1]
+						Print("    %s: %s, %s in range %s, %s", entry.name, has == nil and "unreadable" or has and "ok" or present and "running out" or "missing",
+							tostring(spell), spell and Answer(C_Spell.IsSpellInRange, spell, unit) or "not asked",
+							UnitNear(unit, spell, entry.radius) and "near" or "far")
 					end
 				end
 			end
