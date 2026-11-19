@@ -408,6 +408,25 @@ local crestFor, crestText
 local dim = {}
 local BRIGHT = { [Types.UnitName or -1] = true, [TITLE] = true, [PLAYER] = true, [OBJECTIVE] = true }
 
+-- The unit a tooltip is about, as a token the unit functions take. The
+-- game finds it from the GUID in the tooltip's data (its own
+-- TooltipUtil.GetDisplayedUnit does the same), so the tooltip a unit frame
+-- asks for ("party1") is known as well as that of a unit under the mouse
+-- in the world. When that gives no token, or a secret one, it is taken to
+-- be the unit under the mouse.
+local function UnitOf(data)
+	local guid = data.guid
+	if UnitTokenFromGUID and (Secret(guid) or type(guid) == "string") then
+		local ok, unit = pcall(UnitTokenFromGUID, guid)
+		if ok and not Secret(unit) and type(unit) == "string" then
+			return unit
+		end
+	end
+	if UnitExists("mouseover") then
+		return "mouseover"
+	end
+end
+
 -- Folds the quest lines among `lines`: the first is replaced by the folded
 -- rows, the rest by nothing.
 local function FoldQuests(lines)
@@ -442,8 +461,9 @@ Processor.AddTooltipPreCall(Enum.TooltipDataType.Unit, function(tooltip, data)
 	end
 	FoldQuests(data.lines)
 	local trimmed = {}
-	if UnitExists("mouseover") then
-		local fine, crest = pcall(Trim, data.lines, "mouseover", trimmed)
+	local unit = UnitOf(data)
+	if unit then
+		local fine, crest = pcall(Trim, data.lines, unit, trimmed)
 		if fine then
 			for line, rows in pairs(trimmed) do
 				replace[line] = rows
@@ -508,8 +528,8 @@ Processor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip, data)
 		GameTooltipTextRight1:Show()
 	end
 	crestFor, crestText = nil, nil
-	local unit = "mouseover"
-	if not UnitExists(unit) then
+	local unit = type(data) == "table" and UnitOf(data)
+	if not unit then
 		return
 	end
 	local isPlayer = UnitIsPlayer(unit)
