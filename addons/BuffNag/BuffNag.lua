@@ -42,10 +42,13 @@ local DEFAULTS = { -- account wide: the bar and the sound
 -- spellbook; "cast" is tried in order on a click. "mana" skips units
 -- without mana, "unless" excuses a unit (eating excuses missing food).
 -- "radius" is for a buff without a range, cast around yourself: the yards
--- it reaches, from the game's data.
+-- it reaches, from the game's data. "lines" are buffs that satisfy it only
+-- when their tooltip has the given text: a campfire's Camp Benefits
+-- (1229741) lists each camp item it applies, and its First Aid Kit gives the
+-- Stamina of Fortitude rank 5, which does not stack with Fortitude.
 local SEEDS = {
 	-- priest
-	{ scope = "party", auras = { 1243, 21562 }, know = { 1243 }, cast = { 1243 } },
+	{ scope = "party", auras = { 1243, 21562 }, know = { 1243 }, cast = { 1243 }, lines = { [1229741] = "First Aid Kit:" } },
 	{ scope = "party", auras = { 14752, 27681 }, know = { 14752 }, cast = { 14752 }, mana = true },
 	{ scope = "party", auras = { 976, 27683 }, know = { 976 }, cast = { 976 }, default = false },
 	{ scope = "self", auras = { 588 }, know = { 588 }, cast = { 588 } },
@@ -310,7 +313,8 @@ end
 
 -- An entry: key, name, icon, auraNames (set), castNames (list, in order of
 -- preference), party (default for a new choice), kind ("aura", "food", "pet",
--- "weapon", "offhand"), mana, unlessNames.
+-- "weapon", "offhand"), mana, unlessNames, auraLines (aura name -> text its
+-- tooltip must show to count, see SEEDS).
 
 local function AddEntry(entry)
 	local existing = catalog[entry.key]
@@ -408,6 +412,13 @@ local function BuildCatalog()
 	-- spellbook has the spell.
 	for _, seed in ipairs(SEEDS) do
 		local auraNames, castNames, known = {}, {}, false
+		local auraLines = {}
+		for id, text in pairs(seed.lines or {}) do
+			local name = SpellName(id)
+			if name then
+				auraLines[name] = text
+			end
+		end
 		for _, id in ipairs(seed.auras) do
 			local name = SpellName(id)
 			if name then
@@ -443,6 +454,10 @@ local function BuildCatalog()
 			for name in pairs(auraNames) do
 				matched.auraNames[name] = true
 			end
+			for name, text in pairs(auraLines) do
+				matched.auraLines = matched.auraLines or {}
+				matched.auraLines[name] = text
+			end
 			for _, name in ipairs(castNames) do
 				if not tContains(matched.castNames, name) then
 					matched.castNames[#matched.castNames + 1] = name
@@ -456,7 +471,7 @@ local function BuildCatalog()
 			local firstName = seed.label or SpellName(seed.cast[1]) or SpellName(seed.auras[1])
 			AddEntry({
 				key = "spell:" .. firstName, name = firstName, icon = SpellIcon(seed.cast[1]), kind = "aura", source = "seed",
-				auraNames = auraNames, castNames = castNames, party = seed.scope == "party", mana = seed.mana,
+				auraNames = auraNames, auraLines = auraLines, castNames = castNames, party = seed.scope == "party", mana = seed.mana,
 				radius = seed.radius, unlessNames = {}, seedDefault = seed.default ~= false,
 			})
 		end
@@ -635,11 +650,32 @@ local function SoonFor(duration)
 	return math.max(db.soonMin, math.min(db.soonMax, duration * db.soonShare))
 end
 
+-- Whether the tooltip of a unit's index-th helpful aura has a line holding
+-- the text (plain, not a pattern). Unreadable or secret text counts as no.
+local function TooltipShows(unit, index, text)
+	if not (text and C_TooltipInfo and C_TooltipInfo.GetUnitAura) then
+		return false
+	end
+	local ok, data = pcall(C_TooltipInfo.GetUnitAura, unit, index, "HELPFUL")
+	if not ok or type(data) ~= "table" or type(data.lines) ~= "table" then
+		return false
+	end
+	for _, line in ipairs(data.lines) do
+		local left = line.leftText
+		if type(left) == "string" and not IsSecret(left) and left:find(text, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
 -- Whether a unit has one of the named buffs with enough time left; nil when
 -- the game would not let us look. "soon" true applies the running-out
 -- margin; false or 0 accepts any time left. The second value says whether
 -- the buff is there at all, so a running-out buff can be told from none.
-local function UnitHas(unit, names, soon)
+-- "lines" (aura name -> text) also accepts those auras when their tooltip
+-- shows the text.
+local function UnitHas(unit, names, soon, lines)
 	if not next(names) then
 		return false, false
 	end
@@ -658,7 +694,7 @@ local function UnitHas(unit, names, soon)
 				if not aura then
 					break
 				end
-				if names[aura.name] then
+				if names[aura.name] or TooltipShows(unit, i, lines and lines[aura.name]) then
 					present = true
 					local left = aura.expirationTime and aura.expirationTime > 0 and (aura.expirationTime - now) or math.huge
 					Note(left, aura.expirationTime, aura.duration)
@@ -675,7 +711,7 @@ local function UnitHas(unit, names, soon)
 				if not name then
 					break
 				end
-				if names[name] then
+				if names[name] or TooltipShows(unit, i, lines and lines[name]) then
 					present = true
 					local left = expirationTime and expirationTime > 0 and (expirationTime - now) or math.huge
 					Note(left, expirationTime, duration)
@@ -1497,7 +1533,7 @@ local function Missing(entry, choice)
 	local castSpell = entry.fix and entry.fix.value
 	for _, unit in ipairs(units) do
 		if UnitUsable(unit) and (not entry.mana or UnitHasMana(unit)) and UnitNear(unit, castSpell, entry.radius) then
-			local has, present, endTime, duration = UnitHas(unit, entry.auraNames, true)
+			local has, present, endTime, duration = UnitHas(unit, entry.auraNames, true, entry.auraLines)
 			if has == false and not UnitHas(unit, entry.unlessNames, 0) then
 				missing[#missing + 1] = unit
 				allExpiring = allExpiring and present
@@ -2320,7 +2356,7 @@ SlashCmdList.BUFFNAG = function(msg)
 				for _, key in ipairs(catalogOrder) do
 					local entry, choice = catalog[key], cdb.nag[key]
 					if choice and choice.party and entry.kind == "aura" then
-						local has, present = UnitHas(unit, entry.auraNames, true)
+						local has, present = UnitHas(unit, entry.auraNames, true, entry.auraLines)
 						local spell = (entry.fix and entry.fix.value) or entry.castNames[1]
 						Print("    %s: %s, %s in range %s, %s", entry.name, has == nil and "unreadable" or has and "ok" or present and "running out" or "missing",
 							tostring(spell), spell and Answer(C_Spell.IsSpellInRange, spell, unit) or "not asked",
