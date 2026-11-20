@@ -6,7 +6,7 @@
 -- frame still wears the 2004 tab, border and input-box textures. This
 -- puts the Forever pieces on it:
 --
---   tabs         common-internaltab, gold outline on the selected one
+--   tabs         the auction house's: bronze, gold when selected
 --   window       the tooltip's thin bronze border, fading with the
 --                background exactly as the game fades that
 --   input box    the same border, on a dark fill: a slim extension of
@@ -176,53 +176,133 @@ end
 ---------------------------------------------------------------------------
 -- Tabs
 
+-- The auction house's tabs (PanelTabButtonTemplate): three pieces each,
+-- uiframe-tab at rest (Forever's bronze c60), uiframe-activetab when
+-- selected (gold; Forever has no c60 of it, the auction house shows the
+-- plain one too), and on hover the rest pieces once more, added at 40%.
+-- The selected tab has no hover, as the auction house disables it.
+--
+-- Chat tabs stand on top of their window, so they are drawn the way the
+-- auction house draws the tabs above its lists (Auctions, Bids;
+-- PanelTopTabButtonMixin): the art upside down with its top quarter
+-- left off, standing on the tab's bottom. Offsets and sizes are that
+-- template's; the ends hang a little past the button, which is shadow.
+
 local TAB_PIECES = {
 	"Left", "Middle", "Right",
 	"ActiveLeft", "ActiveMiddle", "ActiveRight",
 	"HighlightLeft", "HighlightMiddle", "HighlightRight",
 }
 
-local TAB_TOP = 7 -- art inset from the top of the tab button
-local TAB_BOTTOM = 0 -- and from its bottom
+local TOP_TAB_HEIGHT = 0.75 -- of the art's height, as the auction house's top tabs
+-- The auction house's selected top tab stands 4.5 above the others;
+-- on the chat window that is too much, so it is cut lower, to this.
+local ACTIVE_RISE = 2
+local HOVER_ALPHA = 0.4
 
--- The gold outline of the selected tab and the pale one of the hovered
--- tab are drawn smaller in their textures than the tab itself: laid over
--- the same rectangle they float a few pixels inside the bronze edge, and
--- unevenly so once the tab is stretched to its text. Measured in the
--- 96 by 30 art, the tab's edge runs through 4.5 from the left, right and
--- top, the selected outline through 8, the hover outline through 8.5.
--- So each outline is drawn on a rectangle that much larger than the tab
--- (in art pixels: to each side, and above), scaled with the tab, which
--- puts its line on the tab's edge at any width. The bottoms stay level.
-local ART_WIDTH, ART_HEIGHT = 96, 30
-local SELECTED_OVERHANG = { side = 4.2, top = 4.77 }
-local HOVER_OVERHANG = { side = 4.86, top = 5.58 }
+-- Where the art's ends sit, against the tab button's left and right.
+local REST_SIDES = { left = -3, right = 7 }
+local ACTIVE_SIDES = { left = -1, right = 8 }
 
-local function PlaceOutline(texture, body, overhang, width, height)
-	local side = overhang.side * width / ART_WIDTH
-	local top = overhang.top * height / ART_HEIGHT
-	texture:ClearAllPoints()
-	texture:SetPoint("TOPLEFT", body, "TOPLEFT", -side, top)
-	texture:SetPoint("BOTTOMRIGHT", body, "BOTTOMRIGHT", side, 0)
+-- Atlas sizes, from the game when it says, else those of build 1.60.1.
+local FALLBACK_SIZE = {
+	["uiframe-tab-left"] = { 35, 36 }, ["uiframe-tab-right"] = { 37, 36 }, ["_uiframe-tab-center"] = { 1, 36 },
+	["uiframe-activetab-left"] = { 35, 42 }, ["uiframe-activetab-right"] = { 37, 42 }, ["_uiframe-activetab-center"] = { 1, 42 },
+}
+
+local function AtlasSize(atlas, plain)
+	local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas)
+	if type(info) == "table" and type(info.width) == "number" and type(info.height) == "number"
+		and not IsSecret(info.width) and not IsSecret(info.height) then
+		return info.width, info.height
+	end
+	local size = FALLBACK_SIZE[plain]
+	return size[1], size[2]
 end
 
-local tabs = {} -- tab -> { selected = texture }
+-- One tab's worth of a piece set: left, middle and right textures.
+local function MakeSet(tab, layer, sublevel, names, sides, rise)
+	local set = { sides = sides }
+	for _, key in ipairs({ "left", "middle", "right" }) do
+		local atlas = names[key]
+		local texture = tab:CreateTexture(nil, layer, nil, sublevel)
+		texture:SetAtlas(atlas.name)
+		local width, height = AtlasSize(atlas.name, atlas.plain)
+		set[key] = texture
+		set[key .. "Width"] = width
+		set.artHeight = height
+	end
+	-- The rest tab's height, plus the rise, of this set's art.
+	local _, restArtHeight = AtlasSize(art.tabRest.left.name, art.tabRest.left.plain)
+	local restHeight = restArtHeight * TOP_TAB_HEIGHT
+	local height = math.min(restHeight + (rise or 0), set.artHeight)
+	set.cut = 1 - height / set.artHeight
+	for _, key in ipairs({ "left", "middle", "right" }) do
+		set[key]:SetHeight(height)
+	end
+	set.left:SetPoint("BOTTOMLEFT", tab, "BOTTOMLEFT", sides.left, 0)
+	set.right:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", sides.right, 0)
+	set.middle:SetPoint("BOTTOMLEFT", set.left, "BOTTOMRIGHT")
+	set.middle:SetPoint("BOTTOMRIGHT", set.right, "BOTTOMLEFT")
+	return set
+end
+
+-- The ends at their own widths while they fit, as the auction house has
+-- them. A chat tab can be narrower than the two ends together (it is
+-- sized to its name, from 32 up); then each end gives up part of its
+-- inner side, so the outer edges and corners still show whole.
+local function LayoutSet(set, tabWidth)
+	local span = tabWidth - set.sides.left + set.sides.right
+	local leftWidth, rightWidth = set.leftWidth, set.rightWidth
+	local ends = leftWidth + rightWidth
+	if span < ends then
+		leftWidth = math.max(span, 0) * leftWidth / ends
+		rightWidth = math.max(span, 0) - leftWidth
+	end
+	set.left:SetWidth(leftWidth)
+	set.right:SetWidth(rightWidth)
+	set.left:SetTexCoord(0, leftWidth / set.leftWidth, 1, set.cut)
+	set.right:SetTexCoord(1 - rightWidth / set.rightWidth, 1, 1, set.cut)
+	set.middle:SetTexCoord(0, 1, 1, set.cut)
+	set.hasMiddle = span > ends
+end
+
+local function ShowSet(set, shown)
+	set.left:SetShown(shown)
+	set.right:SetShown(shown)
+	set.middle:SetShown(shown and set.hasMiddle or false)
+end
+
+local function ForSet(set, fn, ...)
+	fn(set.left, ...)
+	fn(set.middle, ...)
+	fn(set.right, ...)
+end
+
+local tabs = {} -- tab -> { rest = set, active = set, hover = set }
 
 local function UpdateTab(tab, selected)
 	local parts = tabs[tab]
 	if not parts then
 		return
 	end
-	parts.selected:SetShown(selected and true or false)
+	selected = selected and true or false
+	ShowSet(parts.rest, not selected)
+	ShowSet(parts.active, selected)
+	ShowSet(parts.hover, not selected)
 	-- Whisper tabs carry the colour of their chat type; Blizzard has just
-	-- put it on the text, and the outline takes it too.
+	-- put it on the text, and the gold of the selected tab takes it too.
 	local color = tab.selectedColorTable
 	if color then
-		parts.selected:SetDesaturated(true)
-		parts.selected:SetVertexColor(color.r, color.g, color.b)
+		ForSet(parts.active, function(texture)
+			texture:SetDesaturated(true)
+			texture:SetVertexColor(color.r, color.g, color.b)
+		end)
 	else
-		parts.selected:SetDesaturated(false)
-		parts.selected:SetVertexColor(1, 1, 1)
+		ForSet(parts.active, function(texture)
+			texture:SetDesaturated(false)
+			texture:SetVertexColor(1, 1, 1)
+		end)
 		local text = tab:GetFontString()
 		if text and selected then
 			text:SetTextColor(1, 1, 1)
@@ -241,7 +321,7 @@ end
 local function SkinTab(frame)
 	local name = frame:GetName()
 	local tab = name and _G[name .. "Tab"]
-	if not tab or tabs[tab] or not art.tab then
+	if not tab or tabs[tab] or not art.tabRest then
 		return
 	end
 	for _, key in ipairs(TAB_PIECES) do
@@ -250,50 +330,31 @@ local function SkinTab(frame)
 			piece:SetAlpha(0)
 		end
 	end
-	-- The tab button is 32 high with its text low in it. The art takes
-	-- the lower 25, which puts its foot on the window's top edge.
-	local body = tab:CreateTexture(nil, "BACKGROUND", nil, 1)
-	body:SetAtlas(art.tab)
-	body:SetPoint("TOPLEFT", tab, "TOPLEFT", 1, -TAB_TOP)
-	body:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", -1, TAB_BOTTOM)
 
-	local selected = tab:CreateTexture(nil, "BORDER", nil, 1)
-	selected:SetAtlas(art.tabSelected or art.tab)
-	selected:SetAllPoints(body)
-	selected:Hide()
-
-	local hover
-	if art.tabHover then
-		hover = tab:CreateTexture(nil, "HIGHLIGHT")
-		hover:SetAtlas(art.tabHover)
-		hover:SetAllPoints(body)
-		hover:SetBlendMode("ADD")
-	end
+	local parts = {
+		rest = MakeSet(tab, "BACKGROUND", 1, art.tabRest, REST_SIDES),
+		active = MakeSet(tab, "BACKGROUND", 2, art.tabActive or art.tabRest, ACTIVE_SIDES, ACTIVE_RISE),
+		hover = MakeSet(tab, "HIGHLIGHT", 0, art.tabRest, REST_SIDES),
+	}
+	ForSet(parts.hover, function(texture)
+		texture:SetBlendMode("ADD")
+		texture:SetAlpha(HOVER_ALPHA)
+	end)
 
 	-- The game resizes tabs to their names and to the room in the dock.
-	local function Layout(_, tabWidth, tabHeight)
-		if IsSecret(tabWidth) or IsSecret(tabHeight) or type(tabWidth) ~= "number" or type(tabHeight) ~= "number" then
+	local function Layout(_, tabWidth)
+		if IsSecret(tabWidth) or type(tabWidth) ~= "number" then
 			return
 		end
-		local width, height = tabWidth - 2, tabHeight - TAB_TOP - TAB_BOTTOM
-		if width <= 0 or height <= 0 then
-			return
+		for _, set in pairs(parts) do
+			LayoutSet(set, tabWidth)
 		end
-		if art.tabSelected then
-			PlaceOutline(selected, body, SELECTED_OVERHANG, width, height)
-		end
-		if hover then
-			PlaceOutline(hover, body, HOVER_OVERHANG, width, height)
-		end
+		UpdateTab(tab, IsTabSelected(frame))
 	end
+	tabs[tab] = parts
 	tab:HookScript("OnSizeChanged", Layout)
-	local ok, tabWidth, tabHeight = pcall(tab.GetSize, tab)
-	if ok then
-		Layout(tab, tabWidth, tabHeight)
-	end
-
-	tabs[tab] = { selected = selected }
-	UpdateTab(tab, IsTabSelected(frame))
+	local ok, tabWidth = pcall(tab.GetWidth, tab)
+	Layout(tab, ok and tabWidth or 0)
 end
 
 ---------------------------------------------------------------------------
@@ -546,9 +607,20 @@ local function FindArt()
 	art.border = art.cornerTopLeft and art.cornerTopRight and art.cornerBottomLeft and art.cornerBottomRight
 		and art.edgeTop and art.edgeBottom and art.edgeLeft and art.edgeRight and true
 
-	art.tab = Atlas("common-internaltab")
-	art.tabSelected = Atlas("common-internaltab-selected")
-	art.tabHover = Atlas("common-internaltab-hover")
+	-- The auction house's tabs; see Tabs.
+	local function TabSet(prefix)
+		local set = {}
+		for key, plain in pairs({ left = prefix .. "-left", middle = "_" .. prefix .. "-center", right = prefix .. "-right" }) do
+			local name = Atlas(plain)
+			if not name then
+				return nil
+			end
+			set[key] = { name = name, plain = plain }
+		end
+		return set
+	end
+	art.tabRest = TabSet("uiframe-tab")
+	art.tabActive = TabSet("uiframe-activetab")
 
 end
 
