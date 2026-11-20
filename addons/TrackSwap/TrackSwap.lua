@@ -6,7 +6,8 @@
 -- any other tracking, such as Find Fish, and it stays out of the way until
 -- you come back to herbs or minerals. It also waits out combat, death,
 -- an open loot window and any cast or channel, since the swap itself would
--- interrupt those.
+-- interrupt those. And it pauses while you are resting, in an inn or a
+-- city, where there is nothing to gather.
 
 local ADDON_NAME = ...
 
@@ -174,7 +175,9 @@ local function SpellCast(spellID)
 end
 
 local function Swap()
-	if not db.enabled or InCombatLockdown() or UnitIsDeadOrGhost("player") or Busy() then
+	-- Resting is asked last: Busy() also notes a cast it sees, to hold a
+	-- moment longer after it, and should go on doing so in an inn.
+	if not db.enabled or InCombatLockdown() or UnitIsDeadOrGhost("player") or Busy() or IsResting() then
 		return
 	end
 	local herbs, herbsActive = Find(FIND_HERBS)
