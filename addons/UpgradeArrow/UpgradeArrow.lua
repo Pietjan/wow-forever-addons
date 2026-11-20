@@ -370,6 +370,20 @@ function UpgradeArrow.IsUpgrade(link)
 	return result and result.upgrade or false
 end
 
+-- The workings behind IsUpgrade, for other addons: nil while the item is
+-- not cached, else { upgrade, score, against, againstLinks, empty }, where
+-- score and against are missing for an item you cannot use. Read only.
+function UpgradeArrow.Evaluate(link)
+	return Evaluate(link)
+end
+
+-- Calls fn after anything that changes the answers: gear, level, role or
+-- weights.
+local listeners = {}
+function UpgradeArrow.OnChange(fn)
+	listeners[#listeners + 1] = fn
+end
+
 -- An arrow texture on frame (top right), for other addons.
 function UpgradeArrow.CreateArrow(frame)
 	local arrow = frame:CreateTexture(nil, "OVERLAY", nil, 7)
@@ -580,6 +594,9 @@ local function Invalidate()
 	pcall(UpdateMerchant)
 	if Baganator and Baganator.API and Baganator.API.RequestItemButtonsRefresh then
 		Baganator.API.RequestItemButtonsRefresh()
+	end
+	for _, fn in ipairs(listeners) do
+		pcall(fn)
 	end
 end
 
