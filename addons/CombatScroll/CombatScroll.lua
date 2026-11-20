@@ -576,18 +576,20 @@ end
 --   auto-attacking yourself and have a pet;
 -- - ranged: the icon of the weapon in your ranged slot;
 -- - a damage shield: the item or aura that has one (see ShieldIcon);
--- - a direct spell hit, miss or heal: a cast of a spell that hits directly
+-- - a direct spell hit or heal: a cast of a spell that hits directly
 --   in that school, from the last DIRECT_WINDOW seconds: the oldest one
 --   not used yet (a projectile is still in the air), else the latest one
 --   (an area spell hits many). A channel such as Arcane Missiles hits
 --   every `every` seconds for as long as CHANNEL_WINDOW;
+-- - a spell that misses outright: your latest cast (see MissIcon);
 -- - a tick: of the spells that tick in that school and that you put out in
 --   the last MAX_DOT seconds, the one whose schedule (every period seconds
 --   from its cast) this tick lands on. Two DoTs of one school, such as
 --   Corruption and Bane of Agony, are told apart this way.
--- Only spells in the data count: a cast that does no damage or healing
--- (switching tracking, a buff) never claims a hit. A hit nothing explains
--- (a proc, a poison, an item's spell) gets no icon.
+-- Only spells in the data count for a hit or a heal: a cast that does no
+-- damage or healing (switching tracking, a buff) never claims one, it can
+-- only claim a miss. A hit nothing explains (a proc, a poison, an item's
+-- spell) gets no icon.
 
 local DIRECT_WINDOW = 3 -- seconds from cast to hit
 local AOE_WINDOW = 1.5 -- an area spell's later hits
@@ -618,8 +620,8 @@ local function OnCast(unit, _, id)
 		Debug("cast by " .. unit .. ": spell ID is secret")
 		return
 	end
-	if NOT_CASTS[id] or not data[id] then
-		Debug(("cast %d by %s: not a damage or heal spell"):format(id, unit))
+	if NOT_CASTS[id] then
+		Debug(("cast %d by %s: an auto attack, not followed"):format(id, unit))
 		return
 	end
 	local now = GetTime()
@@ -627,10 +629,14 @@ local function OnCast(unit, _, id)
 	if last and last.id == id and now - last.time < CAST_TWICE then
 		return
 	end
-	Debug(("cast %d by %s: school %d, direct %d, tick %g, every %g"):format(id, unit, data[id][1], data[id][2], data[id][3], data[id][4]))
+	local spell = data[id]
+	if spell then
+		Debug(("cast %d by %s: school %d, direct %d, tick %g, every %g"):format(id, unit, spell[1], spell[2], spell[3], spell[4]))
+	else
+		Debug(("cast %d by %s: not a damage or heal spell, counts for a miss only"):format(id, unit))
+	end
 	local cast = { id = id, icon = C_Spell.GetSpellTexture(id), time = now }
 	table.insert(casts, cast)
-	local spell = data[id]
 	if spell and spell[3] > 0 then
 		applied[id] = cast
 	end
@@ -649,8 +655,9 @@ local function DirectIcon(school, now)
 	for _, cast in ipairs(casts) do
 		local age = now - cast.time
 		local spell = data[cast.id]
-		if age >= 0 and SameSchool(spell, school) then
-			if spell and spell[4] > 0 then
+		-- A cast that is not in the data never claims a hit or a heal.
+		if spell and age >= 0 and SameSchool(spell, school) then
+			if spell[4] > 0 then
 				-- A channel: each of its hits, as long as it may last.
 				if age <= CHANNEL_WINDOW then
 					latest = cast
@@ -671,6 +678,25 @@ local function DirectIcon(school, now)
 	end
 	cast.used = true
 	return cast.icon, cast.id
+end
+
+-- A spell that misses outright: your latest cast, whatever the spell does.
+-- Scorpid Sting does no damage and Serpent Sting only ticks, so neither is
+-- a direct spell in the data, yet both can fail on an immune target. The
+-- hit's school is not used: Scorpid Sting (nature) on an immune target came
+-- as IMMUNE, school 1, in game, 2026-11-19.
+local function MissIcon(now)
+	for i = #casts, 1, -1 do
+		local cast = casts[i]
+		local age = now - cast.time
+		local spell = data[cast.id]
+		local window = spell and spell[4] > 0 and CHANNEL_WINDOW or DIRECT_WINDOW
+		if age >= 0 and age <= window then
+			cast.used = true
+			return cast.icon, cast.id
+		end
+	end
+	return nil
 end
 
 local function TickIcon(school, now)
@@ -749,11 +775,8 @@ function IconFor(logEvent, hit)
 	if hit.event == "HEAL" then
 		school = nil
 	end
-	-- So does a spell that misses outright: Scorpid Sting (nature) on an
-	-- immune target came as IMMUNE, school 1, in game, 2026-11-19. A spell
-	-- miss is matched on timing alone as well.
 	if logEvent == "SPELL_MISSED" and MISS_TEXT[hit.event] then
-		school = nil
+		return MissIcon(now)
 	end
 	if logEvent:find("^SWING") then
 		if not meleeing and UnitExists("pet") then
