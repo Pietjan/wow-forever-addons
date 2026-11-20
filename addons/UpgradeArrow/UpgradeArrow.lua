@@ -25,6 +25,15 @@
 -- and its weights; /upgradearrow role tank|healer|damage|auto fixes it;
 -- /upgradearrow <stat> <weight> changes one for this character and role,
 -- /upgradearrow reset puts them back.
+--
+-- A weapon counts by its damage per second and stats only, not by its
+-- speed. That is on purpose, to keep the score simple, and it is a known
+-- gap for hunters: Aimed Shot and Multi-Shot use the bow's damage roll,
+-- so a slower bow hits harder with them (measured in game 2026-11-20:
+-- about 6 more per Multi-Shot from a 2.30 bow than from a 1.80 one),
+-- while the faster bow's higher dps only shows in Auto Shot. Between
+-- bows of similar level this is a point or two, more when Multi-Shot
+-- hits several targets.
 
 local ADDON = ...
 local IsSecret = issecretvalue or function() return false end
@@ -59,36 +68,41 @@ local ORDER = { "str", "agi", "sta", "int", "spi", "armor", "ap", "rap", "sp", "
 	"spellhit", "spellcrit", "defense", "dodge", "parry", "block", "dps", "rdps" }
 
 -- Per class, per role. A class only has the roles it can fill.
-local CASTER = { int = 0.6, spi = 0.4, sta = 0.4, armor = 0.005, sp = 1.2, heal = 0, mp5 = 1.2, spellhit = 8, spellcrit = 8, dps = 0, rdps = 0.2 }
-local HEALER = { int = 1, spi = 0.4, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0 }
-local PLATE_TANK = { sta = 1, str = 0.5, agi = 0.6, armor = 0.05, ap = 0.2, hit = 4, defense = 1.5, dodge = 12, parry = 10, block = 4, dps = 1, rdps = 0.3 }
+-- Hit, crit, dodge, parry and block are per point on the item: 10 hit,
+-- 14 crit, 12 dodge, 15 parry or 5 block is 1% at every level
+-- (gametables/combatratings.txt, build 1.60.1.70959), so hit 1 makes 1%
+-- hit worth 10 Agility. Items carry no separate spell hit or spell crit;
+-- casters weigh hit and crit as well.
+local CASTER = { int = 0.6, spi = 0.4, sta = 0.4, armor = 0.005, sp = 1.2, heal = 0, mp5 = 1.2, hit = 0.8, crit = 0.6, dps = 0, rdps = 0.2 }
+local HEALER = { int = 1, spi = 0.4, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, crit = 0.6, dps = 0, rdps = 0 }
+local PLATE_TANK = { sta = 1, str = 0.5, agi = 0.6, armor = 0.05, ap = 0.2, hit = 0.4, defense = 1.5, dodge = 1, parry = 0.7, block = 0.8, dps = 1, rdps = 0.3 }
 local DEFAULTS = {
 	WARRIOR = {
-		DAMAGER = { str = 1, agi = 0.6, sta = 0.5, armor = 0.02, ap = 0.5, hit = 10, crit = 10, dps = 3.5, rdps = 0.5 },
+		DAMAGER = { str = 1, agi = 0.6, sta = 0.5, armor = 0.02, ap = 0.5, hit = 1, crit = 0.7, dps = 3.5, rdps = 0.5 },
 		TANK = PLATE_TANK,
 	},
 	PALADIN = {
-		DAMAGER = { str = 1, agi = 0.5, sta = 0.4, int = 0.3, spi = 0.1, armor = 0.02, ap = 0.5, sp = 0.3, mp5 = 0.5, hit = 9, crit = 9, dps = 3, rdps = 0 },
-		TANK = { sta = 1, str = 0.4, agi = 0.4, int = 0.2, armor = 0.05, sp = 0.5, defense = 1.5, dodge = 12, parry = 10, block = 4, hit = 4, dps = 0.5, rdps = 0 },
-		HEALER = { int = 1, spi = 0.2, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, spellcrit = 10, dps = 0, rdps = 0 },
+		DAMAGER = { str = 1, agi = 0.5, sta = 0.4, int = 0.3, spi = 0.1, armor = 0.02, ap = 0.5, sp = 0.3, mp5 = 0.5, hit = 0.9, crit = 0.6, dps = 3, rdps = 0 },
+		TANK = { sta = 1, str = 0.4, agi = 0.4, int = 0.2, armor = 0.05, sp = 0.5, defense = 1.5, dodge = 1, parry = 0.7, block = 0.8, hit = 0.4, dps = 0.5, rdps = 0 },
+		HEALER = { int = 1, spi = 0.2, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, crit = 0.7, dps = 0, rdps = 0 },
 	},
-	ROGUE = { DAMAGER = { str = 0.5, agi = 1, sta = 0.3, armor = 0.01, ap = 0.5, hit = 12, crit = 10, dodge = 3, dps = 3, rdps = 0.5 } },
-	HUNTER = { DAMAGER = { agi = 1, int = 0.3, sta = 0.4, spi = 0.1, armor = 0.01, ap = 0.2, rap = 0.5, hit = 10, crit = 10, dps = 0.8, rdps = 3.5 } },
+	ROGUE = { DAMAGER = { str = 0.5, agi = 1, sta = 0.3, armor = 0.01, ap = 0.5, hit = 1.2, crit = 0.7, dodge = 0.3, dps = 3, rdps = 0.5 } },
+	HUNTER = { DAMAGER = { agi = 1, int = 0.3, sta = 0.4, spi = 0.1, armor = 0.01, ap = 0.2, rap = 0.5, hit = 1, crit = 0.7, dps = 0.8, rdps = 3.5 } },
 	SHAMAN = {
-		DAMAGER = { str = 1, agi = 0.5, sta = 0.4, int = 0.5, spi = 0.2, armor = 0.01, ap = 0.5, sp = 0.6, heal = 0, mp5 = 1, hit = 8, crit = 8, dps = 3, rdps = 0 },
+		DAMAGER = { str = 1, agi = 0.5, sta = 0.4, int = 0.5, spi = 0.2, armor = 0.01, ap = 0.5, sp = 0.6, heal = 0, mp5 = 1, hit = 0.8, crit = 0.6, dps = 3, rdps = 0 },
 		HEALER = HEALER,
 	},
 	DRUID = {
-		DAMAGER = { str = 1, agi = 1, sta = 0.4, int = 0.3, spi = 0.1, armor = 0.02, ap = 0.6, hit = 10, crit = 10, dps = 0, rdps = 0 },
-		TANK = { sta = 1, agi = 0.7, str = 0.5, armor = 0.08, ap = 0.2, defense = 1.5, dodge = 12, hit = 4, dps = 0, rdps = 0 },
-		HEALER = { int = 0.8, spi = 0.5, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0 },
+		DAMAGER = { str = 1, agi = 1, sta = 0.4, int = 0.3, spi = 0.1, armor = 0.02, ap = 0.6, hit = 1, crit = 0.7, dps = 0, rdps = 0 },
+		TANK = { sta = 1, agi = 0.7, str = 0.5, armor = 0.08, ap = 0.2, defense = 1.5, dodge = 1, hit = 0.4, dps = 0, rdps = 0 },
+		HEALER = { int = 0.8, spi = 0.5, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, crit = 0.6, dps = 0, rdps = 0 },
 	},
 	MAGE = { DAMAGER = CASTER },
 	PRIEST = {
-		DAMAGER = { int = 0.5, spi = 0.5, sta = 0.4, armor = 0.005, sp = 1.2, mp5 = 1, spellhit = 8, spellcrit = 6, dps = 0, rdps = 0.2 },
-		HEALER = { int = 0.8, spi = 0.7, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, spellcrit = 8, dps = 0, rdps = 0.1 },
+		DAMAGER = { int = 0.5, spi = 0.5, sta = 0.4, armor = 0.005, sp = 1.2, mp5 = 1, hit = 0.8, crit = 0.4, dps = 0, rdps = 0.2 },
+		HEALER = { int = 0.8, spi = 0.7, sta = 0.3, armor = 0.005, heal = 1, sp = 0, mp5 = 2, crit = 0.6, dps = 0, rdps = 0.1 },
 	},
-	WARLOCK = { DAMAGER = { int = 0.4, spi = 0.3, sta = 0.6, armor = 0.005, sp = 1.2, mp5 = 0.8, spellhit = 8, spellcrit = 7, dps = 0, rdps = 0.2 } },
+	WARLOCK = { DAMAGER = { int = 0.4, spi = 0.3, sta = 0.6, armor = 0.005, sp = 1.2, mp5 = 0.8, hit = 0.8, crit = 0.5, dps = 0, rdps = 0.2 } },
 }
 local ROLE_ORDER = { "TANK", "HEALER", "DAMAGER" }
 local ROLE_NAME = { TANK = "Tank", HEALER = "Healer", DAMAGER = "Damage" }
