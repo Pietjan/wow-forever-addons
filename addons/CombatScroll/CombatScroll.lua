@@ -471,7 +471,9 @@ function Spawn(lane, format, value, color, crit, pet, icon, stack)
 	local known = CanAccess(icon)
 	local portrait = known and icon == "pet"
 	if portrait then
-		SetPortraitTexture(tex, "pet")
+		-- true: the full square picture, not the game's circle, so it
+		-- fills the same mask as the spell icons.
+		SetPortraitTexture(tex, "pet", true)
 		hasIcon = true
 	elseif not known or icon then
 		-- A refusal just means no icon.
