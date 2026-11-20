@@ -812,10 +812,12 @@ end
 --   else only counts for a hit that is not physical (an area spell), so a
 --   melee hit does not take the spell another enemy casts at the tank;
 -- - a physical hit, or a miss, dodge, parry or block, that no cast explains
---   is taken to be melee and gets the Attack icon, in combat only (a fall
+--   is taken to be melee and gets a sword (MELEE_ICON), in combat only (a fall
 --   is physical too). A bleed's tick gets it as well;
--- - anything else (a DoT's tick, a caster without a nameplate) gets no
---   icon. With several enemies casting, the icon can be the wrong one.
+-- - anything else (a DoT's tick, a caster without a nameplate) gets a
+--   placeholder for its school (see SCHOOL_ICONS), or no icon when the
+--   school is physical or not known. With several enemies casting, the
+--   icon can be the wrong one.
 -- A hit waits for the next frame before it is shown, so that a cast
 -- reported later in the same frame still counts. /cscroll debug prints
 -- every enemy cast seen and what each hit took.
@@ -921,25 +923,58 @@ local function EnemyCast(hit)
 	return running
 end
 
+-- A placeholder for a hit no spell icon was found for: the icon file of a
+-- well-known ability of its school (SpellMisc, build 70959).
+local SCHOOL_ICONS = {
+	[2] = 135924, -- holy: Smite
+	[4] = 135812, -- fire: Fireball
+	[8] = 136048, -- nature: Lightning Bolt
+	[16] = 135846, -- frost: Frostbolt
+	[32] = 136197, -- shadow: Shadow Bolt
+	[64] = 136116, -- arcane: Arcane Explosion
+}
+-- A melee hit on you: Raptor Strike's icon file, a plain sword. The Attack
+-- spell's own icon in SpellMisc is a generic one shared by thousands of
+-- spells.
+local MELEE_ICON = 132223
+
+-- A mixed school takes its first school in SCHOOL_ORDER, as its colour does.
+local function SchoolIcon(hit)
+	local school = Plain(hit.school)
+	if not school then
+		return nil
+	end
+	for _, bitValue in ipairs(SCHOOL_ORDER) do
+		if SCHOOL_ICONS[bitValue] and bit.band(school, bitValue) ~= 0 then
+			return SCHOOL_ICONS[bitValue]
+		end
+	end
+	return nil
+end
+
 local function TakenIcon(hit)
 	local cast = EnemyCast(hit)
 	if cast then
 		Debug(("taken %s: the %s by %s%s"):format(hit.event, cast.channel and "channel" or "cast", cast.unit, cast.hasIcon and "" or ", which has no icon"))
-		return cast.icon
-	end
-	local school = Plain(hit.school)
-	local melee
-	if hit.event == "WOUND" then
-		melee = school == 1
+		if cast.hasIcon then
+			return cast.icon
+		end
 	else
-		melee = MELEE_MISS[hit.event] and (not school or school == 1)
+		local school = Plain(hit.school)
+		local melee
+		if hit.event == "WOUND" then
+			melee = school == 1
+		else
+			melee = MELEE_MISS[hit.event] and (not school or school == 1)
+		end
+		if melee and Flag(UnitAffectingCombat, "player") ~= false then
+			Debug(("taken %s: no cast, so melee"):format(hit.event))
+			return MELEE_ICON
+		end
 	end
-	if melee and Flag(UnitAffectingCombat, "player") ~= false then
-		Debug(("taken %s: no cast, so melee"):format(hit.event))
-		return C_Spell.GetSpellTexture(6603)
-	end
-	Debug(("taken %s: no cast, no icon"):format(hit.event))
-	return nil
+	local icon = SchoolIcon(hit)
+	Debug(("taken %s: no spell icon, %s"):format(hit.event, icon and "its school's placeholder" or "and none for its school"))
+	return icon
 end
 
 local function ShowTaken()
