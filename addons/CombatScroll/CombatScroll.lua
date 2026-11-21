@@ -92,6 +92,10 @@ local WINDOW = 0
 -- Unmatched lines and hits are thrown away once they are this many frames
 -- older than WINDOW allows.
 local KEEP = 2
+-- Your melee is the exception: its UNIT_COMBAT comes after its combat log
+-- line, 0.494 s after it in the one swing measured in game (2026-11-21), so
+-- a SWING_ line waits this many seconds for a hit.
+local SWING_DELAY = 0.75
 
 local FILTER_NAME = "CombatScroll"
 
@@ -178,15 +182,20 @@ local lanes = {}
 local unlocked = false
 local debug = false
 
+-- The pairing frame number (see CurrentFrame).
+local frameNo, frameTime = 0, nil
+
 local function Debug(...)
 	if debug then
-		print("|cffffd100CombatScroll|r", ...)
+		-- Game time (constant within a frame) and the pairing frame
+		-- number, read without advancing it, so the gap between a line
+		-- and its hit can be measured.
+		print(("|cffffd100CombatScroll|r %.3f f%d"):format(GetTime(), frameNo), ...)
 	end
 end
 
 -- Matching state ---------------------------------------------------------
 
-local frameNo, frameTime = 0, nil
 local lines = {} -- { frame, kind, used }
 local hits = {} -- { frame, event, flags, amount, school, role, used }
 local stats = { lines = 0, hits = 0, matched = 0, lostLines = 0, lostHits = 0 }
@@ -590,8 +599,8 @@ end
 --   Corruption and Bane of Agony, are told apart this way.
 -- Only spells in the data count for a hit or a heal: a cast that does no
 -- damage or healing (switching tracking, a buff) never claims one, it can
--- only claim a miss. A hit nothing explains (a proc, a poison, an item's
--- spell) gets no icon.
+-- only claim a miss. A hit no cast explains may be a proc of a buff or
+-- weapon enchant of yours (see Procs); else (an item's spell) no icon.
 
 local DIRECT_WINDOW = 3 -- seconds from cast to hit
 local AOE_WINDOW = 1.5 -- an area spell's later hits
@@ -602,6 +611,7 @@ local NOT_CASTS = { [6603] = true, [75] = true, [5019] = true } -- Attack, Auto 
 local data = ns.spells or {}
 local casts = {} -- { id, icon, time, used }, newest last
 local applied = {} -- spellID -> its latest cast
+local procCasts = {} -- proc buff spellID -> when you last cast it or it was seen up (see Procs)
 local meleeing = false
 
 -- A school the hit may be checked against, or nil when it says nothing:
@@ -630,6 +640,9 @@ local function OnCast(unit, _, id)
 	local last = casts[#casts]
 	if last and last.id == id and now - last.time < CAST_TWICE then
 		return
+	end
+	if ns.procAuras and ns.procAuras[id] then
+		procCasts[id] = now
 	end
 	local spell = data[id]
 	if spell then
@@ -764,6 +777,124 @@ local function ShieldIcon(school)
 	return nil
 end
 
+-- Procs: a spell hit of yours that no cast explains, as Lightning Shield's
+-- charges or Flametongue Weapon (nature 26068.135 in game, 2026-11-21: a
+-- SPELL_DAMAGE line and a school 8 hit, no cast of yours reported). The
+-- spell that hits is a server-side dummy, so Data.lua lists the buffs
+-- (ns.procAuras) and weapon enchants (ns.procEnchants) by school instead.
+-- In order, all of the hit's school:
+-- - a buff that GetPlayerAuraBySpellID says is up;
+-- - an enchant on a weapon (C_Item.GetWeaponEnchantInfo, which gives the
+--   enchant's own icon; Flametongue's showed in game 2026-11-21);
+-- - a buff you cast (UNIT_SPELLCAST_SUCCEEDED reported "cast 324" with a
+--   plain ID in game, 2026-11-21), or that was seen up out of combat (at
+--   login or reload, and as combat starts and ends: after a /reload with
+--   Lightning Shield up and no cast since, no icon showed, 2026-11-21),
+--   and that has not been seen gone out of combat. In that fight Lightning Shield (324) was up and still came out
+--   as "no buff or enchant explains it": in combat the aura call answered
+--   "not up", or a secret that IsPlayerSpell did not back. So "not up" is
+--   only believed out of combat;
+-- - a buff you know, when the aura call's answer is secret.
+-- Windfury Weapon counts as nature: the data cannot tell it from
+-- Flametongue.
+local procAuras = ns.procAuras or {}
+local procEnchants = ns.procEnchants or {}
+
+-- true or false; nil when the game will not say.
+local function AuraUp(id)
+	local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, id)
+	if not ok or not CanAccess(aura) then
+		return nil
+	end
+	return aura ~= nil
+end
+
+local function Knows(id)
+	local ok, known = pcall(IsPlayerSpell, id)
+	return ok and CanAccess(known) and known == true
+end
+
+local function InCombat()
+	local ok, value = pcall(UnitAffectingCombat, "player")
+	return not ok or not CanAccess(value) or value and true or false
+end
+
+-- Marks the proc buffs that are up as seen; out of combat, where the
+-- aura answer is believed, forgets those that are gone. Run at login and
+-- reload, and as combat starts and ends.
+local function SyncProcBuffs()
+	local fighting, now = InCombat(), GetTime()
+	for id in pairs(procAuras) do
+		local up = AuraUp(id)
+		if up then
+			if not procCasts[id] then
+				Debug(("buff %d is up: counts for its school's procs"):format(id))
+			end
+			procCasts[id] = now
+		elseif up == false and not fighting then
+			procCasts[id] = nil
+		end
+	end
+end
+
+local function EnchantProc(school)
+	for _, slot in pairs(Enum.WeaponSlot or {}) do
+		local ok, enchants = pcall(C_Item.GetWeaponEnchantInfo, slot)
+		if ok and CanAccess(enchants) and type(enchants) == "table" then
+			for _, e in pairs(enchants) do
+				local id, icon = e.enchantID, e.enchantIconID
+				if CanAccess(id) and CanAccess(icon) and procEnchants[id] and bit.band(procEnchants[id], school) ~= 0 then
+					return id, icon
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function ProcIcon(school)
+	if not school then
+		return nil
+	end
+	local fighting = InCombat()
+	local cast, known
+	for id, mask in pairs(procAuras) do
+		if bit.band(mask, school) ~= 0 then
+			local up = AuraUp(id)
+			if up then
+				Debug(("proc of school %d: buff %d is up"):format(school, id))
+				return C_Spell.GetSpellTexture(id), id
+			end
+			if up == false and not fighting then
+				procCasts[id] = nil
+			end
+			local knows = Knows(id)
+			if procCasts[id] or knows then
+				Debug(("proc of school %d: buff %d: aura %s, known %s, %s"):format(school, id,
+					up == nil and "secret" or "not up", tostring(knows),
+					procCasts[id] and ("cast or seen up %.1f s ago"):format(GetTime() - procCasts[id]) or "not cast or seen up"))
+			end
+			if procCasts[id] and (not cast or procCasts[id] > procCasts[cast]) then
+				cast = id
+			elseif up == nil and knows and not known then
+				known = id
+			end
+		end
+	end
+	local enchant, icon = EnchantProc(school)
+	if enchant then
+		Debug(("proc of school %d: weapon enchant %d, icon %s"):format(school, enchant, tostring(icon)))
+		return icon ~= 0 and icon or nil, "enchant" .. enchant
+	end
+	if cast or known then
+		local id = cast or known
+		Debug(("proc of school %d: buff %d, %s"):format(school, id, cast and "cast or seen up earlier" or "known, whether it is up is secret"))
+		return C_Spell.GetSpellTexture(id), id
+	end
+	Debug(("proc of school %d: no buff or enchant of yours explains it"):format(school))
+	return nil
+end
+
 -- Returns the icon (a file ID or "pet") and a key naming the source, for
 -- stacking: a spell ID, "melee", "pet" or "ranged".
 function IconFor(logEvent, hit)
@@ -790,7 +921,11 @@ function IconFor(logEvent, hit)
 	elseif logEvent:find("^SPELL_PERIODIC") then
 		return TickIcon(school, now)
 	elseif logEvent:find("^SPELL") then
-		return DirectIcon(school, now)
+		local icon, key = DirectIcon(school, now)
+		if icon then
+			return icon, key
+		end
+		return ProcIcon(school)
 	elseif logEvent:find("^DAMAGE_SHIELD") then
 		return ShieldIcon(school)
 	end
@@ -1018,12 +1153,38 @@ local function Fit(kind, hit)
 	return hit.event == "WOUND" and 1 or nil
 end
 
+-- Whether a hit can be the late hit of a melee line: it arrives in the
+-- line's frame or up to SWING_DELAY after it, and a damaging one is
+-- physical when its school can be read.
+local function SwingFits(line, hit)
+	if hit.frame < line.frame - WINDOW or hit.time - line.time > SWING_DELAY then
+		return false
+	end
+	if hit.event == "WOUND" then
+		local school = Plain(hit.school)
+		return not school or school == 1
+	end
+	return true
+end
+
 local function Match()
 	local now = CurrentFrame()
 	local matched = 0
+	local function Pair(line, hit)
+		line.used, hit.used = true, true
+		matched = matched + 1
+		local icon, key = IconFor(line.event, hit)
+		if hit.role == "self" then
+			-- Your heal on yourself: on the left, with its icon.
+			ShowIncoming(hit.event, hit.flags, hit.amount, hit.school, icon)
+		else
+			ShowOutgoing(hit, line.kind, icon, key)
+		end
+	end
+	-- Every line but melee: its hit comes in the same frame (or WINDOW).
 	for _, line in ipairs(lines) do
 		-- Only once every hit that could belong to this line has arrived.
-		if not line.used and line.frame + WINDOW < now then
+		if not line.used and not line.swing and line.frame + WINDOW < now then
 			local best, bestScore
 			for _, hit in ipairs(hits) do
 				if not hit.used and hit.frame < now and math.abs(hit.frame - line.frame) <= WINDOW then
@@ -1037,15 +1198,23 @@ local function Match()
 				end
 			end
 			if best then
-				line.used, best.used = true, true
-				matched = matched + 1
-				local icon, key = IconFor(line.event, best)
-				if best.role == "self" then
-					-- Your heal on yourself: on the left, with its icon.
-					ShowIncoming(best.event, best.flags, best.amount, best.school, icon)
-				else
-					ShowOutgoing(best, line.kind, icon, key)
+				Pair(line, best)
+			end
+		end
+	end
+	-- Melee lines, after the rest have taken theirs: the earliest fitting
+	-- hit from a complete frame, as soon as it is there.
+	for _, line in ipairs(lines) do
+		if not line.used and line.swing then
+			local best
+			for _, hit in ipairs(hits) do
+				if not hit.used and hit.frame < now and Fit(line.kind, hit) and SwingFits(line, hit) and (not best or hit.time < best.time) then
+					best = hit
 				end
+			end
+			if best then
+				Debug(("%s paired, its hit %.3f s after the line"):format(line.event, best.time - line.time))
+				Pair(line, best)
 			end
 		end
 	end
@@ -1053,9 +1222,10 @@ local function Match()
 
 	-- Drop what can no longer pair.
 	local lostLines, lostHits = 0, 0
+	local time = GetTime()
 	for i = #lines, 1, -1 do
 		local line = lines[i]
-		if line.used or line.frame + WINDOW + KEEP < now then
+		if line.used or (line.frame + WINDOW + KEEP < now and not (line.swing and time - line.time <= SWING_DELAY)) then
 			if not line.used then
 				lostLines = lostLines + 1
 			end
@@ -1166,7 +1336,7 @@ local function OnCombatLogMessage(_, r, g, b, order)
 		return
 	end
 	stats.lines = stats.lines + 1
-	table.insert(lines, { frame = CurrentFrame(), kind = kind, event = logEvent })
+	table.insert(lines, { frame = CurrentFrame(), time = GetTime(), kind = kind, event = logEvent, swing = logEvent:find("^SWING_") ~= nil })
 	Debug("line " .. logEvent)
 end
 
@@ -1436,6 +1606,7 @@ events:SetScript("OnEvent", function(self, event, ...)
 			self:RegisterEvent("COMBAT_LOG_MESSAGE")
 			self:RegisterEvent("PLAYER_ENTERING_WORLD")
 			self:RegisterEvent("PLAYER_REGEN_DISABLED")
+			self:RegisterEvent("PLAYER_REGEN_ENABLED") -- proc buffs up or gone
 			self:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "pet")
 			self:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player", "pet") -- Mend Pet, Drain Life
 			self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
@@ -1448,6 +1619,7 @@ events:SetScript("OnEvent", function(self, event, ...)
 	elseif event == "PLAYER_ENTERING_WORLD" then
 		local login, reload = ...
 		ScanShieldItems()
+		SyncProcBuffs()
 		HookCombatLog()
 		KeepLinesOn()
 		if login or reload then
@@ -1457,7 +1629,10 @@ events:SetScript("OnEvent", function(self, event, ...)
 			end
 			CheckFilter()
 		end
+	elseif event == "PLAYER_REGEN_ENABLED" then
+		SyncProcBuffs()
 	elseif event == "PLAYER_REGEN_DISABLED" then
+		SyncProcBuffs()
 		KeepLinesOn()
 	end
 end)
