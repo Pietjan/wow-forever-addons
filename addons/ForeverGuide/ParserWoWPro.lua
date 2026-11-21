@@ -147,7 +147,7 @@ local function parseLine(line, guide)
             end
             for index = 1, #step.points - 1 do
                 local p2 = step.points[index]
-                p2.radius, p2.route, p2.noPin = 20, true, true
+                p2.radius, p2.route = 20, true
             end
             if not last then
                 step.points = nil

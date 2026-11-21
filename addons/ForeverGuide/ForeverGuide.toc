@@ -24,6 +24,7 @@ Watches.lua
 Auto.lua
 Cleanup.lua
 Navigation.lua
+Route.lua
 TomTom.lua
 Arrow.lua
 Tracker.lua

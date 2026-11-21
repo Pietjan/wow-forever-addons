@@ -264,7 +264,7 @@ commands["goto"] = function(step, text, zone, x, y, radius, optional)
     end
     if optional then
         if radius > 0 then
-            p.radius, p.route, p.noPin = radius, true, true
+            p.radius, p.route = radius, true
         else
             p.low = true
         end
@@ -279,7 +279,6 @@ end
 function commands.waypoint(step, _, zone, x, y, radius)
     local p = addPoint(step, point(zone, x, y))
     if p then
-        p.noPin = true
         radius = tonumber(radius)
         if radius and radius ~= 0 then
             p.radius, p.route = math.abs(radius), true

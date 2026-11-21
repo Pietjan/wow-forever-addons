@@ -44,6 +44,23 @@ local function clearPin()
     end
 end
 
+-- Forever's engine reports every navigation target as Invalid (state 0),
+-- which Blizzard's SuperTrackedFrame draws at alpha 0, so the in-world
+-- marker never shows. Its own hook SetTargetAlphaForState makes Invalid
+-- fully visible; the frame still hides itself when the point has no
+-- screen position. Called once, from syncPin, so only when it is quiet.
+local markerShown
+
+local function showMarker()
+    if markerShown then
+        return
+    end
+    markerShown = true
+    if SuperTrackedFrame and SuperTrackedFrame.SetTargetAlphaForState and Enum.NavigationState then
+        SuperTrackedFrame:SetTargetAlphaForState(Enum.NavigationState.Invalid, 1)
+    end
+end
+
 local function syncPin()
     if handled or not ns.Quiet() then
         return
@@ -64,6 +81,7 @@ local function syncPin()
     end
     C_Map.SetUserWaypoint(UiMapPoint.CreateFromCoordinates(p.map, p.x / 100, p.y / 100))
     C_SuperTrack.SetSuperTrackedUserWaypoint(true)
+    showMarker()
     pinned = p
 end
 
@@ -388,6 +406,16 @@ local function focusPoint(playerMap, inst, px, py)
     return focus
 end
 
+-- The point the map pin is on, or nil (Route.lua leaves a gap there).
+function Nav:Pinned()
+    return pinned
+end
+
+-- Whether the player has passed this route point (Route.lua dims it).
+function Nav:IsReached(p)
+    return reached[p] == true
+end
+
 local goal -- what the pin follows: the waypoint or the guide's point
 
 function Nav:Update()
@@ -414,29 +442,21 @@ function Nav:Update()
     end
 
     local now = Nav.waypoint or choose(inst, px, py)
-    if now ~= goal then
-        goal = now
-        -- The pin goes on a real destination, not on a point along a route:
-        -- the first place the step names that may carry one. A place the
-        -- arrow is not meant to point at still counts; on a step with a
-        -- patrol route it is where the map should show the goal.
-        local pin = now
-        if pin and pin.noPin then
-            pin = nil
-            for _, p in ipairs(points or {}) do
-                if not p.noPin then
-                    pin = p
-                    break
-                end
-            end
-        end
-        setPin(pin)
-    end
-
     local target = corpsePoint() or now or focusPoint(playerMap, inst, px, py)
     if target ~= Nav.target then
         Nav.target = target
         ns.Fire("Target", target)
+    end
+
+    -- The pin, and with it the in-world marker, goes where the arrow
+    -- points, route points included, so the two do not disagree. Not on
+    -- the super-tracked quest: the game marks that itself, and a pin of
+    -- ours would take its super-tracking away. Not on the corpse either:
+    -- as a ghost the pin keeps the guide's goal (corpse.lua).
+    local pin = now
+    if pin ~= goal then
+        goal = pin
+        setPin(pin)
     end
     syncPin()
     return inst, px, py
