@@ -740,7 +740,11 @@ local RANGED_SLOT = 18
 -- equipped item whose equip spell is one, of the hit's school (Sporid
 -- Cape: nature), gets that item's icon; else a Thorns or Fire Shield aura
 -- on you of that school. Both lists come from Data.lua. Your own auras may
--- be unreadable in combat (SecretWhenUnitAuraRestricted); then no icon.
+-- be unreadable in combat (SecretWhenUnitAuraRestricted): a friend's
+-- Thorns on you hit as DAMAGE_SHIELD, school 8, and showed no icon (in
+-- game, 2026-11-21). A damage shield line is always one of these, so then
+-- the school's shield spell stands in: every rank of Thorns (nature) or
+-- Fire Shield (fire) has the same icon.
 local shieldSlots = {} -- inventory slot -> school mask
 
 local function ScanShieldItems()
@@ -766,14 +770,24 @@ local function ShieldIcon(school)
 			return GetInventoryItemTexture("player", slot), "item" .. slot
 		end
 	end
+	local stand
 	for id, mask in pairs(ns.shieldSpells or {}) do
 		if SchoolFits(mask, school) then
 			local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, id)
 			if ok and CanAccess(aura) and aura then
+				Debug(("damage shield of school %s: aura %d is up"):format(tostring(school), id))
 				return C_Spell.GetSpellTexture(id), id
+			end
+			if not stand or id < stand then
+				stand = id
 			end
 		end
 	end
+	if stand then
+		Debug(("damage shield of school %s: no item or readable aura, %d stands in"):format(tostring(school), stand))
+		return C_Spell.GetSpellTexture(stand), stand
+	end
+	Debug(("damage shield of school %s: no shield of that school known"):format(tostring(school)))
 	return nil
 end
 
