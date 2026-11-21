@@ -1,7 +1,8 @@
 -- Threat numbers (/fplates numbers): your threat on an enemy as a
 -- percentage, right of its nameplate's health bar, or right of the level
 -- box while that shows (OnShow/OnHide hooked on it, as Enemy targets does
--- with the cast bar).
+-- with the cast bar). Only in a party or raid, or with a pet out: alone,
+-- every mob is on you and the numbers say nothing.
 --
 -- The number is the one Blizzard puts on the target frame (Options >
 -- Combat, numeric threat), worked out the same way in
@@ -116,9 +117,17 @@ local function LabelFor(plate)
 	return frame
 end
 
+-- Whether there is anyone else to share threat with.
+local function Shared()
+	return IsInGroup() or UnitExists("pet")
+end
+
 -- Fill one plate's numbers; false when there is nothing to show.
 local function Fill(frame, unit)
 	ApplyFont(frame)
+	if not Shared() then
+		return false
+	end
 	if not UnitExists(unit) or not UnitCanAttack("player", unit) or UnitIsDead(unit) then
 		return false
 	end
@@ -180,7 +189,8 @@ end
 -- /fplates numbers: what the feature sees on your target.
 local function Report()
 	local Say = ns.Print
-	Say("Threat numbers " .. (feature.db.enabled and "on" or "off; /fplates numbers on"))
+	Say("Threat numbers " .. (feature.db.enabled and "on" or "off; /fplates numbers on")
+		.. (Shared() and "" or " (shown only in a group or with a pet out)"))
 	if UnitExists("target") and UnitCanAttack("player", "target") then
 		local ok, isTanking, status, scaled, raw = pcall(UnitDetailedThreatSituation, "player", "target")
 		local okLead, lead = pcall(UnitThreatPercentageOfLead, "player", "target")
@@ -197,9 +207,13 @@ end
 feature = ns.Feature({
 	key = "numbers",
 	title = "Threat numbers",
-	tooltip = "Your threat on each enemy as a percentage, right of its health bar and level box: the number Blizzard shows on the target frame.",
+	tooltip = "In a group or with a pet out, your threat on each enemy as a percentage, right of its health bar and level box: the number Blizzard shows on the target frame.",
 	defaults = { enabled = true },
-	events = { "NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "UNIT_THREAT_LIST_UPDATE", "UNIT_THREAT_SITUATION_UPDATE" },
+	events = {
+		"NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "UNIT_THREAT_LIST_UPDATE", "UNIT_THREAT_SITUATION_UPDATE",
+		"GROUP_ROSTER_UPDATE",
+	},
+	unitEvents = { { "UNIT_PET", "player" } },
 	Command = Report,
 })
 
@@ -227,7 +241,7 @@ function feature.OnEvent(event, unit)
 	elseif type(unit) == "string" and not IsSecret(unit) and unit:find("^nameplate") then
 		Update(unit)
 	else
-		-- UNIT_THREAT_SITUATION_UPDATE for you or your pet: any plate may change.
+		-- Your threat situation, your group or your pet: any plate may change.
 		UpdateAll()
 	end
 end
