@@ -77,8 +77,10 @@ local SEEDS = {
 local WELL_FED, FOOD = 19705, 433
 local FEED_PET, FEED_PET_EFFECT, PET_HAPPY = 6991, 1539, 3 -- happiness: 1 Unhappy, 2 Content, 3 Happy
 
--- Shaman weapon imbues, in order of preference: a shaman who knows one
--- needs nothing from the bags for the main hand.
+-- Shaman weapon imbues, in order of preference. In Forever an imbue is an
+-- enchant of its own kind (spell effect 360, not the temporary enchant's
+-- 54), so a weapon can carry an imbue and a sharpening stone at once:
+-- the imbue gets its own entry, apart from the weapon enchants.
 local IMBUES = { 8232, 8024, 8033, 8017 } -- Windfury, Flametongue, Frostbrand, Rockbiter
 
 -- Items that put a temporary enchant on a weapon, from the game's data,
@@ -208,6 +210,14 @@ local PARTY_UNITS = { "player", "party1", "party2", "party3", "party4" }
 local MAIN_HAND, OFF_HAND = INVSLOT_MAINHAND or 16, INVSLOT_OFFHAND or 17
 local WEAPON = (Enum.ItemClass and Enum.ItemClass.Weapon) or 2
 local FISHING_POLE = (Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Fishingpole) or 20
+-- C_Item.GetWeaponEnchantInfo lists each kind of enchant on a weapon: the
+-- game's Enum.ItemEnchantType (2 Temporary, 3 Imbue) and Enum.WeaponSlot.
+local ENCHANT_TEMPORARY = (Enum.ItemEnchantType and Enum.ItemEnchantType.Temporary) or 2
+local ENCHANT_IMBUE = (Enum.ItemEnchantType and Enum.ItemEnchantType.Imbue) or 3
+local WEAPON_SLOT = {
+	[MAIN_HAND] = (Enum.WeaponSlot and Enum.WeaponSlot.MainHand) or 0,
+	[OFF_HAND] = (Enum.WeaponSlot and Enum.WeaponSlot.OffHand) or 1,
+}
 local ICON, GAP = 40, 6
 local ICON_OUTSET = 0.5 -- the picture reaches this far under the border ring, so it fills the frame
 local MAX_ICONS = 16
@@ -313,7 +323,7 @@ end
 
 -- An entry: key, name, icon, auraNames (set), castNames (list, in order of
 -- preference), party (default for a new choice), kind ("aura", "food", "pet",
--- "weapon", "offhand"), mana, unlessNames, auraLines (aura name -> text its
+-- "weapon", "offhand", "imbue"), mana, unlessNames, auraLines (aura name -> text its
 -- tooltip must show to count, see SEEDS).
 
 local function AddEntry(entry)
@@ -556,6 +566,17 @@ local function BuildCatalog()
 		key = "offhand", name = "Off-hand enchant", icon = WeaponIcon(OFF_HAND), kind = "offhand", source = "extra",
 		auraNames = {}, castNames = {}, party = false, unlessNames = {}, seedDefault = true,
 	})
+	-- A shaman's imbue on the main hand: there once an imbue is known.
+	for _, id in ipairs(IMBUES) do
+		local name = SpellName(id)
+		if name and knownSpells[name] then
+			AddEntry({
+				key = "imbue", name = "Weapon imbue", icon = SpellIcon(id), kind = "imbue", source = "extra",
+				auraNames = {}, castNames = {}, party = false, unlessNames = {}, seedDefault = true,
+			})
+			break
+		end
+	end
 	-- A hunter's pet wants feeding: there once Feed Pet is known. The pet
 	-- is left alone while it is still chewing (Feed Pet Effect).
 	local feedPet = SpellName(FEED_PET)
@@ -591,7 +612,7 @@ local function SeedChoices()
 			-- Seeded by an earlier version: count everything it had as
 			-- offered, except the entries added since.
 			for _, key in ipairs(catalogOrder) do
-				if key ~= "flask" and key ~= "elixir" and key ~= "pet" and key ~= "scroll" and key ~= "tracking" then
+				if key ~= "flask" and key ~= "elixir" and key ~= "pet" and key ~= "scroll" and key ~= "tracking" and key ~= "imbue" then
 					cdb.offered[key] = true
 				end
 			end
@@ -812,8 +833,28 @@ local function ShortName(unit)
 	return ok and name or unit
 end
 
--- A weapon (not a fishing pole) in the slot with no temporary enchant.
-local function WeaponMissing(slot)
+-- Whether the weapon in a slot carries an enchant of the kind, and the
+-- milliseconds it has left. Without the newer C_Item call there is only
+-- the old one, which knows one enchant per hand: either kind then counts
+-- as that one, as before the two were told apart.
+local function WeaponEnchant(slot, enchantType)
+	if C_Item and C_Item.GetWeaponEnchantInfo then
+		for _, enchant in ipairs(C_Item.GetWeaponEnchantInfo(WEAPON_SLOT[slot])) do
+			if enchant.enchantType == enchantType and enchant.hasEnchant then
+				return true, enchant.timeLeft
+			end
+		end
+		return false
+	end
+	local hasMain, mainExpires, _, _, hasOff, offExpires = GetWeaponEnchantInfo()
+	if slot == MAIN_HAND then
+		return hasMain, mainExpires
+	end
+	return hasOff, offExpires
+end
+
+-- A weapon (not a fishing pole) in the slot without an enchant of the kind.
+local function WeaponMissing(slot, enchantType)
 	local itemID = GetInventoryItemID("player", slot)
 	if not itemID or IsSecret(itemID) then
 		return false
@@ -823,14 +864,8 @@ local function WeaponMissing(slot)
 	if classID ~= WEAPON or subclassID == FISHING_POLE then
 		return false
 	end
-	local ok, has, expires = pcall(function()
-		local hasMain, mainExpires, _, _, hasOff, offExpires = GetWeaponEnchantInfo()
-		if slot == MAIN_HAND then
-			return hasMain, mainExpires
-		end
-		return hasOff, offExpires
-	end)
-	if not ok then
+	local ok, has, expires = pcall(WeaponEnchant, slot, enchantType)
+	if not ok or IsSecret(has) or IsSecret(expires) then
 		return false
 	end
 	if not has then
@@ -909,19 +944,22 @@ local function EachBagItem(fn)
 	end
 end
 
--- What could go on the weapon in a slot: a known imbue spell (main hand
--- only), or an item in the bags that fits the weapon's type. Nothing to
--- apply means nothing to nag about.
-local function WeaponCandidates(slot)
+-- The imbue spells the character knows, in order of preference.
+local function ImbueCandidates()
 	local list = {}
-	if slot == MAIN_HAND then
-		for _, id in ipairs(IMBUES) do
-			local name = SpellName(id)
-			if name and knownSpells[name] then
-				list[#list + 1] = { kind = "spell", value = name, icon = SpellIcon(id), text = name, slot = slot }
-			end
+	for _, id in ipairs(IMBUES) do
+		local name = SpellName(id)
+		if name and knownSpells[name] then
+			list[#list + 1] = { kind = "spell", value = name, icon = SpellIcon(id), text = name, slot = MAIN_HAND }
 		end
 	end
+	return list
+end
+
+-- What could go on the weapon in a slot: an item in the bags that fits
+-- the weapon's type. Nothing to apply means nothing to nag about.
+local function WeaponCandidates(slot)
+	local list = {}
 	local itemID = GetInventoryItemID("player", slot)
 	if not itemID or IsSecret(itemID) then
 		return list
@@ -1479,7 +1517,7 @@ end
 local function Missing(entry, choice)
 	local missing = {}
 	entry.endsAt, entry.endDuration = nil, nil
-	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "scroll" or entry.kind == "food" or entry.kind == "pet" or entry.kind == "tracking" or entry.kind == "weapon" or entry.kind == "offhand" then
+	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "scroll" or entry.kind == "food" or entry.kind == "pet" or entry.kind == "tracking" or entry.kind == "weapon" or entry.kind == "offhand" or entry.kind == "imbue" then
 		local list
 		if entry.kind == "tracking" then
 			list = TrackingCandidates(entry)
@@ -1494,11 +1532,12 @@ local function Missing(entry, choice)
 		elseif entry.kind == "pet" then
 			list = PetCandidates(entry)
 		else
-			local slot = entry.kind == "weapon" and MAIN_HAND or OFF_HAND
-			local missingEnchant, expiring, endTime = WeaponMissing(slot)
+			local slot = entry.kind == "offhand" and OFF_HAND or MAIN_HAND
+			local imbue = entry.kind == "imbue"
+			local missingEnchant, expiring, endTime = WeaponMissing(slot, imbue and ENCHANT_IMBUE or ENCHANT_TEMPORARY)
 			entry.expiring = expiring
 			NoteEnd(entry, endTime, endTime and db.soonMax)
-			list = missingEnchant and WeaponCandidates(slot) or {}
+			list = missingEnchant and (imbue and ImbueCandidates() or WeaponCandidates(slot)) or {}
 		end
 		entry.fix, entry.fixIndex = Pick(entry, list)
 		if entry.fix then
