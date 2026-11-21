@@ -1,19 +1,19 @@
--- NameOnly: friendly player nameplates show just the name, in the font,
--- size and position of your choosing.
+-- Friendly names (/fplates names): friendly player nameplates show just the
+-- name, in the font, size and position of your choosing.
 --
 -- Forever has a "show only name" mode for friendly player nameplates
 -- (Options > Gameplay > Nameplates): it drops the health bar, cast bar,
 -- auras and level, and leaves the name standing where the bar would be.
--- At every login this addon sets the game options that go with it: that
--- mode, friendly player nameplates, class-coloured names, names on every
--- plate, the nameplate range at Forever's ceiling of 41 yards, and the
--- floating names of friendly players and their pets off, since the plates
--- replace them within range and nothing is legible beyond it. It then
--- restyles the name on every such plate: font, size, outline, shadow and
--- an offset from where Blizzard puts it. The raid marker stays, as it
--- does in Blizzard's mode, unless you turn it off here. Forever
--- characters have a first name and a surname; the surname can be left
--- off these plates.
+-- While this is on, every login sets the game options that go with it:
+-- that mode, friendly player nameplates, class-coloured names, names on
+-- every plate, the nameplate range at Forever's ceiling of 41 yards, and
+-- the floating names of friendly players and their pets off, since the
+-- plates replace them within range and nothing is legible beyond it.
+-- Switching it off leaves those options as they are. It then restyles the
+-- name on every such plate: font, size, outline, shadow and an offset from
+-- where Blizzard puts it. The raid marker stays, as it does in Blizzard's
+-- mode, unless you turn it off here. Forever characters have a first name
+-- and a surname; the surname can be left off these plates.
 --
 -- NPC nameplates and NPC floating names are left to the game's own
 -- options. (An NPC name-only mode was tried and dropped: Forever shows
@@ -28,13 +28,17 @@
 -- ApplyFrameOptions and whenever the mode changes. UpdateAnchors is hooked
 -- on each unit frame the first time it is seen, so the style is put back
 -- whenever Blizzard redoes its own, and left alone on plates that are not
--- in name-only mode (enemies, NPCs, your own).
+-- in name-only mode (enemies, NPCs, your own). Switched off, the font and
+-- full name go back on every plate at once; the position goes back when
+-- Blizzard next lays the plate out (a new unit on it).
 
-local ADDON_NAME = ...
+local _, ns = ...
+local Print, IsSecret = ns.Print, ns.IsSecret
 
 -- "default" and size 0 mean Blizzard's own nameplate font, size and
 -- outline, so out of the box only the position is the addon's.
 local DEFAULTS = {
+	enabled = true,
 	font = "default",
 	size = 0,
 	outline = "default", -- "none", "thin" or "thick"
@@ -53,11 +57,10 @@ local FONTS = {
 }
 local FONT_ORDER = { "default", "friz", "arial", "skurri", "morpheus" }
 local OUTLINES = { none = "", thin = "OUTLINE", thick = "THICKOUTLINE" }
-local VERSION = 3 -- bumped when saved settings need migrating
 
--- The game options the addon owns, applied at every login and on
--- /nameonly setup, so a settings reset or another character does not undo
--- them. Nameplate range is capped at 41 on Forever; higher is clamped.
+-- The game options the feature owns, applied at every login and on
+-- /fplates names setup, so a settings reset or another character does not
+-- undo them. Nameplate range is capped at 41 on Forever; higher is clamped.
 local CVARS = {
 	{ "nameplateShowFriendlyPlayers", "1", "friendly player nameplates" },
 	{ "nameplateShowOnlyNameForFriendlyPlayerUnits", "1", "only the name on them" },
@@ -67,17 +70,12 @@ local CVARS = {
 	{ "UnitNameFriendlyPlayerName", "0", "floating names of friendly players off" },
 	{ "UnitNameFriendlyMinionName", "0", "floating names of their pets off" },
 }
--- Options an earlier version owned and this one leaves to the game; put
--- back to their defaults once when upgrading.
-local RELEASED_CVARS = {
-	"nameplateShowFriendlyNpcs", "UnitNameNPC", "UnitNameFriendlySpecialNPCName",
-	"UnitNameHostleNPC", "UnitNameInteractiveNPC",
-}
 
+local feature
 local db
 
-local function Print(text)
-	DEFAULT_CHAT_FRAME:AddMessage("|cff80c0ffNameOnly|r " .. text)
+local function On()
+	return db and db.enabled
 end
 
 -- Forever characters have a first name and a surname. UnitName returns
@@ -86,8 +84,6 @@ end
 -- set on the font string touches none of Blizzard's own fields. A secret
 -- name (by the API's notes a player's is not) can only be handed on, not
 -- tested.
-local IsSecret = issecretvalue or function() return false end
-
 local function ShortenName(unitFrame)
 	local unit = unitFrame.unit
 	if not unit then
@@ -121,9 +117,9 @@ end
 -- After each CompactUnitFrame_UpdateName. Raid and party frames come
 -- through there too, and so do nameplates addons may not touch
 -- (forbidden, on which any other call is an error): only the plates this
--- addon has hooked are its own.
+-- feature has hooked are its own.
 local function OnUpdateName(frame)
-	if frame:IsForbidden() or not frame.nameOnlyHooked then
+	if not On() or frame:IsForbidden() or not frame.nameOnlyHooked then
 		return
 	end
 	frame.nameOnlyShortened = nil -- Blizzard has just written the full name
@@ -132,24 +128,34 @@ local function OnUpdateName(frame)
 	end
 end
 
+-- Give a plate its full name and Blizzard's font back.
+local function Unstyle(unitFrame)
+	RestoreName(unitFrame)
+	if unitFrame.nameOnlyStyled then
+		-- Blizzard has already re-anchored the name, or will when it next
+		-- lays the plate out; put its font back too, shadow included, by
+		-- reapplying the font object it set.
+		unitFrame.nameOnlyStyled = nil
+		local name = unitFrame.name
+		local ok, object = pcall(name.GetFontObject, name)
+		if ok and object then
+			name:SetFontObject(object)
+		end
+	end
+end
+
 -- Style the name of one nameplate unit frame, or hand it back to Blizzard
 -- when the plate is not in name-only mode.
 local function Style(unitFrame)
+	if not On() then
+		return
+	end
 	local name = unitFrame.name
 	if not name then
 		return
 	end
 	if not (unitFrame.IsShowOnlyName and unitFrame:IsShowOnlyName()) then
-		RestoreName(unitFrame)
-		if unitFrame.nameOnlyStyled then
-			-- Blizzard has already re-anchored the name; put its font back
-			-- too, shadow included, by reapplying the font object it set.
-			unitFrame.nameOnlyStyled = nil
-			local ok, object = pcall(name.GetFontObject, name)
-			if ok and object then
-				name:SetFontObject(object)
-			end
-		end
+		Unstyle(unitFrame)
 		return
 	end
 	unitFrame.nameOnlyStyled = true
@@ -206,7 +212,7 @@ local function Style(unitFrame)
 end
 
 local function StyleRaidIcon(raidTargetFrame)
-	if db.raidIcon then
+	if not On() or db.raidIcon then
 		return
 	end
 	if raidTargetFrame.IsShowOnlyName and raidTargetFrame:IsShowOnlyName() then
@@ -256,7 +262,7 @@ end
 
 local function Setup(quiet)
 	if InCombatLockdown() then
-		Print("Game options cannot be changed in combat; try /nameonly setup afterwards.")
+		Print("Game options cannot be changed in combat; try /fplates names setup afterwards.")
 		return false
 	end
 	local changed = {}
@@ -268,55 +274,36 @@ local function Setup(quiet)
 	if #changed > 0 then
 		Print("Set " .. table.concat(changed, ", ") .. ".")
 	elseif not quiet then
-		Print("All game options already as the addon wants them.")
+		Print("All game options already as Friendly names wants them.")
 	end
 	return true
 end
 
--- The live values of every option the addon owns, for checking that they
--- took and stayed.
+-- The live values of every option the feature owns, for checking that
+-- they took and stayed.
 local function PrintCVars()
 	for _, cvar in ipairs(CVARS) do
 		local current = GetCVar(cvar[1])
 		local same = tonumber(current) and tonumber(cvar[2]) and tonumber(current) == tonumber(cvar[2]) or current == cvar[2]
-		Print(("%s%s = %s (addon wants %s)"):format(same and "" or "|cffff8080", cvar[1], tostring(current), cvar[2]))
+		Print(("%s%s = %s (wanted %s)"):format(same and "" or "|cffff8080", cvar[1], tostring(current), cvar[2]))
 	end
-end
-
--- Hand options an earlier version owned back to the game, at their defaults.
-local function ReleaseCVars()
-	for _, name in ipairs(RELEASED_CVARS) do
-		local default = GetCVarDefault(name)
-		if default then
-			SetCVar(name, default)
-		end
-	end
-	Print("NPC nameplate and NPC name options are back to the game's defaults.")
 end
 
 -- Slash command ------------------------------------------------------------
 
 local function Status()
 	local font = FONTS[db.font] and (db.font .. " (" .. FONTS[db.font][2] .. ")") or "default"
-	Print(("font %s, size %s, outline %s, shadow %s, offset %d %d, raid marker %s, surname %s"):format(
-		font, db.size > 0 and tostring(db.size) or "default", db.outline, db.shadow and "on" or "off",
-		db.x, db.y, db.raidIcon and "shown" or "hidden", db.firstName and "hidden" or "shown"))
+	Print(("Friendly names %s: font %s, size %s, outline %s, shadow %s, offset %d %d, raid marker %s, surname %s"):format(
+		db.enabled and "on" or "off", font, db.size > 0 and tostring(db.size) or "default", db.outline,
+		db.shadow and "on" or "off", db.x, db.y, db.raidIcon and "shown" or "hidden", db.firstName and "hidden" or "shown"))
 end
 
 local function Usage()
 	Status()
-	Print("/nameonly size 8-32 | font friz, arial, skurri or morpheus | outline none, thin or thick")
-	Print("Each of those also takes 'default' for Blizzard's own.")
-	Print("/nameonly shadow on|off | x -50..50 | y -50..50 | raidicon on|off | firstname on|off | setup | cvars | reset")
-	Print("The addon sets the nameplate and floating-name options it needs at every login; setup reapplies them now.")
-end
-
-local function OnOff(value)
-	if value == "on" or value == "1" or value == "yes" then
-		return true
-	elseif value == "off" or value == "0" or value == "no" then
-		return false
-	end
+	Print("/fplates names on|off | size 8-32 | font friz, arial, skurri or morpheus | outline none, thin or thick")
+	Print("Size, font and outline also take 'default' for Blizzard's own.")
+	Print("/fplates names shadow on|off | x -50..50 | y -50..50 | raidicon on|off | firstname on|off | setup | cvars | reset")
+	Print("While on, the nameplate and floating-name options it needs are set at every login; setup reapplies them now.")
 end
 
 local function Number(value, min, max)
@@ -347,7 +334,7 @@ local function Command(msg)
 		end
 		db.outline = arg
 	elseif cmd == "shadow" or cmd == "raidicon" or cmd == "firstname" then
-		local value = OnOff(arg)
+		local value = ns.OnOff(arg)
 		if value == nil then
 			return Print(cmd .. " is on or off.")
 		end
@@ -371,7 +358,9 @@ local function Command(msg)
 		return PrintCVars()
 	elseif cmd == "reset" then
 		for key, value in pairs(DEFAULTS) do
-			db[key] = value
+			if key ~= "enabled" then
+				db[key] = value
+			end
 		end
 	else
 		return Usage()
@@ -381,51 +370,11 @@ local function Command(msg)
 end
 
 ------------------------------------------------------------------------------
--- The game's options window (Options > AddOns): the settings of the slash
--- command as check boxes, sliders and dropdowns. Optional: without the
--- game's settings API the slash command still does everything.
+-- Its page in the options window: the settings of the slash command as
+-- check boxes, sliders and dropdowns.
 ------------------------------------------------------------------------------
 
-local function RegisterSettings()
-	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting
-		and Settings.CreateCheckbox and Settings.CreateSlider and Settings.CreateDropdown) then
-		return
-	end
-	local category = Settings.RegisterVerticalLayoutCategory("NameOnly")
-
-	local function Proxy(key, kind, name, default, get, set)
-		if default == nil then
-			default = DEFAULTS[key]
-		end
-		return Settings.RegisterProxySetting(category, "NameOnly_" .. key, kind, name, default,
-			get or function() return db[key] end, set or function(value) db[key] = value end)
-	end
-	local function Checkbox(key, name, tooltip, default, get, set)
-		Settings.CreateCheckbox(category, Proxy(key, Settings.VarType.Boolean, name, default, get, set), tooltip)
-	end
-	-- A slider hands over what its arithmetic gives (0.30000000000000004):
-	-- store the step it stands on.
-	local function Slider(key, name, tooltip, min, max, step, format, default, get, set)
-		set = set or function(value) db[key] = value end
-		local setting = Proxy(key, Settings.VarType.Number, name, default, get, function(value)
-			set(tonumber(("%.4f"):format(min + math.floor((value - min) / step + 0.5) * step)))
-		end)
-		local options = Settings.CreateSliderOptions(min, max, step)
-		options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, format)
-		Settings.CreateSlider(category, setting, options, tooltip)
-	end
-	-- choices: { value, label, tooltip } each.
-	local function Dropdown(key, name, tooltip, choices, default, get, set)
-		local function Choices()
-			local container = Settings.CreateControlTextContainer()
-			for _, choice in ipairs(choices) do
-				container:Add(choice[1], choice[2], choice[3])
-			end
-			return container:GetData()
-		end
-		Settings.CreateDropdown(category, Proxy(key, Settings.VarType.String, name, default, get, set), Choices, tooltip)
-	end
-
+local function Options(page, ui)
 	local function Styled(key)
 		return function(value)
 			db[key] = value
@@ -439,75 +388,71 @@ local function RegisterSettings()
 			fonts[#fonts + 1] = { key, FONTS[key][2] }
 		end
 	end
-	Dropdown("font", "Font", "The font of friendly players' names on their nameplates.", fonts, nil, nil, Styled("font"))
+	ui.Dropdown("font", "Font", "The font of friendly players' names on their nameplates.", fonts, nil, nil, Styled("font"))
 	-- Size 0 is the game's own size: the slider's left end.
-	Slider("size", "Size", "All the way left for the game's own size.", 7, 32, 1,
+	ui.Slider("size", "Size", "All the way left for the game's own size.", 7, 32, 1,
 		function(value) return value < 8 and OWN or ("%d"):format(value) end, 7,
 		function() return db.size > 0 and db.size or 7 end,
 		function(value)
 			db.size = value >= 8 and value or 0
 			StyleAll()
 		end)
-	Dropdown("outline", "Outline", nil, {
+	ui.Dropdown("outline", "Outline", nil, {
 		{ "default", "The game's own" }, { "none", "None" }, { "thin", "Thin" }, { "thick", "Thick" },
 	}, nil, nil, Styled("outline"))
-	Checkbox("shadow", "Shadow", nil, nil, nil, Styled("shadow"))
+	ui.Checkbox("shadow", "Shadow", nil, nil, nil, Styled("shadow"))
 	local function Offset(value)
 		return ("%d"):format(value)
 	end
-	Slider("x", "Sideways", "Moves the name from where the game puts it; positive is to the right.", -50, 50, 1, Offset, nil, nil, Styled("x"))
-	Slider("y", "Up or down", "Moves the name from where the game puts it; positive is up.", -50, 50, 1, Offset, nil, nil, Styled("y"))
-	Checkbox("raidIcon", "Raid marker above the name", nil, nil, nil, Styled("raidIcon"))
-	Checkbox("firstName", "First name only", "Leaves the surname off friendly players' names on their nameplates.", nil, nil, Styled("firstName"))
-
-	Settings.RegisterAddOnCategory(category)
+	ui.Slider("x", "Sideways", "Moves the name from where the game puts it; positive is to the right.", -50, 50, 1, Offset, nil, nil, Styled("x"))
+	ui.Slider("y", "Up or down", "Moves the name from where the game puts it; positive is up.", -50, 50, 1, Offset, nil, nil, Styled("y"))
+	ui.Checkbox("raidIcon", "Raid marker above the name", nil, nil, nil, Styled("raidIcon"))
+	ui.Checkbox("firstName", "First name only", "Leaves the surname off friendly players' names on their nameplates.", nil, nil, Styled("firstName"))
 end
 
--- Events -------------------------------------------------------------------
+feature = ns.Feature({
+	key = "names",
+	title = "Friendly names",
+	tooltip = "Friendly player nameplates show just the name: your font, size and position. While on, sets the game's nameplate options for it at every login.",
+	defaults = DEFAULTS,
+	events = { "PLAYER_ENTERING_WORLD", "NAME_PLATE_UNIT_ADDED" },
+	Command = Command,
+	Options = Options,
+})
 
-local loader = CreateFrame("Frame")
-loader:RegisterEvent("ADDON_LOADED")
-loader:RegisterEvent("PLAYER_LOGIN")
-loader:RegisterEvent("PLAYER_ENTERING_WORLD")
-loader:RegisterEvent("NAME_PLATE_UNIT_ADDED")
-loader:SetScript("OnEvent", function(self, event, arg1)
-	if event == "ADDON_LOADED" then
-		if arg1 ~= ADDON_NAME then
-			return
-		end
-		NameOnlyDB = NameOnlyDB or {}
-		db = NameOnlyDB
-		for key, value in pairs(DEFAULTS) do
-			if db[key] == nil then
-				db[key] = value
+function feature.OnLoad()
+	db = feature.db
+end
+
+function feature.OnLogin()
+	if type(CompactUnitFrame_UpdateName) == "function" then
+		hooksecurefunc("CompactUnitFrame_UpdateName", OnUpdateName)
+	end
+end
+
+function feature.Start()
+	if not InCombatLockdown() then
+		Setup(true) -- quiet unless something had to change
+	end
+	StyleAll()
+end
+
+function feature.Stop()
+	for _, plate in ipairs(C_NamePlate.GetNamePlates()) do
+		local unitFrame = plate.UnitFrame
+		if unitFrame and unitFrame.nameOnlyHooked then
+			Unstyle(unitFrame)
+			-- A raid marker this hid: Blizzard's own rule decides again.
+			local raid = unitFrame.RaidTargetFrame
+			if raid and raid.UpdateShownState then
+				pcall(raid.UpdateShownState, raid)
 			end
 		end
-		if (db.version or 1) < 2 then
-			-- Version 1 shipped with Friz 14, a thin outline and a shadow
-			-- as its defaults; Blizzard's font is the default now.
-			db.font, db.size, db.outline, db.shadow = DEFAULTS.font, DEFAULTS.size, DEFAULTS.outline, DEFAULTS.shadow
-		end
-		db.release = (db.version or 1) < 3 -- version 2 owned the NPC options
-		db.npcs = nil
-		db.version = VERSION
-		SLASH_NAMEONLY1 = "/nameonly"
-		SLASH_NAMEONLY2 = "/nonly"
-		SlashCmdList.NAMEONLY = Command
-		if type(CompactUnitFrame_UpdateName) == "function" then
-			hooksecurefunc("CompactUnitFrame_UpdateName", OnUpdateName)
-		end
-		local ok, err = pcall(RegisterSettings)
-		if not ok then
-			Print(("options panel unavailable (%s); use /nameonly instead"):format(tostring(err)))
-		end
-	elseif event == "PLAYER_LOGIN" then
-		-- Quiet unless something had to change.
-		if db.release and not InCombatLockdown() then
-			db.release = nil
-			ReleaseCVars()
-		end
-		Setup(true)
-	elseif event == "PLAYER_ENTERING_WORLD" then
+	end
+end
+
+function feature.OnEvent(event, unit)
+	if event == "PLAYER_ENTERING_WORLD" then
 		-- Per-character options can load after PLAYER_LOGIN and undo what
 		-- was set there; apply again once the world is up (harmless when
 		-- nothing differs).
@@ -517,11 +462,11 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 	elseif event == "NAME_PLATE_UNIT_ADDED" then
 		-- Blizzard's driver registered first, so the plate already has its
 		-- unit frame set up by the time this fires.
-		local plate = C_NamePlate.GetNamePlateForUnit(arg1)
+		local plate = C_NamePlate.GetNamePlateForUnit(unit)
 		local unitFrame = plate and plate.UnitFrame
 		if unitFrame then
 			Hook(unitFrame) -- too late for this plate's own UpdateAnchors, hence the call below
 			Style(unitFrame)
 		end
 	end
-end)
+end

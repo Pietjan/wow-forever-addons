@@ -1,0 +1,16 @@
+## Interface: 16001
+## Title: ForeverPlates
+## Notes: Nameplate tweaks, each one on or off: friendly players show just the name; enemy bars coloured by your threat, and your threat as a number beside them; who each enemy is targeting under its bar; a quest mark on enemies you still need; the level box hidden if you like. /fplates
+## Author: Pietjan
+## Version: 1.0
+## Dependencies: Blizzard_NamePlates
+## SavedVariables: ForeverPlatesDB
+
+Core.lua
+NameOnly.lua
+ThreatColor.lua
+ThreatNumbers.lua
+PlateTarget.lua
+QuestTarget.lua
+LevelBox.lua
+Options.lua

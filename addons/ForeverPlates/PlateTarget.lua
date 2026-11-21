@@ -1,10 +1,10 @@
--- PlateTarget: every hostile nameplate whose unit has a target shows that
+-- Enemy targets (/fplates target): every hostile nameplate whose unit has a target shows that
 -- target's name under the health bar (under the cast bar while casting): class-coloured for players, so party
--- members are easy to tell apart, YOU when it is you, in ThreatColor's
+-- members are easy to tell apart, YOU when it is you, in Threat colours'
 -- colours: green when you are a tank (it should be on you), red otherwise,
 -- grey for NPCs and pets.
 --
--- How, within Forever's nameplate rules (see NameOnly): the text is a
+-- How, within Forever's nameplate rules (see Core.lua): the text is a
 -- FontString on a frame of this addon's own, parented to the nameplate and
 -- anchored under the unit frame's HealthBarsContainer, and moved under
 -- its CastBarsContainer while the cast bar shows (HookScript on the cast
@@ -18,13 +18,14 @@
 -- name as is, and SetAlphaFromBoolean lets the game show one of the two
 -- from the secret answer. Colours are made with CreateColor and a full
 -- alpha, since the class colour tables have none and the C API wants it.
--- Anything refused just hides the text for that plate (see /platetarget).
+-- Anything refused just hides the text for that plate (see /fplates target).
 --
 -- Updates come from UNIT_TARGET on nameplate units, plates being added,
 -- and a light 0.2 s sweep, since an NPC's target change does not always
 -- fire an event.
 
-local IsSecret = issecretvalue or function() return false end
+local _, ns = ...
+local IsSecret, IsTank = ns.IsSecret, ns.IsTank
 
 -- ThreatColor's green and red.
 local YOU_TANK = CreateColor(0.20, 0.80, 0.20, 1) -- tank: it should be on you
@@ -33,45 +34,18 @@ local NPC = CreateColor(0.80, 0.80, 0.80, 1)
 local SWEEP = 0.2
 local SIZE = 0.85 -- of the nameplate name's height: the same font, a little smaller
 
+local feature
 local texts = {} -- nameplate -> our frame
-local lastError -- the last error caught, for /platetarget
+local lastError -- the last error caught, for /fplates target
 
 local function Note(err)
 	lastError = tostring(err)
 end
 
--- Tank or not: ThreatColor's role setting when it is installed and set,
--- otherwise the game's own answer (spec role, or the assigned group role),
--- as ThreatColor works it out.
-local function IsTank()
-	local role = type(ThreatColorDB) == "table" and ThreatColorDB.role
-	if role == "tank" then
-		return true
-	elseif role == "dps" then
-		return false
-	end
-	local ok, tank = pcall(function()
-		return PlayerUtil and PlayerUtil.IsPlayerEffectivelyTank and PlayerUtil.IsPlayerEffectivelyTank()
-	end)
-	return ok and tank == true
-end
-
--- The nameplate name's own font: Blizzard's rule from
--- Blizzard_NamePlateUnitFrame.lua (GetNamePlateFontObject, a local there),
--- read from its plain NamePlateSetupOptions table, never from the plate.
-local function NamePlateFont()
-	local options = NamePlateSetupOptions or {}
-	local styles = NamePlateConstants and NamePlateConstants.NAME_ANCHOR_STYLES or {}
-	local style = options.unitNameAnchorStyle
-	local outlined = style ~= nil and (style == styles.InsideHealthBar or style == styles.CenteredAboveHealthBar
-		or (style == styles.AboveHealthBar and options.useOutlinedFontWhenAboveHealthBar))
-	return outlined and "SystemFont_NamePlate_Outlined" or "SystemFont_NamePlate", options.healthBarFontHeight
-end
-
 -- Put the nameplate font on a plate's texts when it differs from what they
 -- have (the nameplate size and style options can change it).
 local function ApplyFont(frame)
-	local object, height = NamePlateFont()
+	local object, height = ns.NamePlateFont()
 	local key = object .. ":" .. tostring(height)
 	if frame.fontKey == key then
 		return
@@ -218,11 +192,10 @@ local function Update(unit)
 	frame:SetShown(ok and shown == true)
 end
 
--- /platetarget: what the addon sees on your target's nameplate.
+-- /fplates target: what the feature sees on your target's nameplate.
 local function Report()
-	local function Say(text)
-		DEFAULT_CHAT_FRAME:AddMessage("|cffff8040PlateTarget|r " .. text)
-	end
+	local Say = ns.Print
+	Say("Enemy targets " .. (feature.db.enabled and "on" or "off; /fplates target on"))
 	local plate = C_NamePlate.GetNamePlateForUnit("target")
 	if not plate then
 		Say("your target has no nameplate (target an enemy with a visible plate)")
@@ -264,18 +237,34 @@ local function UpdateAll()
 	end
 end
 
-local events = CreateFrame("Frame")
-events:RegisterEvent("PLAYER_LOGIN")
-events:RegisterEvent("NAME_PLATE_UNIT_ADDED")
-events:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
-events:RegisterEvent("UNIT_TARGET")
-events:RegisterEvent("PLAYER_TARGET_CHANGED")
-events:SetScript("OnEvent", function(_, event, unit)
-	if event == "PLAYER_LOGIN" then
-		SLASH_PLATETARGET1 = "/platetarget"
-		SlashCmdList.PLATETARGET = Report
-		C_Timer.NewTicker(SWEEP, UpdateAll)
-	elseif event == "NAME_PLATE_UNIT_REMOVED" then
+local ticker
+
+feature = ns.Feature({
+	key = "target",
+	title = "Enemy targets",
+	tooltip = "Enemy nameplates show who the enemy is targeting, under the bar (below the cast bar while casting); class colours; YOU when it is you, green for tanks, red otherwise.",
+	defaults = { enabled = true },
+	events = { "NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "UNIT_TARGET", "PLAYER_TARGET_CHANGED" },
+	Command = Report,
+})
+
+function feature.Start()
+	ticker = C_Timer.NewTicker(SWEEP, UpdateAll)
+	UpdateAll()
+end
+
+function feature.Stop()
+	if ticker then
+		ticker:Cancel()
+		ticker = nil
+	end
+	for _, frame in pairs(texts) do
+		frame:Hide()
+	end
+end
+
+function feature.OnEvent(event, unit)
+	if event == "NAME_PLATE_UNIT_REMOVED" then
 		local plate = C_NamePlate.GetNamePlateForUnit(unit)
 		if plate and texts[plate] then
 			texts[plate]:Hide()
@@ -285,4 +274,4 @@ events:SetScript("OnEvent", function(_, event, unit)
 	elseif type(unit) == "string" and not IsSecret(unit) and unit:find("^nameplate") then
 		Update(unit)
 	end
-end)
+end

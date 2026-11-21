@@ -1,5 +1,8 @@
--- QuestTarget: puts a quest icon next to the nameplate of every enemy that
+-- Quest enemies (/fplates quest): puts a quest icon next to the nameplate of every enemy that
 -- still counts towards one of your quest objectives.
+
+local _, ns = ...
+local IsSecret = ns.IsSecret
 
 local ICON_SIZE = 22
 local ICON_ATLAS = "QuestNormal" -- the yellow exclamation mark
@@ -104,16 +107,41 @@ local function RequestRefresh()
 	end)
 end
 
-local events = CreateFrame("Frame")
-events:RegisterEvent("NAME_PLATE_UNIT_ADDED")
-events:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
-events:RegisterEvent("PLAYER_ENTERING_WORLD")
-events:RegisterEvent("QUEST_LOG_UPDATE")
-events:RegisterEvent("QUEST_ACCEPTED")
-events:RegisterEvent("QUEST_REMOVED")
-events:RegisterEvent("QUEST_TURNED_IN")
-events:RegisterUnitEvent("UNIT_QUEST_LOG_CHANGED", "player")
-events:SetScript("OnEvent", function(_, event, unit)
+local function HideAll()
+	for _, indicator in pairs(indicators) do
+		indicator:Hide()
+	end
+end
+
+local feature = ns.Feature({
+	key = "quest",
+	title = "Quest enemies",
+	tooltip = "Marks the nameplates of enemies you still need for a quest.",
+	defaults = { enabled = true },
+	events = {
+		"NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "PLAYER_ENTERING_WORLD",
+		"QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN",
+	},
+	unitEvents = { { "UNIT_QUEST_LOG_CHANGED", "player" } },
+})
+
+-- Plates already in view when it is switched on.
+function feature.Start()
+	for _, plate in ipairs(C_NamePlate.GetNamePlates()) do
+		local unit = plate.UnitFrame and plate.UnitFrame.unit
+		if type(unit) == "string" and not IsSecret(unit) and unit:find("^nameplate") then
+			plateOfUnit[unit] = plate
+		end
+	end
+	RequestRefresh()
+end
+
+function feature.Stop()
+	wipe(plateOfUnit)
+	HideAll()
+end
+
+function feature.OnEvent(event, unit)
 	if event == "NAME_PLATE_UNIT_ADDED" then
 		plateOfUnit[unit] = C_NamePlate.GetNamePlateForUnit(unit)
 		Update(unit)
@@ -128,4 +156,4 @@ events:SetScript("OnEvent", function(_, event, unit)
 	else
 		RequestRefresh()
 	end
-end)
+end

@@ -1,5 +1,5 @@
--- ThreatColor: the health bar of an enemy nameplate shows your threat on
--- it, green / yellow / orange / red, from the start of the fight.
+-- Threat colours (/fplates threat): the health bar of an enemy nameplate
+-- shows your threat on it, green / yellow / orange / red, from the start of the fight.
 --
 -- Blizzard's own threat colour (Options > Nameplates, threat display) only
 -- takes over once you are close to pulling, and only in a group; the rest
@@ -33,7 +33,7 @@
 -- goes on right after Blizzard sets its own, whenever it does (health,
 -- threat, faction updates). Only SetStatusBarColor is called: no Blizzard
 -- field is written and no Blizzard function is called, since on Forever
--- either one taints the nameplate (see NameOnly).
+-- either one taints the nameplate (see Core.lua).
 --
 -- Threat state can be secret to addon code. Then the number cannot be
 -- looked at, but whether you are tanking it can be turned into a colour by
@@ -47,6 +47,7 @@
 -- C_CurveUtil.EvaluateColorFromBoolean, so the game picks the colour.
 
 local DEFAULTS = {
+	enabled = true,
 	role = "auto", -- "auto", "tank" or "dps"
 }
 
@@ -59,29 +60,11 @@ local COLORS = {
 local GREY = CreateColor(0.55, 0.55, 0.55, 1) -- tank: another tank has it
 local LOOSE = CreateColor(1.00, 0.70, 0.15, 1) -- healer/damage: it is on another healer or damage dealer
 
-local IsSecret = issecretvalue or function() return false end
+local _, ns = ...
+local Print, IsSecret, IsTank = ns.Print, ns.IsSecret, ns.IsTank
 
+local feature
 local db
-
-local function Print(text)
-	DEFAULT_CHAT_FRAME:AddMessage("|cffff8040ThreatColor|r " .. text)
-end
-
-local function AutoTank()
-	local ok, tank = pcall(function()
-		return PlayerUtil and PlayerUtil.IsPlayerEffectivelyTank and PlayerUtil.IsPlayerEffectivelyTank()
-	end)
-	return ok and tank == true
-end
-
-local function IsTank()
-	if db.role == "tank" then
-		return true
-	elseif db.role == "dps" then
-		return false
-	end
-	return AutoTank()
-end
 
 -- Whether a nameplate's unit is one this addon colours.
 local function Wanted(unit)
@@ -301,7 +284,9 @@ local function Paint(frame, fromHook)
 end
 
 local function PaintHook(frame)
-	Paint(frame, true)
+	if db and db.enabled then
+		Paint(frame, true)
+	end
 end
 
 local function PaintAll()
@@ -315,18 +300,28 @@ local function PaintAll()
 	end
 end
 
+
+-- Put Blizzard's colour back on every bar this painted.
+local function ReleaseAll()
+	for frame in pairs(painted) do
+		Release(frame, frame.unit, false)
+	end
+end
+
 local ROLES = { auto = true, tank = true, dps = true }
 
 local function Command(msg)
 	local word = (msg or ""):lower():match("^%s*(%S*)")
 	if ROLES[word] then
 		db.role = word
-		PaintAll()
+		if db.enabled then
+			PaintAll()
+		end
 	elseif word ~= "" and word ~= "status" then
-		Print("/threatcolor auto | tank | dps   -- which way the colours run")
+		Print("/fplates threat on|off | auto | tank | dps   -- which way the colours run")
 	end
-	Print(("role: %s (%s); green means %s"):format(db.role, IsTank() and "tank" or "not a tank",
-		IsTank() and "you hold threat" or "no threat on you"))
+	Print(("Threat colours %s; role: %s (%s); green means %s"):format(db.enabled and "on" or "off", db.role,
+		IsTank() and "tank" or "not a tank", IsTank() and "you hold threat" or "no threat on you"))
 	local unit = UnitExists("target") and "target"
 	if unit and UnitCanAttack("player", unit) then
 		local ok, state, listed = pcall(State, unit, IsTank())
@@ -341,86 +336,61 @@ local function Command(msg)
 	end
 end
 
-------------------------------------------------------------------------------
--- The game's options window (Options > AddOns): the setting of the slash
--- command as a dropdown. Optional: without the game's settings API the
--- slash command still does everything.
-------------------------------------------------------------------------------
-
-local function RegisterSettings()
-	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterProxySetting and Settings.CreateDropdown) then
-		return
-	end
-	local category = Settings.RegisterVerticalLayoutCategory("ThreatColor")
-
-	local function Proxy(key, kind, name, default, get, set)
-		if default == nil then
-			default = DEFAULTS[key]
-		end
-		return Settings.RegisterProxySetting(category, "ThreatColor_" .. key, kind, name, default,
-			get or function() return db[key] end, set or function(value) db[key] = value end)
-	end
-	-- choices: { value, label, tooltip } each.
-	local function Dropdown(key, name, tooltip, choices, default, get, set)
-		local function Choices()
-			local container = Settings.CreateControlTextContainer()
-			for _, choice in ipairs(choices) do
-				container:Add(choice[1], choice[2], choice[3])
-			end
-			return container:GetData()
-		end
-		Settings.CreateDropdown(category, Proxy(key, Settings.VarType.String, name, default, get, set), Choices, tooltip)
-	end
-
-	Dropdown("role", "Role", "Which way the nameplate colours run.", {
+-- Its page in the options window: the role.
+local function Options(page, ui)
+	ui.Dropdown("role", "Role", "Which way the nameplate colours run. Enemy targets uses it too, for the colour of YOU.", {
 		{ "auto", "Automatic", "Tank when the game counts you as one." },
 		{ "tank", "Tank", "Green means you hold threat." },
 		{ "dps", "Healer or damage", "Green means no threat on you." },
 	}, nil, nil, function(value)
 		db.role = value
-		PaintAll()
+		if db.enabled then
+			PaintAll()
+		end
 	end)
-
-	Settings.RegisterAddOnCategory(category)
 end
 
-local loader = CreateFrame("Frame")
-loader:RegisterEvent("ADDON_LOADED")
-loader:RegisterEvent("PLAYER_LOGIN")
-loader:RegisterEvent("PLAYER_ROLES_ASSIGNED")
-loader:RegisterEvent("GROUP_ROSTER_UPDATE")
-loader:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
-loader:RegisterEvent("PLAYER_TALENT_UPDATE")
-loader:RegisterEvent("PLAYER_REGEN_ENABLED")
-loader:RegisterEvent("UNIT_FLAGS")
-loader:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
-loader:RegisterEvent("UNIT_TARGET")
-loader:SetScript("OnEvent", function(_, event, arg)
-	if event == "ADDON_LOADED" then
-		if arg == "ThreatColor" then
-			ThreatColorDB = ThreatColorDB or {}
-			db = ThreatColorDB
-			for key, value in pairs(DEFAULTS) do
-				if db[key] == nil then
-					db[key] = value
-				end
-			end
-			SLASH_THREATCOLOR1 = "/threatcolor"
-			SLASH_THREATCOLOR2 = "/tcolor"
-			SlashCmdList.THREATCOLOR = Command
-			local ok, err = pcall(RegisterSettings)
-			if not ok then
-				Print(("options panel unavailable (%s); use /threatcolor instead"):format(tostring(err)))
-			end
-		end
-	elseif event == "PLAYER_LOGIN" then
-		hooksecurefunc("CompactUnitFrame_UpdateHealthColor", PaintHook)
-		PaintAll()
-		-- An enemy changing target or leaving combat does not always come
-		-- with an event for its nameplate.
-		C_Timer.NewTicker(0.5, PaintAll)
-	elseif event == "UNIT_FLAGS" or event == "UNIT_THREAT_LIST_UPDATE" or event == "UNIT_TARGET" then
-		if db and type(arg) == "string" and not IsSecret(arg) and arg:find("^nameplate") then
+local ticker
+
+feature = ns.Feature({
+	key = "threat",
+	title = "Threat colours",
+	tooltip = "Enemy nameplate bars coloured by your threat: green, yellow, orange, red, the other way round for a tank.",
+	defaults = DEFAULTS,
+	events = {
+		"PLAYER_ROLES_ASSIGNED", "GROUP_ROSTER_UPDATE", "UPDATE_SHAPESHIFT_FORM", "PLAYER_TALENT_UPDATE",
+		"PLAYER_REGEN_ENABLED", "UNIT_FLAGS", "UNIT_THREAT_LIST_UPDATE", "UNIT_TARGET",
+	},
+	Command = Command,
+	Options = Options,
+})
+
+function feature.OnLoad()
+	db = feature.db
+end
+
+function feature.OnLogin()
+	hooksecurefunc("CompactUnitFrame_UpdateHealthColor", PaintHook)
+end
+
+function feature.Start()
+	PaintAll()
+	-- An enemy changing target or leaving combat does not always come
+	-- with an event for its nameplate.
+	ticker = C_Timer.NewTicker(0.5, PaintAll)
+end
+
+function feature.Stop()
+	if ticker then
+		ticker:Cancel()
+		ticker = nil
+	end
+	ReleaseAll()
+end
+
+function feature.OnEvent(event, arg)
+	if event == "UNIT_FLAGS" or event == "UNIT_THREAT_LIST_UPDATE" or event == "UNIT_TARGET" then
+		if type(arg) == "string" and not IsSecret(arg) and arg:find("^nameplate") then
 			local plate = C_NamePlate.GetNamePlateForUnit(arg)
 			if plate and plate.UnitFrame then
 				Paint(plate.UnitFrame)
@@ -429,4 +399,4 @@ loader:SetScript("OnEvent", function(_, event, arg)
 	else
 		PaintAll() -- the role may have changed
 	end
-end)
+end
