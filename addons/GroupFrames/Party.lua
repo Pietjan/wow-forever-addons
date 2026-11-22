@@ -76,20 +76,31 @@ local DEFAULTS = {
 	rangeFade = true,
 	fadedAlpha = FADED, -- how faded an out-of-range member is
 	partyLayout = "rowCentre",
-	allBleeds = true, -- bleeds you cannot remove too
 }
 local DOT, DOT_GAP = 5, 2
 local WEAKENED_SOUL_SECONDS = 15
 local DOT_X, DOT_Y = 3, 3 -- in from the bar's side and up from its bottom (user: 3 and 3)
 local DISPEL_TYPES = { "Magic", "Curse", "Disease", "Poison", "Bleed" }
 
--- Bleeds: all of them, or only the ones you can remove (RAID), as the
--- other types. Hardly anyone can remove one, and a healer still wants to
--- see the tank bleeding (user, 2026-11-22), so all by default; the
--- setting allBleeds switches it.
-local function BleedFilter(all)
-	return all and "HARMFUL" or "HARMFUL|RAID"
+-- When each type's icon shows (the dispelShow setting, per type): the
+-- filter its aura group takes, or no filter for never (the group is
+-- switched off). The game's three dispellable filters: DISPELLABLE (it
+-- can be removed at all), RAID_PLAYER_DISPELLABLE (someone in your group
+-- can), RAID (you can). All "mine" at first, bleeds too (user,
+-- 2026-11-23).
+local DISPEL_SHOW = {
+	{ key = "always", label = "Always", filter = "HARMFUL" },
+	{ key = "any", label = "Dispellable", filter = "HARMFUL|DISPELLABLE" },
+	{ key = "group", label = "Dispellable by my group", filter = "HARMFUL|RAID_PLAYER_DISPELLABLE" },
+	{ key = "mine", label = "Dispellable by me", filter = "HARMFUL|RAID" },
+	{ key = "never", label = "Never" },
+}
+local DISPEL_SHOW_DEFAULT = "mine"
+local dispelShowByKey = {}
+for _, choice in ipairs(DISPEL_SHOW) do
+	dispelShowByKey[choice.key] = choice
 end
+
 local DISPEL_ICON = 15 -- 10, then 13; the user asked them bigger again
 -- The big defensive in the middle of the bar, sticking out of the frame,
 -- dressed as the other addons here dress icons (GroupDebuffs, BuffDrop):
@@ -159,6 +170,11 @@ local COLOURS = {
 
 local db
 local buttons = {} -- every button the header made
+
+local function DispelShow(dispelType)
+	local key = db and db.dispelShow and db.dispelShow[dispelType]
+	return dispelShowByKey[key] or dispelShowByKey[DISPEL_SHOW_DEFAULT]
+end
 local byUnit = {} -- unit token -> button
 
 ------------------------------------------------------------------------------
@@ -315,10 +331,11 @@ local function CreateAuras(btn)
 	-- One icon per dispel type, however many debuffs of it (user: three
 	-- magic icons said nothing more than one): a group per type, one frame
 	-- each. Dispel types may be filtered on friends; only spell IDs may not.
-	-- Only the types you can dispel (RAID); bleeds as BleedFilter says.
+	-- Each type's filter as its setting says (DispelShow); a type set to
+	-- never gets a group too, switched off, so the setting can turn it on.
 	for _, dispelType in ipairs(DISPEL_TYPES) do
-		local filter = dispelType == "Bleed" and BleedFilter(not db or db.allBleeds) or "HARMFUL|RAID"
-		auras.dispel:AddAuraGroup("Dispel" .. dispelType, filter, {
+		local show = DispelShow(dispelType)
+		auras.dispel:AddAuraGroup("Dispel" .. dispelType, show.filter or "HARMFUL", {
 			maxFrameCount = 1,
 			initializeFrame = DispelIcon,
 			candidateFilters = { includeDispelTypes = { [dispelType] = true } },
@@ -326,6 +343,11 @@ local function CreateAuras(btn)
 		})
 	end
 	auras.dispel:SetPoint("RIGHT", btn.bar, "TOPRIGHT", -4, LINE_Y)
+	for _, dispelType in ipairs(DISPEL_TYPES) do
+		if not DispelShow(dispelType).filter then
+			auras.dispel:SetAuraGroupEnabled("Dispel" .. dispelType, false)
+		end
+	end
 
 	auras.dots = Container(btn.body, level)
 	auras.dots:SetFlowLayoutAnchorPoint("BOTTOMRIGHT")
@@ -1265,14 +1287,27 @@ end
 
 -- The bleed filter on every button: aura containers are not protected, so
 -- this works in combat too.
-local function ApplyBleeds()
-	local filter = BleedFilter(db.allBleeds)
-	for _, btn in ipairs(buttons) do
-		btn.auras.dispel:SetAuraGroupFilterString("DispelBleed", filter)
+-- Every button's dispel groups as the settings say: aura containers are
+-- not protected, so this works in combat too.
+local function ApplyDispelShow(btn)
+	for _, dispelType in ipairs(DISPEL_TYPES) do
+		local show, key = DispelShow(dispelType), "Dispel" .. dispelType
+		if show.filter then
+			btn.auras.dispel:SetAuraGroupFilterString(key, show.filter)
+		end
+		btn.auras.dispel:SetAuraGroupEnabled(key, show.filter ~= nil)
 	end
 end
 
-ns.PartyApplyBleeds = ApplyBleeds
+function ns.PartyApplyDispelShow()
+	for _, btn in ipairs(buttons) do
+		ApplyDispelShow(btn)
+	end
+end
+
+ns.DISPEL_TYPES = DISPEL_TYPES
+ns.DISPEL_SHOW = DISPEL_SHOW
+ns.DISPEL_SHOW_DEFAULT = DISPEL_SHOW_DEFAULT
 
 function ns.PartyLogin(saved)
 	db = saved
@@ -1282,9 +1317,11 @@ function ns.PartyLogin(saved)
 		end
 	end
 	db.point = db.point or { DEFAULT_POINT[1], DEFAULT_POINT[2], DEFAULT_POINT[3] }
+	db.allBleeds = nil -- 4f2c050's checkbox, replaced by dispelShow
+	db.dispelShow = db.dispelShow or {}
 	ApplyPosition()
 	HideBlizzardParty()
-	ApplyBleeds() -- buttons made before the saved settings were read
+	ns.PartyApplyDispelShow() -- buttons made before the saved settings were read
 	-- How many spells the game named, said once so it can be checked.
 	local _, count = BigDefensives()
 	if db.bigDefensives ~= count then
