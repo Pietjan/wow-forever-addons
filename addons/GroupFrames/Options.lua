@@ -3,9 +3,10 @@
 -- everything.
 --
 -- Party: your solo frame, party pets. Raid of 10, of 25, of 40: each
--- layout's pets and size. Frames: the aggro highlight, the range fade and how
--- faded. Buttons do what the slash commands do: unlock or lock, reset the
--- places, test a party or a raid of 10, 25 or 40, end a test.
+-- layout's pets and size. Frames: the aggro highlight, all bleeds or only
+-- removable ones, the range fade and how faded. Buttons do what the slash
+-- commands do: unlock or lock, reset the places, test a party or a raid of
+-- 10, 25 or 40, end a test.
 --
 -- What changes the secure headers (solo frame, pets, raid size) cannot
 -- change in combat: the setting is saved at once and shows when combat ends.
@@ -137,6 +138,8 @@ function ns.RegisterSettings(db)
 		defaults.aggro, ns.PartyApplySettings)
 	Checkbox("rangeFade", "Fade out of range", "Fades the frames of group members out of range.",
 		defaults.rangeFade, ns.PartyApplySettings)
+	Checkbox("allBleeds", "All bleeds", "Shows a bleed icon for every bleed on a member, also the ones you cannot remove. Off: only the bleeds you can remove, like the other dispel icons.",
+		defaults.allBleeds, ns.PartyApplyBleeds)
 	Slider("fadedAlpha", "Faded to", "How visible an out-of-range member's frame stays.", 0.1, 0.9, 0.05, defaults.fadedAlpha,
 		function() return db.fadedAlpha end,
 		function(value)

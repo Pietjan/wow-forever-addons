@@ -1,7 +1,12 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/">
 	<!-- One party member: a secure unit button (click to target, right-click
 	     for the menu) whose looks Party.lua builds as it is created. -->
-	<Button name="GroupFramesUnitButtonTemplate" inherits="SecureUnitButtonTemplate" virtual="true">
+	<!-- registerForClicks: only registered clicks reach the button (the
+	     default is the left release, so "*type2" togglemenu never fired);
+	     release only, or a right-click opens and closes the menu at once.
+	     Set here, not in OnLoad: the engine applies it as it creates the
+	     button, which the header may do in combat. -->
+	<Button name="GroupFramesUnitButtonTemplate" inherits="SecureUnitButtonTemplate" registerForClicks="AnyUp" virtual="true">
 		<Scripts>
 			<OnLoad function="GroupFrames_InitButton" inherit="append"/>
 		</Scripts>

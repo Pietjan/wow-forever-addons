@@ -76,11 +76,20 @@ local DEFAULTS = {
 	rangeFade = true,
 	fadedAlpha = FADED, -- how faded an out-of-range member is
 	partyLayout = "rowCentre",
+	allBleeds = true, -- bleeds you cannot remove too
 }
 local DOT, DOT_GAP = 5, 2
 local WEAKENED_SOUL_SECONDS = 15
 local DOT_X, DOT_Y = 3, 3 -- in from the bar's side and up from its bottom (user: 3 and 3)
 local DISPEL_TYPES = { "Magic", "Curse", "Disease", "Poison", "Bleed" }
+
+-- Bleeds: all of them, or only the ones you can remove (RAID), as the
+-- other types. Hardly anyone can remove one, and a healer still wants to
+-- see the tank bleeding (user, 2026-11-22), so all by default; the
+-- setting allBleeds switches it.
+local function BleedFilter(all)
+	return all and "HARMFUL" or "HARMFUL|RAID"
+end
 local DISPEL_ICON = 15 -- 10, then 13; the user asked them bigger again
 -- The big defensive in the middle of the bar, sticking out of the frame,
 -- dressed as the other addons here dress icons (GroupDebuffs, BuffDrop):
@@ -306,8 +315,10 @@ local function CreateAuras(btn)
 	-- One icon per dispel type, however many debuffs of it (user: three
 	-- magic icons said nothing more than one): a group per type, one frame
 	-- each. Dispel types may be filtered on friends; only spell IDs may not.
+	-- Only the types you can dispel (RAID); bleeds as BleedFilter says.
 	for _, dispelType in ipairs(DISPEL_TYPES) do
-		auras.dispel:AddAuraGroup("Dispel" .. dispelType, "HARMFUL|RAID", {
+		local filter = dispelType == "Bleed" and BleedFilter(not db or db.allBleeds) or "HARMFUL|RAID"
+		auras.dispel:AddAuraGroup("Dispel" .. dispelType, filter, {
 			maxFrameCount = 1,
 			initializeFrame = DispelIcon,
 			candidateFilters = { includeDispelTypes = { [dispelType] = true } },
@@ -638,11 +649,10 @@ function GroupFrames_InitButton(btn)
 	BuildLook(btn)
 	CreateAuras(btn)
 
-	-- Right-click: a button gets only the clicks it is registered for, and
-	-- by default that is the left button's release; the "*type2" togglemenu
-	-- never fired (user, 2026-11-22). On release only: registering presses
-	-- too would open and close the menu in one click.
-	btn:RegisterForClicks("AnyUp")
+	-- Clicks are registered by the template's registerForClicks, not here:
+	-- the header can create a button in combat (an invite mid-fight), and
+	-- RegisterForClicks from this OnLoad is then blocked (BugGrabber,
+	-- 2026-11-22).
 
 	-- The unit's tooltip, as Blizzard's unit frames show it
 	-- (UnitFrame_OnEnter/OnLeave: default anchor, SetUnit, the right-click
@@ -1253,6 +1263,17 @@ local function HideBlizzardParty()
 	end
 end
 
+-- The bleed filter on every button: aura containers are not protected, so
+-- this works in combat too.
+local function ApplyBleeds()
+	local filter = BleedFilter(db.allBleeds)
+	for _, btn in ipairs(buttons) do
+		btn.auras.dispel:SetAuraGroupFilterString("DispelBleed", filter)
+	end
+end
+
+ns.PartyApplyBleeds = ApplyBleeds
+
 function ns.PartyLogin(saved)
 	db = saved
 	for key, value in pairs(DEFAULTS) do
@@ -1263,6 +1284,7 @@ function ns.PartyLogin(saved)
 	db.point = db.point or { DEFAULT_POINT[1], DEFAULT_POINT[2], DEFAULT_POINT[3] }
 	ApplyPosition()
 	HideBlizzardParty()
+	ApplyBleeds() -- buttons made before the saved settings were read
 	-- How many spells the game named, said once so it can be checked.
 	local _, count = BigDefensives()
 	if db.bigDefensives ~= count then
