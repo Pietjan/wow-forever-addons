@@ -514,6 +514,10 @@ local function RegisterBaganator()
 	end, { corner = "top_left", priority = 1 })
 end
 
+-- For the sell list (SellList.lua): the same verdicts as the tooltip.
+ns.Options, ns.Money, ns.LABEL, ns.NeverJunk, ns.AuctionPrice = Options, Money, LABEL, NeverJunk, AuctionPrice
+ns.DISENCHANT_SPELL = DISENCHANT_SPELL
+
 local events = CreateFrame("Frame")
 events:RegisterEvent("PLAYER_LOGIN")
 events:SetScript("OnEvent", function(self, event)

@@ -24,7 +24,7 @@ Downloads, one zip per addon: https://pietjan.github.io/wow-forever-addons/
 | LootFeed | A short list of what you just picked up: items with how many you now carry, money, reputation, experience and honor, and what your group loots. Each line fades after a few seconds. /lootfeed |
 | LootRolls | Movable group loot roll bars in the XLoot layout: icon, timer bar with the item name, Need/Greed/Pass with how many chose each and who (hover). /lootrolls |
 | PetAuras | Your pet's buffs and debuffs as small icons under the pet frame, drawn by the game's own aura buttons. |
-| SellAdvice | One line in item tooltips: disenchant, vendor or auction, whichever brings the most, from Auctionator's scanned prices. A gold coin marks the quest choice worth the most. Hold Alt for the workings. |
+| SellAdvice | One line in item tooltips: disenchant, vendor or auction, whichever brings the most, from Auctionator's scanned prices. A gold coin marks the quest choice worth the most. Hold Alt for the workings. /sell lists everything your characters own (from Syndicator), best to sell first, with a low/high price note. |
 | SimpleRaidTargetIcons | Modifier-click or double-click a unit to pick its raid target icon from a radial menu around the cursor. Out of combat only; key bindings work in combat. |
 | TargetDebuffs | The debuffs you put on your target as a free-standing row of icons that the mouse passes through. /targetdebuffs to move it. |
 | ToastAnchor | Puts the game's alert popups (loot you won, achievements and the like) where you want them. /toastanchor |
