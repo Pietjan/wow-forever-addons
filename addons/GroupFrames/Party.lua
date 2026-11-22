@@ -1,0 +1,850 @@
+-- GroupFrames party frames: our own, drawn after the agreed mock-up
+-- (scratchpad/mockups/gframes.py), in place of Blizzard's.
+--
+-- The buttons come from a SecureGroupHeaderTemplate header: the game itself
+-- decides who is shown, in which order, and lays them out in a row; each is
+-- a secure unit button, so a click targets and a right-click opens the
+-- unit menu, in combat too. The header resizes itself to the members it
+-- shows and hangs by its centre from our anchor, so a party of four is
+-- centred without any code of ours. It shows in a party, not in a raid
+-- (Blizzard's raid frames stay for now), and solo it shows your own frame.
+--
+-- What a button shows, all on a plain child frame ("body") so its alpha can
+-- fade without touching the secure button:
+-- - a 92 x 15 bar in Forever's nameplate art (UI-HUD-CoolDownManager-Bar
+--   in its -BG edge, placed as Blizzard_NamePlates places it), class
+--   coloured; health is secret in Forever, and a status bar takes secret
+--   values for min, max and value, so the numbers are handed on unread;
+-- - the role icon centred on the edge's top-left corner, the first name (5
+--   letters) along the top edge, dispel-type icons at its right end;
+-- - dots at the bar's bottom right for your Renew and anyone's Power Word:
+--   Shield, and at the bottom left for a Weakened Soul you applied (Look of
+--   the auras: the game's own aura containers, see Auras below);
+-- - "Dead" or "Offline" on the bar; a gold edge on your target;
+-- - out of range: faded. UnitInRange is secret; SetAlphaFromBoolean takes it.
+--
+-- Blizzard's party frames are hidden by moving PartyFrame under a hidden
+-- frame at login (there is no game setting to hide them). Edit Mode can
+-- then no longer select the party frames.
+
+local _, ns = ...
+
+local IsSecret = issecretvalue or function() return false end
+
+local BAR_W, BAR_H = 100, 16 -- 92 x 10, 12, 14 before; the user asked a bit higher and wider
+-- The bar is built as Blizzard_NamePlates builds Forever's nameplate bar
+-- (the user asked for it "like the nameplate", 2026-11-22): the bar
+-- background art (UI-HUD-CoolDownManager-Bar-BG) behind the bar, the fill
+-- (UI-HUD-CoolDownManager-Bar) on top of it, nothing over the fill but the
+-- nameplate's own inner shadow. The art is at the nameplate's size (1x) and
+-- placed as the nameplate places it (2 left, 3 above, 6 right), except 7
+-- below instead of 6: at 6 the bottom bronze line fell half under the bar
+-- and read dim grey (measured in a true-scale render: 71,56,43 against the
+-- nameplate's 149,123,53). The bar is 14 high (10, then 12; the user asked for 14): at this
+-- size the user preferred it over the 2x art (2026-11-22).
+--
+-- The art (c60-2x: atlas file 8165540, 512 x 256, at x 175-439, y 1-39) is
+-- cut in nine by texture coordinates (SetTextureSliceMargins' units did not
+-- behave as expected in game) at 20 left, 14 top, 20 right, 22 bottom
+-- pixels, drawn at half that. The nameplate's own slices put 121 units on
+-- the left, made for its 166-wide bar.
+local EDGE_FILE, EDGE_FILE_W, EDGE_FILE_H = 8165540, 512, 256
+local EDGE_X0, EDGE_X1, EDGE_Y0, EDGE_Y1 = 175, 439, 1, 39
+local EDGE_SCALE = 1 -- UI units per 2 pixels of the 2x art
+local CUT_L, CUT_T, CUT_R, CUT_B = 20, 14, 20, 22
+-- Top 4 instead of the nameplate's 3, as the bottom: the bronze lines clear
+-- the fill and its inner shadow by a pixel (user, 2026-11-22).
+local EDGE_L, EDGE_T, EDGE_R, EDGE_B = 2, 4, 6, 7
+-- The name line runs along the bronze top line (its middle 4 px of the 2x
+-- art below the art's top), the role icon sits where it meets the left one
+-- (3 px in).
+local LINE_Y = EDGE_T - 2
+local LINE_X = -EDGE_L + 1.5
+local NAME_ABOVE = math.ceil(LINE_Y + 6) -- whole units: the secure setup string takes integers
+local BUTTON_W = EDGE_L + BAR_W + EDGE_R
+local BUTTON_H = NAME_ABOVE + BAR_H + EDGE_B
+local GAP = 10
+local ROLE_SIZE = 15 -- 12 first; the user asked for it bigger
+local NAME_X = ROLE_SIZE / 2 + 1.5 -- the name starts just right of the icon
+local FADED = 0.45
+local DOT, DOT_GAP = 5, 2
+local DOT_X, DOT_Y = 3, 3 -- in from the bar's side and up from its bottom (user: 3 and 3)
+local DISPEL_ICON = 10
+-- The big defensive in the middle of the bar, sticking out of the frame,
+-- dressed as the other addons here dress icons (GroupDebuffs, BuffDrop):
+-- the Cooldown Manager's rounded mask and its soft ring, the ring's reach
+-- scaled from 6 x 5 at 30. The action button's bronze icon frame was tried
+-- and was too much (user, 2026-11-22).
+local BIG_ICON = 28 -- 18, 24, 32, 38, 34 before; 28 with the glow (user)
+local ICON_OUTSET = 0.5
+local RING_REACH = { 6 * BIG_ICON / 30, 5 * BIG_ICON / 30 }
+-- A slight glow round it: perks-list-iconglow, a soft warm glow round a
+-- rounded square, one texture centred on the icon at the size it had in
+-- the options render the user picked (2026-11-22): 52 for a 40 icon. Tried
+-- before: a soft white icon glow (too spread), the nameplate's selection
+-- glow cut round the icon (a 1 px gap or overlap on one side however placed).
+local GLOW_SIZE = BIG_ICON * 52 / 40
+local DEFAULT_POINT = { "CENTER", 0, -180 }
+
+local ROLE_ATLAS = {
+	TANK = "UI-LFG-RoleIcon-Tank-Micro-GroupFinder",
+	HEALER = "UI-LFG-RoleIcon-Healer-Micro-GroupFinder",
+	DAMAGER = "UI-LFG-RoleIcon-DPS-Micro-GroupFinder",
+}
+
+-- Every rank, from the client tables (SpellName, SkillLineAbility; build
+-- 1.60.1.71037 names): all "Renew" and all "Power Word: Shield".
+local RENEW = { 139, 890, 6074, 6075, 6076, 6077, 6078, 8362, 10927, 10928, 10929, 11640, 22168, 23895, 25058, 25315,
+	27606, 28807, 425268, 425269, 425270, 425271, 425272, 425273, 425274, 425275, 425276, 425277, 438341, 450658,
+	1232734, 1236151, 1289450 }
+local SHIELD = { 17, 592, 600, 3747, 6065, 6066, 10898, 10899, 10900, 10901, 11647, 11835, 11974, 17139, 20697, 22187,
+	27607, 437930, 1226566, 1236154 }
+
+local COLOURS = {
+	renew = { 0.25, 0.88, 0.35 },
+	shield = { 1, 0.83, 0.29 },
+	weakened = { 0.88, 0.16, 0.16 },
+	gone = { 0.35, 0.35, 0.35 },
+}
+
+local db
+local buttons = {} -- every button the header made
+local byUnit = {} -- unit token -> button
+
+------------------------------------------------------------------------------
+-- Auras: the game's aura containers (CustomAuraContainerTemplate). The game
+-- reads, filters, lays out and shows them; this file never sees aura data.
+-- Weakened Soul cannot be picked by spell ID on a friend (the container
+-- refuses it unless C_Secrets.GetSpellAuraSecrecy is 0; 6788 gives 2), so
+-- it is "a debuff you applied"; another priest's does not show.
+------------------------------------------------------------------------------
+
+local function Set(list)
+	local set = {}
+	for _, id in ipairs(list) do
+		set[id] = true
+	end
+	return set
+end
+
+local function Dot(colour)
+	return function(button)
+		button:SetSize(DOT, DOT)
+		button:EnableMouse(false)
+		local rim = button:CreateTexture(nil, "BACKGROUND")
+		rim:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask")
+		rim:SetPoint("TOPLEFT", -1, 1)
+		rim:SetPoint("BOTTOMRIGHT", 1, -1)
+		rim:SetVertexColor(0, 0, 0, 1)
+		local dot = button:CreateTexture(nil, "ARTWORK")
+		dot:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask")
+		dot:SetAllPoints()
+		dot:SetVertexColor(colour[1], colour[2], colour[3], 1)
+	end
+end
+
+local function DispelIcon(button)
+	button:SetSize(DISPEL_ICON, DISPEL_ICON)
+	button:EnableMouse(false)
+	local icon = button:CreateTexture(nil, "ARTWORK")
+	icon:SetAllPoints()
+	button:AddDispelTypeTexture(icon, {
+		style = Enum.CustomAuraButtonDispelTypeTextureStyle.Icon,
+		showWhenHarmful = true,
+		showWhenHelpful = false,
+		showWithoutDispelType = false,
+	})
+end
+
+local function DotLayout()
+	return { elementSpacing = DOT_GAP, elementWidth = DOT, elementHeight = DOT }
+end
+
+local function Container(parent, level)
+	local container = CreateFrame("AuraContainer", nil, parent, "CustomAuraContainerTemplate")
+	container:SetFrameLevel(level)
+	return container
+end
+
+-- Which spells the game counts as big defensives: asked once, of every
+-- class spell, talent and what they trigger (BigDefensiveData.lua). No
+-- client table says; C_UnitAuras.AuraIsBigDefensive does.
+local bigDefensives, bigDefensiveCount
+
+local function BigDefensives()
+	if bigDefensives then
+		return bigDefensives, bigDefensiveCount
+	end
+	bigDefensives, bigDefensiveCount = {}, 0
+	local ask = C_UnitAuras and C_UnitAuras.AuraIsBigDefensive
+	if ask then
+		for _, id in ipairs(ns.BIG_DEFENSIVE_CANDIDATES or {}) do
+			local ok, isBig = pcall(ask, id)
+			if ok and isBig == true then
+				bigDefensives[id] = true
+				bigDefensiveCount = bigDefensiveCount + 1
+			end
+		end
+	end
+	return bigDefensives, bigDefensiveCount
+end
+
+local function HasAtlas(name)
+	local ok, info = pcall(function()
+		return C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name)
+	end)
+	return ok and info ~= nil
+end
+
+-- The Cooldown Manager's icon dressing: rounded mask on the picture, its
+-- soft ring over it; a plain dark edge without those atlases.
+local function Dress(frame, picture)
+	if HasAtlas("UI-HUD-CoolDownManager-Mask") and HasAtlas("UI-HUD-CoolDownManager-IconOverlay") then
+		local mask = frame:CreateMaskTexture()
+		mask:SetAtlas("UI-HUD-CoolDownManager-Mask")
+		mask:SetPoint("TOPLEFT", -ICON_OUTSET, ICON_OUTSET)
+		mask:SetPoint("BOTTOMRIGHT", ICON_OUTSET, -ICON_OUTSET)
+		picture:AddMaskTexture(mask)
+		local ring = frame:CreateTexture(nil, "OVERLAY")
+		ring:SetAtlas("UI-HUD-CoolDownManager-IconOverlay")
+		ring:SetPoint("TOPLEFT", -RING_REACH[1], RING_REACH[2])
+		ring:SetPoint("BOTTOMRIGHT", RING_REACH[1], -RING_REACH[2])
+	else
+		local edge = frame:CreateTexture(nil, "BACKGROUND")
+		edge:SetColorTexture(0, 0, 0, 0.9)
+		edge:SetPoint("TOPLEFT", -1, 1)
+		edge:SetPoint("BOTTOMRIGHT", 1, -1)
+	end
+end
+
+local function Glow(frame)
+	if not HasAtlas("perks-list-iconglow") then
+		return
+	end
+	local glow = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
+	glow:SetAtlas("perks-list-iconglow")
+	glow:SetSize(GLOW_SIZE, GLOW_SIZE)
+	glow:SetPoint("CENTER", frame, "CENTER")
+	return glow
+end
+
+local function Picture(frame)
+	local texture = frame:CreateTexture(nil, "ARTWORK")
+	texture:SetPoint("TOPLEFT", -ICON_OUTSET, ICON_OUTSET)
+	texture:SetPoint("BOTTOMRIGHT", ICON_OUTSET, -ICON_OUTSET)
+	return texture
+end
+
+local function BigDefensiveIcon(button)
+	button:SetSize(BIG_ICON, BIG_ICON)
+	button:EnableMouse(false)
+	local icon = Picture(button)
+	pcall(Dress, button, icon) -- should the game refuse a mask here, the icon stays square
+	pcall(Glow, button)
+	button:SetIcon(icon)
+	local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+	cooldown:SetAllPoints()
+	cooldown:Show()
+	cooldown:SetReverse(true)
+	cooldown:SetDrawEdge(false)
+	cooldown:SetHideCountdownNumbers(true)
+	cooldown:EnableMouse(false)
+	pcall(cooldown.SetSwipeTexture, cooldown, "Interface\\HUD\\UI-HUD-CoolDownManager-Icon-Swipe")
+	pcall(cooldown.SetSwipeColor, cooldown, 0, 0, 0, 0.6)
+	button:SetDurationCooldown(cooldown)
+end
+
+local function CreateAuras(btn)
+	local level = btn.top:GetFrameLevel() + 1
+	local auras = {}
+
+	auras.dispel = Container(btn.body, level)
+	-- On the right end of the name line, growing leftward (user, 2026-11-22).
+	auras.dispel:SetFlowLayoutAnchorPoint("RIGHT")
+	auras.dispel:SetFlowLayoutGrowthDirection(AnchorUtil.FlowDirection.Left, AnchorUtil.FlowDirection.Down)
+	auras.dispel:AddAuraGroup("Dispel", "HARMFUL|RAID", {
+		maxFrameCount = 3,
+		initializeFrame = DispelIcon,
+		layout = { elementSpacing = 1, elementWidth = DISPEL_ICON, elementHeight = DISPEL_ICON },
+	})
+	auras.dispel:SetPoint("RIGHT", btn.bar, "TOPRIGHT", -4, LINE_Y)
+
+	auras.dots = Container(btn.body, level)
+	auras.dots:SetFlowLayoutAnchorPoint("BOTTOMRIGHT")
+	auras.dots:SetFlowLayoutGrowthDirection(AnchorUtil.FlowDirection.Left, AnchorUtil.FlowDirection.Up)
+	auras.dots:AddAuraGroup("Shield", "HELPFUL", {
+		maxFrameCount = 1,
+		initializeFrame = Dot(COLOURS.shield),
+		candidateFilters = { includeSpellIDs = Set(SHIELD) },
+		layout = DotLayout(),
+	})
+	auras.dots:AddAuraGroup("Renew", "HELPFUL|PLAYER", {
+		maxFrameCount = 1,
+		initializeFrame = Dot(COLOURS.renew),
+		candidateFilters = { includeSpellIDs = Set(RENEW) },
+		layout = DotLayout(),
+	})
+	auras.dots:SetPoint("BOTTOMRIGHT", btn.bar, "BOTTOMRIGHT", -DOT_X, DOT_Y)
+
+	auras.weakened = Container(btn.body, level)
+	auras.weakened:SetFlowLayoutAnchorPoint("BOTTOMLEFT")
+	auras.weakened:AddAuraGroup("WeakenedSoul", "HARMFUL|PLAYER", {
+		maxFrameCount = 1,
+		initializeFrame = Dot(COLOURS.weakened),
+		layout = DotLayout(),
+	})
+	auras.weakened:SetPoint("BOTTOMLEFT", btn.bar, "BOTTOMLEFT", DOT_X, DOT_Y)
+
+	-- The big defensive: one icon in the middle of the bar, on top of
+	-- everything (the user's wish for the centre icon), Blizzard's own pick
+	-- when there are several.
+	auras.big = Container(btn.body, btn.top:GetFrameLevel() + 2)
+	auras.big:AddAuraGroup("BigDefensive", "HELPFUL", {
+		maxFrameCount = 1,
+		initializeFrame = BigDefensiveIcon,
+		candidateFilters = { includeSpellIDs = (BigDefensives()) },
+		sortMethod = AuraContainerSortMethod.BigDefensive,
+		sortDirection = AuraContainerSortDirection.Normal,
+		layout = { elementWidth = BIG_ICON, elementHeight = BIG_ICON },
+	})
+	auras.big:SetPoint("CENTER", btn.bar, "CENTER", 0, 0)
+
+	btn.auras = auras
+end
+
+------------------------------------------------------------------------------
+-- A button's looks
+------------------------------------------------------------------------------
+
+local function Outlined(fontString, size)
+	fontString:SetFontObject("GameFontHighlightSmall")
+	local font = fontString:GetFont()
+	if font then
+		fontString:SetFont(font, size, "OUTLINE")
+	end
+end
+
+-- The edge art in nine pieces around a bar, on a frame's BACKGROUND layer.
+-- Corners keep their size; sides and middle stretch.
+-- A piece of the 2x art in file 8165540, given as its pixel rect (x0-x1,
+-- y0-y1) and its nine-slice cuts, drawn at EDGE_SCALE around the bar at the
+-- given offsets (left, top, right, bottom, outward).
+local EDGE_SPEC = { x0 = EDGE_X0, x1 = EDGE_X1, y0 = EDGE_Y0, y1 = EDGE_Y1,
+	cut = { CUT_L, CUT_T, CUT_R, CUT_B }, off = { EDGE_L, EDGE_T, EDGE_R, EDGE_B } }
+
+local function NineSlice(frame, bar, withMiddle, spec, layer)
+	local cutL, cutT, cutR, cutB = unpack(spec.cut)
+	local offL, offT, offR, offB = unpack(spec.off)
+	local cutX = { spec.x0, spec.x0 + cutL, spec.x1 - cutR, spec.x1 }
+	local cutY = { spec.y0, spec.y0 + cutT, spec.y1 - cutB, spec.y1 }
+	local pieces = {}
+	local function Piece(key, col, row)
+		local tex = frame:CreateTexture(nil, layer or "BACKGROUND")
+		tex:SetTexture(EDGE_FILE)
+		tex:SetTexCoord(cutX[col] / EDGE_FILE_W, cutX[col + 1] / EDGE_FILE_W, cutY[row] / EDGE_FILE_H, cutY[row + 1] / EDGE_FILE_H)
+		pieces[key] = tex
+		return tex
+	end
+	local k = EDGE_SCALE / 2 -- 2x art pixels to UI units
+	local w = { cutL * k, nil, cutR * k }
+	local h = { cutT * k, nil, cutB * k }
+	local tl, tr = Piece("tl", 1, 1), Piece("tr", 3, 1)
+	local bl, br = Piece("bl", 1, 3), Piece("br", 3, 3)
+	tl:SetSize(w[1], h[1]); tl:SetPoint("TOPLEFT", bar, "TOPLEFT", -offL, offT)
+	tr:SetSize(w[3], h[1]); tr:SetPoint("TOPRIGHT", bar, "TOPRIGHT", offR, offT)
+	bl:SetSize(w[1], h[3]); bl:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", -offL, -offB)
+	br:SetSize(w[3], h[3]); br:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", offR, -offB)
+	local t = Piece("t", 2, 1); t:SetPoint("TOPLEFT", tl, "TOPRIGHT"); t:SetPoint("BOTTOMRIGHT", tr, "BOTTOMLEFT")
+	local b = Piece("b", 2, 3); b:SetPoint("TOPLEFT", bl, "TOPRIGHT"); b:SetPoint("BOTTOMRIGHT", br, "BOTTOMLEFT")
+	local l = Piece("l", 1, 2); l:SetPoint("TOPLEFT", tl, "BOTTOMLEFT"); l:SetPoint("BOTTOMRIGHT", bl, "TOPRIGHT")
+	local r = Piece("r", 3, 2); r:SetPoint("TOPLEFT", tr, "BOTTOMLEFT"); r:SetPoint("BOTTOMRIGHT", br, "TOPRIGHT")
+	if withMiddle then
+		local m = Piece("m", 2, 2); m:SetPoint("TOPLEFT", tl, "BOTTOMRIGHT"); m:SetPoint("BOTTOMRIGHT", br, "TOPLEFT")
+	end
+	return pieces
+end
+
+-- Your target: the yellow glow Forever draws round its target's nameplate
+-- (Camelot Blizzard_NamePlateConstants: UI-HUD-CoolDownManager-Selected-
+-- yellow, untinted, placed on the bar background 3 further left, 2 higher,
+-- its bottom 2 up). The 2x art is at x 175-439, y 41-73 of the same file;
+-- its angled corners reach 12 px in and 11 px down (measured).
+local TARGET_SPEC = { x0 = 175, x1 = 439, y0 = 41, y1 = 73, cut = { 12, 11, 12, 11 },
+	off = { EDGE_L + 3, EDGE_T + 2, EDGE_R, EDGE_B - 2 } }
+-- Toned down from the nameplate's untinted yellow (user: "a bit yellowy"):
+-- a warmer, paler tint at 80%.
+local TARGET_TINT = { 1, 0.88, 0.68, 0.8 }
+
+-- Everything a frame shows, on a frame of any kind: the header's secure
+-- buttons and the test mode's look-only frames alike.
+local function BuildLook(btn)
+	local body = CreateFrame("Frame", nil, btn)
+	body:SetAllPoints()
+	btn.body = body
+	local level = body:GetFrameLevel()
+
+	local back = CreateFrame("Frame", nil, body)
+	back:SetFrameLevel(level)
+	back:SetAllPoints()
+
+	local bar = CreateFrame("StatusBar", nil, body)
+	bar:SetFrameLevel(level + 1)
+	bar:SetSize(BAR_W, BAR_H)
+	bar:SetPoint("TOPLEFT", body, "TOPLEFT", EDGE_L, -NAME_ABOVE)
+	local fill = bar:CreateTexture(nil, "ARTWORK")
+	fill:SetAtlas("UI-HUD-CoolDownManager-Bar")
+	bar:SetStatusBarTexture(fill)
+	bar:SetMinMaxValues(0, 1)
+	bar:SetValue(1)
+	btn.bar = bar
+
+	-- The nameplate's slight inner shadow: its deselectedOverlay, at full
+	-- strength, 1 over the bar's top and bottom (Blizzard_NamePlates.xml).
+	-- Like the nameplate, gone on your target, which gets its edge instead.
+	local shadow = bar:CreateTexture(nil, "OVERLAY")
+	shadow:SetAtlas("ui-hud-nameplates-deselected-overlay")
+	shadow:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 1)
+	shadow:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, -1)
+	btn.shadow = shadow
+
+	btn.edge = NineSlice(back, bar, true, EDGE_SPEC)
+
+	local top = CreateFrame("Frame", nil, body)
+	top:SetFrameLevel(level + 4)
+	top:SetAllPoints()
+	btn.top = top
+
+	-- On a frame of its own, so one alpha shows or hides all nine pieces;
+	-- above the fill but under the name line (it covered the name and role
+	-- icon on the top frame, 2026-11-22).
+	local target = CreateFrame("Frame", nil, body)
+	target:SetFrameLevel(level + 2)
+	target:SetAllPoints()
+	btn.targetGlow = NineSlice(target, bar, false, TARGET_SPEC, "OVERLAY")
+	for _, piece in pairs(btn.targetGlow) do
+		piece:SetVertexColor(unpack(TARGET_TINT))
+	end
+	target:SetAlpha(0)
+	btn.target = target
+
+	local role = top:CreateTexture(nil, "ARTWORK")
+	role:SetSize(ROLE_SIZE, ROLE_SIZE)
+	-- On the ring's top-left corner, where its bronze lines meet.
+	role:SetPoint("CENTER", bar, "TOPLEFT", LINE_X, LINE_Y)
+	btn.role = role
+
+	local name = top:CreateFontString(nil, "ARTWORK")
+	Outlined(name, 12) -- the mock-up's size
+	name:SetPoint("LEFT", bar, "TOPLEFT", LINE_X + NAME_X, LINE_Y)
+	name:SetJustifyH("LEFT")
+	name:SetWordWrap(false)
+	btn.name = name
+
+	local status = top:CreateFontString(nil, "ARTWORK")
+	Outlined(status, 9)
+	status:SetPoint("CENTER", bar, "CENTER", 0, 0)
+	status:SetTextColor(0.8, 0.8, 0.8)
+	btn.status = status
+
+end
+
+-- Called by the template as the header creates each button.
+function GroupFrames_InitButton(btn)
+	BuildLook(btn)
+	CreateAuras(btn)
+
+	btn:HookScript("OnAttributeChanged", function(self, key, value)
+		if key == "unit" then
+			ns.PartySetUnit(self, value)
+		end
+	end)
+	buttons[#buttons + 1] = btn
+end
+
+------------------------------------------------------------------------------
+-- Updates
+------------------------------------------------------------------------------
+
+local function UpdateHealth(btn)
+	local unit = btn.unit
+	if not unit then
+		return
+	end
+	btn.bar:SetMinMaxValues(0, UnitHealthMax(unit))
+	btn.bar:SetValue(UnitHealth(unit))
+	local connected, dead = UnitIsConnected(unit), UnitIsDeadOrGhost(unit)
+	if not IsSecret(connected) and not connected then
+		btn.status:SetText("Offline")
+	elseif not IsSecret(dead) and dead then
+		btn.status:SetText("Dead")
+	else
+		btn.status:SetText("")
+	end
+	btn.gone = (not IsSecret(connected) and not connected) or (not IsSecret(dead) and dead) or false
+end
+
+local function UpdateColour(btn)
+	local colour
+	if btn.gone then
+		colour = COLOURS.gone
+	else
+		local _, class = UnitClass(btn.unit)
+		if class and not IsSecret(class) then
+			local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+			colour = c and { c.r, c.g, c.b }
+		end
+	end
+	colour = colour or { 1, 1, 1 }
+	btn.bar:SetStatusBarColor(colour[1], colour[2], colour[3])
+end
+
+local function UpdateName(btn)
+	local first = UnitName(btn.unit)
+	if IsSecret(first) then
+		btn.name:SetText(first)
+	else
+		btn.name:SetText(first and ns.Cut(first) or "")
+	end
+end
+
+local function UpdateRole(btn)
+	local role = UnitGroupRolesAssigned(btn.unit)
+	local atlas = not IsSecret(role) and ROLE_ATLAS[role]
+	if atlas then
+		btn.role:SetAtlas(atlas)
+		btn.role:SetAlpha(1)
+	else
+		btn.role:SetAlpha(0)
+	end
+end
+
+local function UpdateTarget(btn)
+	local isTarget = UnitIsUnit(btn.unit, "target")
+	if IsSecret(isTarget) then
+		btn.target:SetAlphaFromBoolean(isTarget, 1, 0)
+		btn.shadow:SetAlphaFromBoolean(isTarget, 0, 1)
+	else
+		btn.target:SetAlpha(isTarget and 1 or 0)
+		btn.shadow:SetAlpha(isTarget and 0 or 1)
+	end
+end
+
+local function UpdateRange(btn)
+	local unit = btn.unit
+	if unit == "player" then
+		btn.body:SetAlpha(1)
+		return
+	end
+	local inRange = UnitInRange(unit)
+	if IsSecret(inRange) then
+		btn.body:SetAlphaFromBoolean(inRange, 1, FADED)
+	else
+		-- Not in a group with them, or no answer: shown in full.
+		btn.body:SetAlpha((inRange == false) and FADED or 1)
+	end
+end
+
+local function UpdateAll(btn)
+	if not btn.unit then
+		return
+	end
+	UpdateHealth(btn)
+	UpdateColour(btn)
+	UpdateName(btn)
+	UpdateRole(btn)
+	UpdateTarget(btn)
+	UpdateRange(btn)
+	for _, container in pairs(btn.auras) do
+		container:UpdateAllAuras()
+	end
+end
+
+function ns.PartySetUnit(btn, unit)
+	if btn.unit and byUnit[btn.unit] == btn then
+		byUnit[btn.unit] = nil
+	end
+	btn.unit = unit
+	if unit then
+		byUnit[unit] = btn
+		for _, container in pairs(btn.auras) do
+			container:SetUnit(unit)
+		end
+		UpdateAll(btn)
+	end
+end
+
+local events = CreateFrame("Frame")
+local UNIT_EVENTS = {
+	UNIT_HEALTH = function(btn) UpdateHealth(btn); UpdateColour(btn) end,
+	UNIT_MAXHEALTH = UpdateHealth,
+	UNIT_CONNECTION = function(btn) UpdateHealth(btn); UpdateColour(btn) end,
+	UNIT_FLAGS = function(btn) UpdateHealth(btn); UpdateColour(btn) end,
+	UNIT_NAME_UPDATE = UpdateName,
+}
+for event in pairs(UNIT_EVENTS) do
+	events:RegisterEvent(event)
+end
+events:RegisterEvent("GROUP_ROSTER_UPDATE")
+events:RegisterEvent("PLAYER_ROLES_ASSIGNED")
+events:RegisterEvent("PLAYER_TARGET_CHANGED")
+events:SetScript("OnEvent", function(_, event, unit)
+	local handler = UNIT_EVENTS[event]
+	if handler then
+		local btn = byUnit[unit]
+		if btn and btn:IsShown() then
+			handler(btn)
+		end
+	elseif event == "PLAYER_TARGET_CHANGED" then
+		for _, btn in pairs(byUnit) do
+			UpdateTarget(btn)
+		end
+	else
+		for _, btn in pairs(byUnit) do
+			UpdateAll(btn)
+		end
+	end
+end)
+
+local elapsed = 0
+events:SetScript("OnUpdate", function(_, delta)
+	elapsed = elapsed + delta
+	if elapsed < 0.2 then
+		return
+	end
+	elapsed = 0
+	for _, btn in pairs(byUnit) do
+		if btn:IsShown() then
+			UpdateRange(btn)
+		end
+	end
+end)
+
+------------------------------------------------------------------------------
+-- Header, anchor and moving
+------------------------------------------------------------------------------
+
+local anchor = CreateFrame("Frame", "GroupFramesPartyAnchor", UIParent)
+anchor:SetSize(5 * BUTTON_W + 4 * GAP, BUTTON_H)
+anchor:SetMovable(true)
+anchor:SetClampedToScreen(true)
+anchor:RegisterForDrag("LeftButton")
+anchor:EnableMouse(false)
+local handle = anchor:CreateTexture(nil, "BACKGROUND")
+handle:SetAllPoints()
+handle:SetColorTexture(0.1, 0.8, 0.2, 0.35)
+handle:Hide()
+local label = anchor:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+label:SetPoint("BOTTOM", anchor, "TOP", 0, 14)
+label:SetText("GroupFrames: drag to move, /groupframes to lock")
+label:Hide()
+
+local header = CreateFrame("Frame", "GroupFramesParty", anchor, "SecureGroupHeaderTemplate")
+header:SetPoint("CENTER", anchor, "CENTER")
+header:SetAttribute("template", "GroupFramesUnitButtonTemplate")
+header:SetAttribute("templateType", "Button")
+header:SetAttribute("showParty", true)
+header:SetAttribute("showPlayer", true)
+header:SetAttribute("showRaid", false)
+header:SetAttribute("showSolo", true) -- your own frame when not in a group
+header:SetAttribute("point", "LEFT")
+header:SetAttribute("xOffset", GAP)
+header:SetAttribute("initialConfigFunction", ([[
+	self:SetWidth(%d)
+	self:SetHeight(%d)
+	self:SetAttribute("*type1", "target")
+	self:SetAttribute("*type2", "togglemenu")
+]]):format(BUTTON_W, BUTTON_H))
+ns.PartyHeader = header
+
+-- Shown in a party (and solo), hidden in a raid, where Blizzard's raid
+-- frames take over.
+local VISIBILITY = "[group:raid] hide; show"
+
+local function ApplyPosition()
+	local point = db.point
+	anchor:ClearAllPoints()
+	anchor:SetPoint(point[1], UIParent, point[1], point[2], point[3])
+end
+
+anchor:SetScript("OnDragStart", function()
+	anchor:StartMoving()
+end)
+anchor:SetScript("OnDragStop", function()
+	anchor:StopMovingOrSizing()
+	local point, _, _, x, y = anchor:GetPoint(1)
+	db.point = { point, x, y }
+end)
+
+local unlocked = false
+
+function ns.PartyUnlock(unlock, withoutSolo)
+	if InCombatLockdown() then
+		return false
+	end
+	unlocked = unlock
+	handle:SetShown(unlock)
+	label:SetShown(unlock)
+	anchor:EnableMouse(unlock)
+	-- Solo you always see your own frame, except in test mode, whose
+	-- frames stand in for everyone.
+	header:SetAttribute("showSolo", not (unlock and withoutSolo))
+	return true
+end
+
+function ns.PartyReset()
+	db.point = { DEFAULT_POINT[1], DEFAULT_POINT[2], DEFAULT_POINT[3] }
+	ApplyPosition()
+end
+
+function ns.PartyUnlocked()
+	return unlocked
+end
+
+-- Blizzard's party frames out of sight: PartyFrame (both the old-style
+-- party frames and the raid-style CompactPartyFrame live in it) under a
+-- hidden frame.
+local hidden = CreateFrame("Frame")
+hidden:Hide()
+
+local function HideBlizzardParty()
+	if PartyFrame and PartyFrame:GetParent() ~= hidden then
+		PartyFrame:SetParent(hidden)
+	end
+end
+
+function ns.PartyLogin(saved)
+	db = saved
+	db.point = db.point or { DEFAULT_POINT[1], DEFAULT_POINT[2], DEFAULT_POINT[3] }
+	ApplyPosition()
+	HideBlizzardParty()
+	-- How many spells the game named, said once so it can be checked.
+	local _, count = BigDefensives()
+	if db.bigDefensives ~= count then
+		print(("|cffffd100GroupFrames|r: %d spells count as big defensives."):format(count))
+		db.bigDefensives = count
+	end
+	-- In a raid Blizzard's raid frames take over.
+	RegisterStateDriver(header, "visibility", VISIBILITY)
+end
+
+
+------------------------------------------------------------------------------
+-- Test mode: look-only frames with made-up members, drawn by BuildLook like
+-- the real ones and laid out as the header lays them out (a row, centred on
+-- the anchor). They are plain frames: no unit, no clicks. The auras are
+-- painted on, since the game's containers only show real auras.
+------------------------------------------------------------------------------
+
+local PREVIEW = {
+	{ name = "Decayla", class = "PRIEST", role = "HEALER", health = 0.9, dots = { "shield", "renew" } },
+	{ name = "Belle", class = "WARRIOR", role = "TANK", health = 0.62, dots = { "shield" }, weakened = true, target = true, big = 871 },
+	{ name = "Fearonica", class = "WARLOCK", role = "DAMAGER", health = 0.35, dots = { "renew" }, dispel = { "Magic", "Curse" } },
+	{ name = "Arya", class = "HUNTER", role = "DAMAGER", health = 1 },
+	{ name = "Zulrin", class = "SHAMAN", role = "DAMAGER", health = 0, dead = true },
+}
+
+local previews = {}
+
+local function PaintedDot(frame, colour, x, y, point)
+	local rim = frame.top:CreateTexture(nil, "OVERLAY")
+	rim:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask")
+	rim:SetSize(DOT + 2, DOT + 2)
+	rim:SetPoint(point, frame.bar, point, x + (point == "BOTTOMRIGHT" and 1 or -1), y - 1)
+	rim:SetVertexColor(0, 0, 0, 1)
+	local dot = frame.top:CreateTexture(nil, "OVERLAY", nil, 1)
+	dot:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask")
+	dot:SetSize(DOT, DOT)
+	dot:SetPoint(point, frame.bar, point, x, y)
+	dot:SetVertexColor(colour[1], colour[2], colour[3], 1)
+end
+
+local function PreviewFrame(index)
+	local frame = previews[index]
+	if frame then
+		return frame
+	end
+	local data = PREVIEW[index]
+	frame = CreateFrame("Frame", nil, anchor)
+	frame:SetSize(BUTTON_W, BUTTON_H)
+	BuildLook(frame)
+
+	frame.bar:SetMinMaxValues(0, 1)
+	frame.bar:SetValue(data.health)
+	local c = data.dead and { r = COLOURS.gone[1], g = COLOURS.gone[2], b = COLOURS.gone[3] }
+		or (RAID_CLASS_COLORS and RAID_CLASS_COLORS[data.class]) or { r = 1, g = 1, b = 1 }
+	frame.bar:SetStatusBarColor(c.r, c.g, c.b)
+	frame.name:SetText(ns.Cut(data.name))
+	frame.role:SetAtlas(ROLE_ATLAS[data.role])
+	frame.status:SetText(data.dead and "Dead" or "")
+	frame.target:SetAlpha(data.target and 1 or 0)
+	frame.shadow:SetAlpha(data.target and 0 or 1)
+
+	for i, kind in ipairs(data.dots or {}) do
+		PaintedDot(frame, COLOURS[kind], -DOT_X - (i - 1) * (DOT + DOT_GAP), DOT_Y, "BOTTOMRIGHT")
+	end
+	if data.big then
+		local holder = CreateFrame("Frame", nil, frame.body)
+		holder:SetFrameLevel(frame.top:GetFrameLevel() + 2)
+		holder:SetSize(BIG_ICON, BIG_ICON)
+		holder:SetPoint("CENTER", frame.bar, "CENTER", 0, 0)
+		local icon = Picture(holder)
+		local ok, texture = pcall(C_Spell.GetSpellTexture, data.big)
+		icon:SetTexture(ok and texture or "Interface\\Icons\\INV_Misc_QuestionMark")
+		pcall(Dress, holder, icon)
+		pcall(Glow, holder)
+		frame.big = holder
+	end
+	if data.weakened then
+		PaintedDot(frame, COLOURS.weakened, DOT_X, DOT_Y, "BOTTOMLEFT")
+	end
+	for i, dispelType in ipairs(data.dispel or {}) do
+		local icon = frame.top:CreateTexture(nil, "OVERLAY")
+		icon:SetAtlas("RaidFrame-Icon-Debuff" .. dispelType)
+		icon:SetSize(DISPEL_ICON, DISPEL_ICON)
+		icon:SetPoint("RIGHT", frame.bar, "TOPRIGHT", -4 - (i - 1) * (DISPEL_ICON + 1), LINE_Y)
+	end
+
+	previews[index] = frame
+	return frame
+end
+
+local testing = false
+
+-- count 1 to 5 shows that many, centred as the header centres a party;
+-- nil ends the test.
+function ns.PartyTest(count)
+	if count and InCombatLockdown() then
+		return false
+	end
+	-- The real frames make way for the test frames, and come back after.
+	-- Not in combat: the header is secure (an ending test is started from
+	-- the enter-combat event, before the lockdown).
+	if count and not testing then
+		UnregisterStateDriver(header, "visibility")
+		header:Hide()
+	elseif not count and testing then
+		RegisterStateDriver(header, "visibility", VISIBILITY)
+	end
+	testing = count and true or false
+	local width = count and (count * BUTTON_W + (count - 1) * GAP) or 0
+	for i = 1, #PREVIEW do
+		local frame = (count and i <= count) and PreviewFrame(i) or previews[i]
+		if frame then
+			if count and i <= count then
+				frame:ClearAllPoints()
+				frame:SetPoint("LEFT", anchor, "CENTER", -width / 2 + (i - 1) * (BUTTON_W + GAP), 0)
+				frame:Show()
+			else
+				frame:Hide()
+			end
+		end
+	end
+	return true
+end
+
+function ns.PartyTesting()
+	return testing
+end
+
+ns.Party = { previews = previews, buttons = buttons, byUnit = byUnit, header = header, anchor = anchor, hidden = hidden,
+	UpdateAll = UpdateAll, UpdateRange = UpdateRange, BUTTON_W = BUTTON_W, BUTTON_H = BUTTON_H }

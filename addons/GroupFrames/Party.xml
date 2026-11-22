@@ -1,0 +1,9 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+	<!-- One party member: a secure unit button (click to target, right-click
+	     for the menu) whose looks Party.lua builds as it is created. -->
+	<Button name="GroupFramesUnitButtonTemplate" inherits="SecureUnitButtonTemplate" virtual="true">
+		<Scripts>
+			<OnLoad function="GroupFrames_InitButton" inherit="append"/>
+		</Scripts>
+	</Button>
+</Ui>
