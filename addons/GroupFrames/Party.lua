@@ -75,6 +75,22 @@ local DISPEL_ICON = 10
 -- the Cooldown Manager's rounded mask and its soft ring, the ring's reach
 -- scaled from 6 x 5 at 30. The action button's bronze icon frame was tried
 -- and was too much (user, 2026-11-22).
+-- The status icon in the middle of the bar, on top of everything (user:
+-- "smack em in the center"): Blizzard's centre status art and its raid
+-- ready-check marks.
+local STATUS_ICON = 20
+local READY_CHECK_HOLD = 6 -- seconds the result stays after a ready check, as Blizzard's CUF_READY_CHECK_DECAY_TIME
+local STATUS_ATLAS = {
+	summonPending = "RaidFrame-Icon-SummonPending",
+	summonAccepted = "RaidFrame-Icon-SummonAccepted",
+	summonDeclined = "RaidFrame-Icon-SummonDeclined",
+	rez = "RaidFrame-Icon-Rez",
+	phase = "RaidFrame-Icon-Phasing",
+	otherParty = "RaidFrame-Icon-LFR",
+	ready = "UI-LFG-ReadyMark-Raid",
+	notready = "UI-LFG-DeclineMark-Raid",
+	waiting = "UI-LFG-PendingMark-Raid",
+}
 local BIG_ICON = 28 -- 18, 24, 32, 38, 34 before; 28 with the glow (user)
 local ICON_OUTSET = 0.5
 local RING_REACH = { 6 * BIG_ICON / 30, 5 * BIG_ICON / 30 }
@@ -100,7 +116,13 @@ local RENEW = { 139, 890, 6074, 6075, 6076, 6077, 6078, 8362, 10927, 10928, 1092
 local SHIELD = { 17, 592, 600, 3747, 6065, 6066, 10898, 10899, 10900, 10901, 11647, 11835, 11974, 17139, 20697, 22187,
 	27607, 437930, 1226566, 1236154 }
 
+local OVER_ABSORB_ALPHA = 0.5 -- the over-shield glow at half strength (user: a bit too much)
+
 local COLOURS = {
+	-- Incoming heals, as two segments after the health fill.
+	healMine = { 0.35, 1, 0.45, 0.6 },
+	healOthers = { 0.2, 0.7, 0.3, 0.5 },
+	absorb = { 0.55, 0.58, 1, 0.8 }, -- shields, after the heals: Blizzard's lavender blue (pale grey before, user)
 	renew = { 0.25, 0.88, 0.35 },
 	shield = { 1, 0.83, 0.29 },
 	weakened = { 0.88, 0.16, 0.16 },
@@ -407,6 +429,50 @@ local function BuildLook(btn)
 	shadow:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, -1)
 	btn.shadow = shadow
 
+	-- Incoming heals: two bars stacked after the health fill, each hung
+	-- from the right edge of the fill before it, as wide as the whole bar,
+	-- with health's max. Their values come from the game's heal
+	-- prediction calculator, secret and already clamped to the missing
+	-- health; nothing is added or compared here.
+	local function HealBar(after, colour)
+		local heal = CreateFrame("StatusBar", nil, bar)
+		heal:SetPoint("TOPLEFT", after, "TOPRIGHT")
+		heal:SetPoint("BOTTOMLEFT", after, "BOTTOMRIGHT")
+		heal:SetWidth(BAR_W)
+		local tex = heal:CreateTexture(nil, "ARTWORK")
+		tex:SetAtlas("UI-HUD-CoolDownManager-Bar")
+		heal:SetStatusBarTexture(tex)
+		heal:SetStatusBarColor(colour[1], colour[2], colour[3], colour[4])
+		heal:SetMinMaxValues(0, 1)
+		heal:SetValue(0)
+		return heal
+	end
+	btn.healMine = HealBar(fill, COLOURS.healMine)
+	btn.healOthers = HealBar(btn.healMine:GetStatusBarTexture(), COLOURS.healOthers)
+	-- Shields (damage absorbs) after the heals, clamped by the calculator to
+	-- the room the heals leave. Shield that does not fit shows as Blizzard
+	-- shows it: its over-shield glow at the bar's end (CompactUnitFrame's
+	-- overAbsorbGlow: RaidFrame-Shield-Overshield, 7 in, 16 wide, additive).
+	btn.absorb = HealBar(btn.healOthers:GetStatusBarTexture(), COLOURS.absorb)
+	local over = bar:CreateTexture(nil, "OVERLAY", nil, 1)
+	over:SetAtlas("RaidFrame-Shield-Overshield")
+	over:SetBlendMode("ADD")
+	over:SetPoint("TOPLEFT", bar, "TOPRIGHT", -5, 0)
+	over:SetPoint("BOTTOMLEFT", bar, "BOTTOMRIGHT", -5, 0)
+	over:SetWidth(10) -- Blizzard's 16 at full strength was too much (user)
+	over:SetAlpha(0)
+	btn.overAbsorb = over
+
+	-- The status icon: one texture in the middle, above everything.
+	local statusFrame = CreateFrame("Frame", nil, body)
+	statusFrame:SetFrameLevel(level + 8)
+	statusFrame:SetAllPoints()
+	local statusIcon = statusFrame:CreateTexture(nil, "OVERLAY")
+	statusIcon:SetSize(STATUS_ICON, STATUS_ICON)
+	statusIcon:SetPoint("CENTER", bar, "CENTER")
+	statusIcon:Hide()
+	btn.statusIcon = statusIcon
+
 	btn.edge = NineSlice(back, bar, true, EDGE_SPEC)
 
 	local top = CreateFrame("Frame", nil, body)
@@ -483,6 +549,56 @@ local function UpdateHealth(btn)
 	btn.gone = (not IsSecret(connected) and not connected) or (not IsSecret(dead) and dead) or false
 end
 
+-- One calculator for all frames, set up once: incoming heals clamped to
+-- the missing health (overflow 1: never past the bar's end), shields to
+-- what the heals leave of it.
+local calculator
+
+local function Calculator()
+	if calculator == nil then
+		calculator = false
+		if CreateUnitHealPredictionCalculator and UnitGetDetailedHealPrediction then
+			local ok, calc = pcall(CreateUnitHealPredictionCalculator)
+			if ok and calc then
+				pcall(calc.SetIncomingHealClampMode, calc, Enum.UnitIncomingHealClampMode.MissingHealth)
+				pcall(calc.SetIncomingHealOverflowPercent, calc, 1)
+				pcall(calc.SetDamageAbsorbClampMode, calc, Enum.UnitDamageAbsorbClampMode.MissingHealth)
+				calculator = calc
+			end
+		end
+	end
+	return calculator
+end
+
+local function UpdateHeals(btn)
+	local unit, calc = btn.unit, Calculator()
+	if not (unit and calc) then
+		return
+	end
+	local ok = pcall(UnitGetDetailedHealPrediction, unit, "player", calc)
+	if not ok then
+		btn.healMine:SetValue(0)
+		btn.healOthers:SetValue(0)
+		btn.absorb:SetValue(0)
+		btn.overAbsorb:SetAlpha(0)
+		return
+	end
+	local _, mine, others = calc:GetIncomingHeals()
+	local max = UnitHealthMax(unit)
+	btn.healMine:SetMinMaxValues(0, max)
+	btn.healMine:SetValue(mine)
+	btn.healOthers:SetMinMaxValues(0, max)
+	btn.healOthers:SetValue(others)
+	local absorb, clipped = calc:GetDamageAbsorbs()
+	btn.absorb:SetMinMaxValues(0, max)
+	btn.absorb:SetValue(absorb)
+	if IsSecret(clipped) then
+		btn.overAbsorb:SetAlphaFromBoolean(clipped, OVER_ABSORB_ALPHA, 0)
+	else
+		btn.overAbsorb:SetAlpha(clipped and OVER_ABSORB_ALPHA or 0)
+	end
+end
+
 local function UpdateColour(btn)
 	local colour
 	if btn.gone then
@@ -544,16 +660,77 @@ local function UpdateRange(btn)
 	end
 end
 
+-- Which state to show, Blizzard's order (CompactUnitFrame_GetCenterStatusIconState):
+-- a ready check while one runs or its result is held, else summon, rez,
+-- other phase, public group. UnitPhaseReason is secret when unit identity
+-- is restricted; then no phase icon.
+local readyCheck = { active = false, held = false }
+
+-- Each frame keeps its member's last ready-check answer: once a check ends
+-- the game answers nil (seen in game 2026-11-22: the marks went the moment
+-- the check finished), and Blizzard's frames show the kept answer too.
+local function StatusState(unit, btn)
+	if readyCheck.active then
+		local status = GetReadyCheckStatus(unit)
+		if status then
+			btn.readyStatus = status
+		end
+	end
+	if readyCheck.active or readyCheck.held then
+		local status = btn.readyStatus
+		if readyCheck.held and status == "waiting" then
+			status = "notready"
+		end
+		if status then
+			return status
+		end
+	end
+	if C_IncomingSummon and C_IncomingSummon.HasIncomingSummon(unit) then
+		local status = C_IncomingSummon.IncomingSummonStatus(unit)
+		if status == Enum.SummonStatus.Pending then
+			return "summonPending"
+		elseif status == Enum.SummonStatus.Accepted then
+			return "summonAccepted"
+		elseif status == Enum.SummonStatus.Declined then
+			return "summonDeclined"
+		end
+	end
+	if UnitHasIncomingResurrection(unit) then
+		return "rez"
+	end
+	local phase = UnitPhaseReason(unit)
+	if phase and not IsSecret(phase) then
+		return "phase"
+	end
+	if UnitInOtherParty(unit) then
+		return "otherParty"
+	end
+end
+
+local function UpdateStatusIcon(btn)
+	local unit = btn.unit
+	local ok, state = pcall(StatusState, unit, btn)
+	local atlas = ok and state and STATUS_ATLAS[state]
+	if atlas then
+		btn.statusIcon:SetAtlas(atlas)
+		btn.statusIcon:Show()
+	else
+		btn.statusIcon:Hide()
+	end
+end
+
 local function UpdateAll(btn)
 	if not btn.unit then
 		return
 	end
 	UpdateHealth(btn)
+	UpdateHeals(btn)
 	UpdateColour(btn)
 	UpdateName(btn)
 	UpdateRole(btn)
 	UpdateTarget(btn)
 	UpdateRange(btn)
+	UpdateStatusIcon(btn)
 	for _, container in pairs(btn.auras) do
 		container:UpdateAllAuras()
 	end
@@ -575,11 +752,18 @@ end
 
 local events = CreateFrame("Frame")
 local UNIT_EVENTS = {
-	UNIT_HEALTH = function(btn) UpdateHealth(btn); UpdateColour(btn) end,
-	UNIT_MAXHEALTH = UpdateHealth,
+	UNIT_HEALTH = function(btn) UpdateHealth(btn); UpdateHeals(btn); UpdateColour(btn) end,
+	UNIT_MAXHEALTH = function(btn) UpdateHealth(btn); UpdateHeals(btn) end,
+	UNIT_HEAL_PREDICTION = UpdateHeals,
+	UNIT_ABSORB_AMOUNT_CHANGED = UpdateHeals,
 	UNIT_CONNECTION = function(btn) UpdateHealth(btn); UpdateColour(btn) end,
 	UNIT_FLAGS = function(btn) UpdateHealth(btn); UpdateColour(btn) end,
 	UNIT_NAME_UPDATE = UpdateName,
+	INCOMING_SUMMON_CHANGED = UpdateStatusIcon,
+	INCOMING_RESURRECT_CHANGED = UpdateStatusIcon,
+	UNIT_PHASE = UpdateStatusIcon,
+	UNIT_OTHER_PARTY_CHANGED = UpdateStatusIcon,
+	READY_CHECK_CONFIRM = UpdateStatusIcon,
 }
 for event in pairs(UNIT_EVENTS) do
 	events:RegisterEvent(event)
@@ -587,6 +771,8 @@ end
 events:RegisterEvent("GROUP_ROSTER_UPDATE")
 events:RegisterEvent("PLAYER_ROLES_ASSIGNED")
 events:RegisterEvent("PLAYER_TARGET_CHANGED")
+events:RegisterEvent("READY_CHECK")
+events:RegisterEvent("READY_CHECK_FINISHED")
 events:SetScript("OnEvent", function(_, event, unit)
 	local handler = UNIT_EVENTS[event]
 	if handler then
@@ -597,6 +783,30 @@ events:SetScript("OnEvent", function(_, event, unit)
 	elseif event == "PLAYER_TARGET_CHANGED" then
 		for _, btn in pairs(byUnit) do
 			UpdateTarget(btn)
+		end
+	elseif event == "READY_CHECK" or event == "READY_CHECK_FINISHED" then
+		-- The result stays a while after the check ends, then goes.
+		readyCheck.active = event == "READY_CHECK"
+		readyCheck.held = event == "READY_CHECK_FINISHED"
+		if readyCheck.active then
+			for _, btn in pairs(byUnit) do
+				btn.readyStatus = nil -- a new check: forget the last one's answers
+			end
+		end
+		if readyCheck.held then
+			local token = {}
+			readyCheck.token = token
+			C_Timer.After(READY_CHECK_HOLD, function()
+				if readyCheck.token == token then
+					readyCheck.held = false
+					for _, btn in pairs(byUnit) do
+						UpdateStatusIcon(btn)
+					end
+				end
+			end)
+		end
+		for _, btn in pairs(byUnit) do
+			UpdateStatusIcon(btn)
 		end
 	else
 		for _, btn in pairs(byUnit) do
@@ -736,11 +946,11 @@ end
 ------------------------------------------------------------------------------
 
 local PREVIEW = {
-	{ name = "Decayla", class = "PRIEST", role = "HEALER", health = 0.9, dots = { "shield", "renew" } },
-	{ name = "Belle", class = "WARRIOR", role = "TANK", health = 0.62, dots = { "shield" }, weakened = true, target = true, big = 871 },
-	{ name = "Fearonica", class = "WARLOCK", role = "DAMAGER", health = 0.35, dots = { "renew" }, dispel = { "Magic", "Curse" } },
-	{ name = "Arya", class = "HUNTER", role = "DAMAGER", health = 1 },
-	{ name = "Zulrin", class = "SHAMAN", role = "DAMAGER", health = 0, dead = true },
+	{ name = "Decayla", class = "PRIEST", role = "HEALER", health = 0.9, dots = { "shield", "renew" }, status = "ready" },
+	{ name = "Belle", class = "WARRIOR", role = "TANK", health = 0.62, dots = { "shield" }, weakened = true, target = true, big = 871, absorb = 0.18 },
+	{ name = "Fearonica", class = "WARLOCK", role = "DAMAGER", health = 0.35, dots = { "renew" }, dispel = { "Magic", "Curse" }, heals = { 0.2, 0.12 } },
+	{ name = "Arya", class = "HUNTER", role = "DAMAGER", health = 1, overAbsorb = true },
+	{ name = "Zulrin", class = "SHAMAN", role = "DAMAGER", health = 0, dead = true, status = "rez" },
 }
 
 local previews = {}
@@ -770,12 +980,22 @@ local function PreviewFrame(index)
 
 	frame.bar:SetMinMaxValues(0, 1)
 	frame.bar:SetValue(data.health)
+	if data.heals then
+		frame.healMine:SetValue(data.heals[1])
+		frame.healOthers:SetValue(data.heals[2])
+	end
+	frame.absorb:SetValue(data.absorb or 0)
+	frame.overAbsorb:SetAlpha(data.overAbsorb and OVER_ABSORB_ALPHA or 0)
 	local c = data.dead and { r = COLOURS.gone[1], g = COLOURS.gone[2], b = COLOURS.gone[3] }
 		or (RAID_CLASS_COLORS and RAID_CLASS_COLORS[data.class]) or { r = 1, g = 1, b = 1 }
 	frame.bar:SetStatusBarColor(c.r, c.g, c.b)
 	frame.name:SetText(ns.Cut(data.name))
 	frame.role:SetAtlas(ROLE_ATLAS[data.role])
 	frame.status:SetText(data.dead and "Dead" or "")
+	if data.status then
+		frame.statusIcon:SetAtlas(STATUS_ATLAS[data.status])
+		frame.statusIcon:Show()
+	end
 	frame.target:SetAlpha(data.target and 1 or 0)
 	frame.shadow:SetAlpha(data.target and 0 or 1)
 
