@@ -2,8 +2,11 @@
 -- item, best profit first. /profit (or /craftprofit) shows or hides it.
 --
 --   a row          its tooltip: the item, where the price comes from, each
---                  material with its price and where to get it, the sums;
---                  Shift-click links the item in chat
+--                  material with its price and where to get it, the sums.
+--                  Click plans one more craft of it, right-click one fewer
+--                  (the count shows before its name); Shift-click links
+--                  the item in chat
+--   Materials      opens the plan's materials beside the list (Plan.lua)
 --   the checkbox   also lists recipes a character has seen in its
 --                  profession window but not learned
 --
@@ -124,6 +127,8 @@ local function RowTooltip(self)
 	if row.profit then
 		GameTooltip:AddDoubleLine("Profit", Signed(row.profit), 1, 0.82, 0, 1, 1, 1)
 	end
+	GameTooltip:AddLine(" ")
+	GameTooltip:AddLine("Click: plan one more craft. Right-click: one fewer.", 0.6, 0.6, 0.6)
 	GameTooltip:Show()
 end
 
@@ -137,10 +142,19 @@ local function Link(link)
 	end
 end
 
-local function RowClick(self)
+local function RowClick(self, button)
 	local row = self.row
-	if row and row.item and row.item.link and IsModifiedClick("CHATLINK") then
-		Link(row.item.link)
+	if not row then
+		return
+	end
+	if IsModifiedClick("CHATLINK") then
+		if row.item and row.item.link then
+			Link(row.item.link)
+		end
+	elseif button == "RightButton" then
+		ns.Plan(row.id, -1)
+	else
+		ns.Plan(row.id, 1)
 	end
 end
 
@@ -163,7 +177,7 @@ local function MakeRow(index)
 	button:SetHeight(ROW)
 	button:SetPoint("TOPLEFT", 10, -LIST_TOP - (index - 1) * ROW)
 	button:SetPoint("RIGHT", -14, 0)
-	button:RegisterForClicks("LeftButtonUp")
+	button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	button:SetScript("OnClick", RowClick)
 	button:SetScript("OnEnter", RowTooltip)
 	button:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -190,7 +204,9 @@ local function FillRow(button, row)
 	local colour = item and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[item.quality]
 	button.icon:SetTexture(row.icon or 134400) -- the question mark
 	local name = colour and colour.hex and (colour.hex .. row.name .. "|r") or row.name
-	button.name:SetText(row.learned and name or ("|cff808080" .. row.name .. "|r"))
+	name = row.learned and name or ("|cff808080" .. row.name .. "|r")
+	local planned = ns.Planned(row.id)
+	button.name:SetText(planned > 0 and ("|cffffd100%dx|r %s"):format(planned, name) or name)
 	if row.profit then
 		button.profit:SetText(Signed(row.profit))
 	else
@@ -295,7 +311,7 @@ local function MakeWindow()
 
 	local box = CreateFrame("CheckButton", nil, window, "UICheckButtonTemplate")
 	box:SetSize(24, 24)
-	box:SetPoint("BOTTOMRIGHT", -150, 8)
+	box:SetPoint("BOTTOMRIGHT", -230, 8)
 	local caption = box.Text or box.text
 	if caption then
 		caption:SetText("Also not learned")
@@ -307,6 +323,14 @@ local function MakeWindow()
 		ns.Invalidate()
 	end)
 	window.status:SetPoint("RIGHT", box, "LEFT", -8, 0)
+
+	local materials = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
+	materials:SetSize(90, 22)
+	materials:SetPoint("BOTTOMRIGHT", -12, 8)
+	materials:SetText("Materials")
+	materials:SetScript("OnClick", function()
+		ns.TogglePlan(window, Money)
+	end)
 
 	window:EnableMouseWheel(true)
 	window:SetScript("OnMouseWheel", function(_, delta)
