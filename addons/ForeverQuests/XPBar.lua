@@ -11,7 +11,8 @@
 local _, ns = ...
 
 local TEXTURE = "Interface\\TargetingFrame\\UI-StatusBar"
-local COLOR = { 1.00, 0.73, 0.35, 0.75 } -- peach, apart from the XP and rested fills
+local COLOR = { 0.64, 0.90, 0.21, 1.00 } -- lime, apart from the purple XP and blue rested fills
+local BLEND = "ADD" -- brightens what is under it, so the rested fill still reads and the dark bar does not turn it muddy
 
 local IsSecret = issecretvalue or function() return false end
 local overlays = {} -- exp bar -> our frame
@@ -93,6 +94,7 @@ local function Attach()
 			local fill = frame:CreateTexture(nil, "ARTWORK")
 			fill:SetTexture(TEXTURE)
 			fill:SetVertexColor(unpack(COLOR))
+			fill:SetBlendMode(BLEND)
 			fill:Hide()
 			frame.fill = fill
 			frame:SetScript("OnSizeChanged", function(self)
