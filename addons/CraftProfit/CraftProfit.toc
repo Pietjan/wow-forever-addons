@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: CraftProfit
+## Notes: A list of what your characters can craft, best profit first, from Auctionator's scanned prices: what the item sells for after the auction house's cut, less what the materials cost at the auction house or a vendor. Each character's recipes are read when it opens a profession window. /profit
+## Author: Pietjan
+## Version: 1.0
+## Dependencies: Auctionator
+## SavedVariables: CraftProfitDB
+
+Core.lua
+Window.lua
