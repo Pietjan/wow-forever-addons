@@ -404,6 +404,7 @@ local function MakeWindow()
 	window:SetClampedToScreen(true)
 	window:EnableMouse(true)
 	window:SetMovable(true)
+	if ForeverSnap then ForeverSnap.Register(window) end -- snaps to the screen and our other frames
 	window:RegisterForDrag("LeftButton")
 	window:SetScript("OnDragStart", window.StartMoving)
 	window:SetScript("OnDragStop", function(self)

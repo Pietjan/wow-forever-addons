@@ -122,6 +122,7 @@ local anchor = CreateFrame("Frame", "HealerManaAnchor", UIParent)
 anchor:SetSize(WIDTH, HEIGHT)
 anchor:SetPoint(DEFAULT_POINT[1], UIParent, DEFAULT_POINT[1], DEFAULT_POINT[2], DEFAULT_POINT[3])
 anchor:SetMovable(true)
+if ForeverSnap then ForeverSnap.Register(anchor) end -- snaps to the screen and our other frames
 anchor:SetClampedToScreen(true)
 anchor:RegisterForDrag("LeftButton")
 anchor:EnableMouse(false)

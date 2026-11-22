@@ -105,6 +105,7 @@ local testCount -- its size
 local anchor = CreateFrame("Frame", "GroupFramesRaidAnchor", UIParent)
 anchor:SetSize(5 * W + 4 * GAP, H)
 anchor:SetMovable(true)
+if ForeverSnap then ForeverSnap.Register(anchor) end -- snaps to the screen and our other frames
 anchor:SetClampedToScreen(true)
 anchor:RegisterForDrag("LeftButton")
 anchor:EnableMouse(false)

@@ -234,6 +234,7 @@ local function ShowCopy(address)
 		copy:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
 		copy:EnableMouse(true)
 		copy:SetMovable(true)
+		if ForeverSnap then ForeverSnap.Register(copy) end -- snaps to the screen and our other frames
 		copy:RegisterForDrag("LeftButton")
 		copy:SetScript("OnDragStart", copy.StartMoving)
 		copy:SetScript("OnDragStop", copy.StopMovingOrSizing)

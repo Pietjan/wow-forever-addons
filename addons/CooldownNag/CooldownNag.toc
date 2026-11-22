@@ -2,6 +2,7 @@
 ## Title: CooldownNag
 ## Notes: An icon pops up a few seconds before an ability you chose comes off cooldown, and stays a moment once it is ready. Configured from a tab in the Cooldown Manager's settings. /cdn
 ## Author: Pietjan
+## OptionalDeps: ForeverSnap
 ## Version: 1.1
 ## SavedVariables: CooldownNagDB
 ## SavedVariablesPerCharacter: CooldownNagCharDB

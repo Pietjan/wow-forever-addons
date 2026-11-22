@@ -1,0 +1,7 @@
+## Interface: 16001
+## Title: ForeverSnap
+## Notes: Dragging our addons' frames: their edges and middles snap to the screen's and to each other's, with a guide line where they hold. Shift drags free.
+## Author: Pietjan
+## Version: 1.0
+
+ForeverSnap.lua

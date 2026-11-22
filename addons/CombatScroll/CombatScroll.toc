@@ -2,6 +2,7 @@
 ## Title: CombatScroll
 ## Notes: Scrolling combat text in two columns: damage and healing you take fall on the left, your own damage and healing rise on the right with the icon of the spell that made them. /cscroll
 ## Author: Pietjan
+## OptionalDeps: ForeverSnap
 ## Version: 1.0
 ## SavedVariables: CombatScrollDB
 

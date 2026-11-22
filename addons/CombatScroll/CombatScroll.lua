@@ -424,6 +424,7 @@ local function CreateLane(key, label, dir, x, y)
 	a:SetSize(LANE_WIDTH, 20)
 	a:SetFrameStrata("MEDIUM")
 	a:SetMovable(true)
+	if ForeverSnap then ForeverSnap.Register(a) end -- snaps to the screen and our other frames
 	a:SetClampedToScreen(true)
 	a:EnableMouse(false)
 	a:RegisterForDrag("LeftButton")

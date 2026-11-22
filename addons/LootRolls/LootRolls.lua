@@ -229,6 +229,7 @@ local function CreateAnchor()
 	anchor:SetSize(WIDTH, HEIGHT)
 	anchor:SetFrameStrata("HIGH")
 	anchor:SetMovable(true)
+	if ForeverSnap then ForeverSnap.Register(anchor) end -- snaps to the screen and our other frames
 	anchor:SetClampedToScreen(true)
 	anchor:EnableMouse(false)
 	anchor:RegisterForDrag("LeftButton")

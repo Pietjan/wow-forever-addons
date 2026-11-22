@@ -1093,6 +1093,7 @@ end
 local anchor = CreateFrame("Frame", "GroupFramesPartyAnchor", UIParent)
 anchor:SetSize(5 * BUTTON_W + 4 * GAP, BUTTON_H)
 anchor:SetMovable(true)
+if ForeverSnap then ForeverSnap.Register(anchor) end -- snaps to the screen and our other frames
 anchor:SetClampedToScreen(true)
 anchor:RegisterForDrag("LeftButton")
 anchor:EnableMouse(false)

@@ -2,6 +2,7 @@
 ## Title: LootFeed
 ## Notes: A short list of what you just picked up: items with how many you now carry, money, reputation, experience and honor, and what your group loots. Each line fades after a few seconds. /lootfeed
 ## Author: Pietjan
+## OptionalDeps: ForeverSnap
 ## Version: 1.0
 ## SavedVariables: LootFeedDB
 

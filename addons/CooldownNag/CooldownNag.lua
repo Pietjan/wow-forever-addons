@@ -414,6 +414,7 @@ end
 local bar = CreateFrame("Frame", "CooldownNagBar", UIParent)
 bar:SetSize(ICON, ICON)
 bar:SetMovable(true)
+if ForeverSnap then ForeverSnap.Register(bar) end -- snaps to the screen and our other frames
 bar:SetClampedToScreen(true)
 bar:RegisterForDrag("LeftButton")
 bar:EnableMouse(false)

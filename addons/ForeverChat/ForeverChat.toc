@@ -2,6 +2,7 @@
 ## Title: ForeverChat
 ## Notes: The default chat in Forever's own style, with short channel names and one chat setup shared by all your characters. /fchat
 ## Author: Pietjan
+## OptionalDeps: ForeverSnap
 ## Version: 1.1
 ## SavedVariables: ForeverChatDB
 ## SavedVariablesPerCharacter: ForeverChatCharDB

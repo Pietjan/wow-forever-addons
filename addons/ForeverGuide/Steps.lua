@@ -185,6 +185,7 @@ local function create()
     frame:SetClampedToScreen(true)
     frame:EnableMouse(true)
     frame:SetMovable(true)
+    if ForeverSnap then ForeverSnap.Register(frame) end -- snaps to the screen and our other frames
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)

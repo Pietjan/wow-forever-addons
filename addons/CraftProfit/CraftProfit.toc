@@ -4,7 +4,7 @@
 ## Author: Pietjan
 ## Version: 1.2
 ## Dependencies: Auctionator
-## OptionalDeps: Syndicator
+## OptionalDeps: Syndicator, ForeverSnap
 ## SavedVariables: CraftProfitDB
 
 Data.lua

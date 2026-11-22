@@ -19,6 +19,7 @@ frame:SetPoint("TOP", UIParent, "TOP", 0, -150)
 frame:SetFrameStrata("LOW")
 frame:SetClampedToScreen(true)
 frame:SetMovable(true)
+if ForeverSnap then ForeverSnap.Register(frame) end -- snaps to the screen and our other frames
 frame:Hide()
 
 local arrow = frame:CreateTexture(nil, "ARTWORK")

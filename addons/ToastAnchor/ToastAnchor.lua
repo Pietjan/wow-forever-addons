@@ -57,6 +57,7 @@ local function CreateMarker()
 	marker:SetFrameStrata("DIALOG")
 	marker:SetClampedToScreen(true)
 	marker:SetMovable(true)
+	if ForeverSnap then ForeverSnap.Register(marker) end -- snaps to the screen and our other frames
 	marker:EnableMouse(true)
 	marker:RegisterForDrag("LeftButton")
 	marker:Hide()
