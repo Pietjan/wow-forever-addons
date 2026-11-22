@@ -115,7 +115,8 @@ local function RowTooltip(self)
 	GameTooltip:AddLine(" ")
 	for _, part in ipairs(row.parts) do
 		local left = ("%d x %s"):format(part.n, ItemName(part.id))
-		local right = part.unit and ("%s  |cff999999%s|r"):format(Money(part.unit * part.n), part.from) or "|cffff8040no price|r"
+		local from = part.from == "craft" and ("craft (%s)"):format(part.maker.who) or part.from
+		local right = part.unit and ("%s  |cff999999%s|r"):format(Money(part.unit * part.n), from) or "|cffff8040no price|r"
 		GameTooltip:AddDoubleLine(left, right, 1, 1, 1, 1, 1, 1)
 	end
 	GameTooltip:AddLine(" ")

@@ -18,8 +18,10 @@
 -- Auctionator searches it at once. Vendor materials are left out of it.
 -- Clear empties the plan.
 --
--- A material that one recipe makes and another uses (a bolt of cloth) is
--- counted as bought, not crafted.
+-- Make or buy: a material one of your characters can craft for less than
+-- it costs to buy is crafted ("craft 3 (Belle)", after what you own), and
+-- its own materials are listed in turn; Buy is empty on such a line. The
+-- shopping list then holds the materials for it, not the material itself.
 
 local ADDON, ns = ...
 
@@ -77,8 +79,14 @@ function ns.Owned(itemID)
 end
 
 function ns.Materials()
-	local byItem, list = {}, {}
+	local need, way = {}, {} -- itemID -> how many; itemID -> its cheapest way (ns.ItemCost)
 	local total = { crafts = 0, profit = 0, unpriced = 0, spend = 0, vendor = 0 }
+	local function Need(id, amount, slotWay)
+		need[id] = (need[id] or 0) + amount
+		if way[id] == nil then
+			way[id] = slotWay or ns.ItemCost(id) or false
+		end
+	end
 	for id, count in pairs(ns.db.plan or {}) do
 		local recipe = FindRecipe(id)
 		if recipe then
@@ -90,32 +98,98 @@ function ns.Materials()
 				total.unpriced = total.unpriced + count
 			end
 			for i, slot in ipairs(recipe.reagents) do
-				local part = row.parts[i]
-				local material = byItem[part.id]
-				if not material then
-					material = { id = part.id, need = 0, unit = part.unit, from = part.from }
-					byItem[part.id] = material
-					list[#list + 1] = material
-				end
-				material.need = material.need + slot.n * count
+				Need(row.parts[i].id, slot.n * count)
 			end
 		end
 	end
-	for _, material in ipairs(list) do
-		material.have = ns.Owned(material.id) or 0
-		material.buy = math.max(0, material.need - material.have)
-		material.market = ns.Market(material.id)
+
+	-- Materials to craft, each after every material that uses it: its depth
+	-- is the longest chain of crafted materials above it.
+	local depth = {}
+	local function Walk(id, d, path)
+		if path[id] or (depth[id] or -1) >= d then
+			return
+		end
+		depth[id] = d
+		local w = way[id]
+		if w == nil then
+			w = ns.ItemCost(id) or false
+			way[id] = w
+		end
+		if w and w.from == "craft" then
+			path[id] = true
+			for _, slot in ipairs(w.maker.recipe.reagents) do
+				local _, _, which = ns.UnitCost(slot.ids)
+				Walk(which, d + 1, path)
+			end
+			path[id] = nil
+		end
+	end
+	for id in pairs(need) do
+		Walk(id, 0, {})
+	end
+	local crafted = {}
+	for id, d in pairs(depth) do
+		if way[id] and way[id].from == "craft" then
+			crafted[#crafted + 1] = id
+		end
+	end
+	table.sort(crafted, function(a, b)
+		if depth[a] ~= depth[b] then
+			return depth[a] < depth[b]
+		end
+		return a < b
+	end)
+	local have, make = {}, {}
+	for _, id in ipairs(crafted) do
+		if need[id] then
+			have[id] = ns.Owned(id) or 0
+			local recipe = way[id].maker.recipe
+			local missing = math.max(0, need[id] - have[id])
+			local crafts = math.ceil(missing / ((recipe.min + recipe.max) / 2))
+			make[id] = crafts
+			for _, slot in ipairs(recipe.reagents) do
+				if crafts > 0 then
+					local _, _, which = ns.UnitCost(slot.ids)
+					Need(which, slot.n * crafts)
+				end
+			end
+		end
+	end
+
+	local list = {}
+	for id, amount in pairs(need) do
+		local w = way[id] or nil
+		local material = { id = id, need = amount, unit = w and w.unit, from = w and w.from, maker = w and w.maker, depth = depth[id] or 0 }
+		material.have = have[id] or ns.Owned(id) or 0
+		material.market = ns.Market(id)
+		if material.from == "craft" then
+			material.crafts = make[id] or 0
+			material.buy = 0
+		else
+			material.buy = math.max(0, amount - material.have)
+			if material.unit then
+				material.spend = material.buy * material.unit
+				total.spend = total.spend + material.spend
+				if material.from == "vendor" then
+					total.vendor = total.vendor + material.spend
+				end
+			end
+		end
 		local m = material.market
 		material.ratio = material.from == "auction" and m.now and m.median and m.median > 0 and m.now / m.median or nil
-		if material.unit then
-			material.spend = material.buy * material.unit
-			if material.from == "vendor" then
-				total.vendor = total.vendor + material.spend
-			end
-			total.spend = total.spend + material.spend
-		end
+		list[#list + 1] = material
 	end
+	-- Crafted materials first, in the order they are made (deepest first),
+	-- then what to buy, most to spend first.
 	table.sort(list, function(a, b)
+		local ca, cb = a.from == "craft", b.from == "craft"
+		if ca ~= cb then
+			return ca
+		end
+		if ca and a.depth ~= b.depth then
+			return a.depth > b.depth
+		end
 		local x, y = a.spend or -1, b.spend or -1
 		if x ~= y then
 			return x > y
@@ -134,7 +208,7 @@ function ns.ShoppingList()
 	end
 	local terms, unnamed = {}, 0
 	for _, material in ipairs(materials) do
-		if material.buy > 0 and material.from ~= "vendor" then
+		if material.buy > 0 and material.from == "auction" then
 			local name = C_Item.GetItemInfo(material.id)
 			if name then
 				local ok, term = pcall(api.ConvertToSearchString, ADDON, { searchString = name, isExact = true, quantity = material.buy })
@@ -165,7 +239,12 @@ end
 local Money -- from the window, set when the pane is made
 
 local function Note(material)
-	if material.from == "vendor" then
+	if material.from == "craft" then
+		if material.crafts == 0 then
+			return "|cff999999have enough|r"
+		end
+		return ("|cffffd100craft %d (%s)|r"):format(material.crafts, material.maker.who)
+	elseif material.from == "vendor" then
 		return "|cff999999vendor|r"
 	elseif not material.unit then
 		return "|cffff8040no price|r"
@@ -198,7 +277,16 @@ local function LineTooltip(self)
 	if m.vendor then
 		GameTooltip:AddDoubleLine("Vendor", Money(m.vendor), 0.6, 0.6, 0.6, 1, 1, 1)
 	end
-	if material.spend then
+	if material.from == "craft" then
+		local recipe = material.maker.recipe
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddDoubleLine(("Crafting costs %s each"):format(Money(material.unit)), material.maker.who, 1, 0.82, 0, 1, 1, 1)
+		for _, slot in ipairs(recipe.reagents) do
+			local unit, from, which = ns.UnitCost(slot.ids)
+			GameTooltip:AddDoubleLine(("  %d x %s"):format(slot.n, C_Item.GetItemInfo(which) or ("item " .. which)),
+				unit and (Money(unit * slot.n) .. "  |cff999999" .. from .. "|r") or "no price", 1, 1, 1, 1, 1, 1)
+		end
+	elseif material.spend then
 		GameTooltip:AddDoubleLine(("Buying %d"):format(material.buy), Money(material.spend), 1, 0.82, 0, 1, 1, 1)
 	end
 	GameTooltip:Show()
@@ -247,7 +335,11 @@ local function FillLine(line, material)
 	line.name:SetText(colour and colour.hex and (colour.hex .. name .. "|r") or name)
 	line.need:SetText(material.need)
 	line.have:SetText(material.have)
-	line.buy:SetText(material.buy > 0 and material.buy or "|cff40c0400|r")
+	if material.from == "craft" then
+		line.buy:SetText("")
+	else
+		line.buy:SetText(material.buy > 0 and material.buy or "|cff40c0400|r")
+	end
 	line.each:SetText(material.unit and Money(material.unit) or "")
 	line.note:SetText(Note(material))
 	line:Show()

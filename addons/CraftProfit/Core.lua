@@ -7,8 +7,9 @@
 -- basic reagents count: optional and finishing reagents are your choice.
 --
 -- Prices, all from Auctionator:
--- - A material costs the cheapest of the auction price and the vendor
---   price, over every item that fits its slot. Vendor prices are the ones
+-- - A material costs the cheapest of the auction price, the vendor price
+--   and crafting it with a recipe one of your characters has learned
+--   (see Make or buy), over every item that fits its slot. Vendor prices are the ones
 --   Auctionator saw at a merchant, so a material bought from a vendor you
 --   never opened counts at its auction price.
 -- - The item sells for the lower of the last scanned price and the median
@@ -195,19 +196,108 @@ function ns.Market(id)
 	return m
 end
 
--- The cheapest way to fill one reagent slot: price each, where, which item.
-function ns.UnitCost(ids)
-	local best, from, which
-	for _, id in ipairs(ids) do
-		local m = ns.Market(id)
-		if m.now and (not best or m.now < best) then
-			best, from, which = m.now, "auction", id
-		end
-		if m.vendor and (not best or m.vendor < best) then
-			best, from, which = m.vendor, "vendor", id
+local function ShortName(who)
+	return (who:gsub("%-.*$", ""))
+end
+
+-- Make or buy -------------------------------------------------------------------
+--
+-- A material that one of your characters can craft (a learned recipe that
+-- makes it) costs the cheaper of buying it and crafting it, crafting at
+-- what that recipe's own materials cost, made or bought the same way, per
+-- item it makes. A recipe that would need the material it makes, however
+-- deep, does not count for it (the essences turn into each other).
+
+local makers -- itemID -> { { recipe, id, who } }: learned recipes only; made again after a change
+
+local function Makers()
+	if makers then
+		return makers
+	end
+	makers = {}
+	for who, book in pairs(ns.db.characters) do
+		for _, entry in pairs(book.professions or {}) do
+			for id, recipe in pairs(entry.recipes or {}) do
+				if recipe.learned then
+					local list = makers[recipe.item] or {}
+					makers[recipe.item] = list
+					list[#list + 1] = { recipe = recipe, id = id, who = ShortName(who) }
+				end
+			end
 		end
 	end
-	return best, from, which or ids[1]
+	return makers
+end
+
+local costs -- per Collect: itemID -> its cheapest way, or false for none
+
+local ItemCost
+
+-- The cheapest item for one reagent slot: unit, way, which item, maker.
+local function SlotCost(ids, visiting)
+	local best, which
+	for _, id in ipairs(ids) do
+		local way = ItemCost(id, visiting)
+		if way and (not best or way.unit < best.unit) then
+			best, which = way, id
+		end
+	end
+	return best, which or ids[1]
+end
+
+-- What one item costs at the cheapest: { unit, from = "auction" | "vendor"
+-- | "craft", maker }, or nil when there is no way to get it.
+function ItemCost(id, visiting)
+	local top = visiting == nil
+	if top and costs and costs[id] ~= nil then
+		return costs[id] or nil
+	end
+	visiting = visiting or {}
+	local m = ns.Market(id)
+	local best
+	if m.now then
+		best = { unit = m.now, from = "auction" }
+	end
+	if m.vendor and (not best or m.vendor < best.unit) then
+		best = { unit = m.vendor, from = "vendor" }
+	end
+	if not visiting[id] then
+		visiting[id] = true
+		for _, maker in ipairs(Makers()[id] or {}) do
+			local recipe = maker.recipe
+			local makes = (recipe.min + recipe.max) / 2
+			local total = 0
+			for _, slot in ipairs(recipe.reagents) do
+				local way = SlotCost(slot.ids, visiting)
+				if not way then
+					total = nil
+					break
+				end
+				total = total + way.unit * slot.n
+			end
+			if total and makes > 0 and (not best or total / makes < best.unit) then
+				best = { unit = total / makes, from = "craft", maker = maker }
+			end
+		end
+		visiting[id] = nil
+	end
+	-- Only a top-level answer is kept: one found inside another's search
+	-- may have had a way left out to avoid going round in a circle.
+	if top and costs then
+		costs[id] = best or false
+	end
+	return best
+end
+ns.ItemCost = function(id) return ItemCost(id) end
+
+-- The cheapest way to fill one reagent slot: price each, where, which item,
+-- and the recipe when it is crafted.
+function ns.UnitCost(ids)
+	local way, which = SlotCost(ids)
+	if not way then
+		return nil, nil, which
+	end
+	return way.unit, way.from, which, way.maker
 end
 
 -- Items asked of the game this session: id -> true while waiting for its
@@ -260,8 +350,8 @@ end
 function ns.Evaluate(recipe)
 	local row = { recipe = recipe, parts = {}, cost = 0 }
 	for _, slot in ipairs(recipe.reagents) do
-		local unit, from, which = ns.UnitCost(slot.ids)
-		row.parts[#row.parts + 1] = { id = which, n = slot.n, unit = unit, from = from }
+		local unit, from, which, maker = ns.UnitCost(slot.ids)
+		row.parts[#row.parts + 1] = { id = which, n = slot.n, unit = unit, from = from, maker = maker }
 		if unit then
 			row.cost = row.cost + unit * slot.n
 		else
@@ -291,13 +381,9 @@ local function Better(a, b)
 	return (a.name or "") < (b.name or "")
 end
 
-local function ShortName(who)
-	return (who:gsub("%-.*$", ""))
-end
-
 -- Every recipe of every character, one row per recipe with who knows it.
 function ns.Collect()
-	market = {}
+	market, costs = {}, {}
 	local byRecipe, rows = {}, {}
 	ns.characters = {}
 	for who, book in pairs(ns.db.characters) do
@@ -358,6 +444,7 @@ end
 -- Something changed: the list is made again the next time it is drawn.
 function ns.Invalidate()
 	ns.fresh = false
+	makers = nil
 	if ns.Changed then
 		ns.Changed()
 	end
