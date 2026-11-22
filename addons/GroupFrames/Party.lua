@@ -101,6 +101,9 @@ local RING_REACH = { 6 * BIG_ICON / 30, 5 * BIG_ICON / 30 }
 -- glow cut round the icon (a 1 px gap or overlap on one side however placed).
 local GLOW_SIZE = BIG_ICON * 52 / 40
 local DEFAULT_POINT = { "CENTER", 0, -180 }
+local PET_SCALE = 0.75 -- the pet row: the same frames, smaller
+local PET_GAP = 4 -- between the party row and the pet row
+local PET_COLOUR = { 0.3, 0.75, 0.3 } -- pets have no class colour of their own
 
 local ROLE_ATLAS = {
 	TANK = "UI-LFG-RoleIcon-Tank-Micro-GroupFinder",
@@ -603,6 +606,8 @@ local function UpdateColour(btn)
 	local colour
 	if btn.gone then
 		colour = COLOURS.gone
+	elseif btn.unit and btn.unit:find("pet") then
+		colour = PET_COLOUR
 	else
 		local _, class = UnitClass(btn.unit)
 		if class and not IsSecret(class) then
@@ -647,7 +652,11 @@ end
 
 local function UpdateRange(btn)
 	local unit = btn.unit
-	if unit == "player" then
+	-- You, and your own pet: the game's range check only covers group
+	-- members, and answered "not in range" for your pet (seen faded in
+	-- game, 2026-11-22). Both its answers are secret, so whether it checked
+	-- cannot be read; your pet is simply shown in full.
+	if unit == "player" or unit == "pet" then
 		btn.body:SetAlpha(1)
 		return
 	end
@@ -866,6 +875,25 @@ header:SetAttribute("initialConfigFunction", ([[
 ]]):format(BUTTON_W, BUTTON_H))
 ns.PartyHeader = header
 
+-- Pets: the game's pet header picks your pet and your party members' pets
+-- (pet, partypet1..4) and lays them out as the party header does; the same
+-- button template, so the same look. The whole header is scaled down (not
+-- the buttons: the header sizes itself from its buttons' unscaled size),
+-- and hangs by its top centre under the party row, so it centres itself.
+local petHeader = CreateFrame("Frame", "GroupFramesPartyPets", anchor, "SecureGroupPetHeaderTemplate")
+petHeader:SetScale(PET_SCALE)
+petHeader:SetPoint("TOP", header, "BOTTOM", 0, -PET_GAP / PET_SCALE)
+petHeader:SetAttribute("template", "GroupFramesUnitButtonTemplate")
+petHeader:SetAttribute("templateType", "Button")
+petHeader:SetAttribute("showParty", true)
+petHeader:SetAttribute("showPlayer", true)
+petHeader:SetAttribute("showRaid", false)
+petHeader:SetAttribute("showSolo", true) -- your pet beside your solo frame
+petHeader:SetAttribute("point", "LEFT")
+petHeader:SetAttribute("xOffset", GAP)
+petHeader:SetAttribute("initialConfigFunction", header:GetAttribute("initialConfigFunction"))
+ns.PetHeader = petHeader
+
 -- Shown in a party (and solo), hidden in a raid, where Blizzard's raid
 -- frames take over.
 local VISIBILITY = "[group:raid] hide; show"
@@ -935,6 +963,7 @@ function ns.PartyLogin(saved)
 	end
 	-- In a raid Blizzard's raid frames take over.
 	RegisterStateDriver(header, "visibility", VISIBILITY)
+	RegisterStateDriver(petHeader, "visibility", VISIBILITY)
 end
 
 
@@ -1042,8 +1071,11 @@ function ns.PartyTest(count)
 	if count and not testing then
 		UnregisterStateDriver(header, "visibility")
 		header:Hide()
+		UnregisterStateDriver(petHeader, "visibility")
+		petHeader:Hide()
 	elseif not count and testing then
 		RegisterStateDriver(header, "visibility", VISIBILITY)
+		RegisterStateDriver(petHeader, "visibility", VISIBILITY)
 	end
 	testing = count and true or false
 	local width = count and (count * BUTTON_W + (count - 1) * GAP) or 0
@@ -1066,5 +1098,5 @@ function ns.PartyTesting()
 	return testing
 end
 
-ns.Party = { previews = previews, buttons = buttons, byUnit = byUnit, header = header, anchor = anchor, hidden = hidden,
+ns.Party = { previews = previews, buttons = buttons, byUnit = byUnit, header = header, petHeader = petHeader, anchor = anchor, hidden = hidden,
 	UpdateAll = UpdateAll, UpdateRange = UpdateRange, BUTTON_W = BUTTON_W, BUTTON_H = BUTTON_H }
