@@ -496,6 +496,15 @@ local function BuildLook(btn)
 	target:SetAlpha(0)
 	btn.target = target
 
+	-- Aggro: the same glow art round the edge, in the threat colour, over
+	-- the target glow (aggro wins when both apply), under the name line.
+	local aggro = CreateFrame("Frame", nil, body)
+	aggro:SetFrameLevel(level + 3)
+	aggro:SetAllPoints()
+	btn.aggroGlow = NineSlice(aggro, bar, false, TARGET_SPEC, "OVERLAY")
+	aggro:SetAlpha(0)
+	btn.aggro = aggro
+
 	local role = top:CreateTexture(nil, "ARTWORK")
 	role:SetSize(ROLE_SIZE, ROLE_SIZE)
 	-- On the ring's top-left corner, where its bronze lines meet.
@@ -639,6 +648,37 @@ local function UpdateRole(btn)
 	end
 end
 
+-- Aggro as Blizzard's frames show it (CompactUnitFrame_UpdateAggroHighlight):
+-- UnitThreatSituation(unit), shown above 0; levels 1-2 in the "gaining
+-- threat" colour, 3 in "high threat". Unlike Blizzard, solo too (the user
+-- asked, 2026-11-22): your own and your pet's aggro when alone.
+-- Asked with one unit, which the game documents as generally not secret
+-- (SecretWhenUnitThreatStateRestricted); a secret answer shows nothing.
+local function ThreatColour(status)
+	local colour = status >= 3 and HIGH_THREAT_COLOR or GAINING_THREAT_COLOR
+	if colour and colour.GetRGB then
+		return colour:GetRGB()
+	end
+	if status >= 3 then
+		return 1, 0, 0
+	end
+	return 1, 0.6, 0
+end
+
+local function UpdateAggro(btn)
+	local unit = btn.unit
+	local ok, status = pcall(UnitThreatSituation, unit)
+	if not ok or IsSecret(status) or not status or status <= 0 then
+		btn.aggro:SetAlpha(0)
+		return
+	end
+	local r, g, b = ThreatColour(status)
+	for _, piece in pairs(btn.aggroGlow) do
+		piece:SetVertexColor(r, g, b, 1)
+	end
+	btn.aggro:SetAlpha(1)
+end
+
 local function UpdateTarget(btn)
 	local isTarget = UnitIsUnit(btn.unit, "target")
 	if IsSecret(isTarget) then
@@ -738,6 +778,7 @@ local function UpdateAll(btn)
 	UpdateName(btn)
 	UpdateRole(btn)
 	UpdateTarget(btn)
+	UpdateAggro(btn)
 	UpdateRange(btn)
 	UpdateStatusIcon(btn)
 	for _, container in pairs(btn.auras) do
@@ -768,6 +809,8 @@ local UNIT_EVENTS = {
 	UNIT_CONNECTION = function(btn) UpdateHealth(btn); UpdateColour(btn) end,
 	UNIT_FLAGS = function(btn) UpdateHealth(btn); UpdateColour(btn) end,
 	UNIT_NAME_UPDATE = UpdateName,
+	UNIT_THREAT_SITUATION_UPDATE = UpdateAggro,
+	UNIT_THREAT_LIST_UPDATE = UpdateAggro,
 	INCOMING_SUMMON_CHANGED = UpdateStatusIcon,
 	INCOMING_RESURRECT_CHANGED = UpdateStatusIcon,
 	UNIT_PHASE = UpdateStatusIcon,
@@ -976,7 +1019,7 @@ end
 
 local PREVIEW = {
 	{ name = "Decayla", class = "PRIEST", role = "HEALER", health = 0.9, dots = { "shield", "renew" }, status = "ready" },
-	{ name = "Belle", class = "WARRIOR", role = "TANK", health = 0.62, dots = { "shield" }, weakened = true, target = true, big = 871, absorb = 0.18 },
+	{ name = "Belle", class = "WARRIOR", role = "TANK", health = 0.62, dots = { "shield" }, weakened = true, target = true, big = 871, absorb = 0.18, aggro = 3 },
 	{ name = "Fearonica", class = "WARLOCK", role = "DAMAGER", health = 0.35, dots = { "renew" }, dispel = { "Magic", "Curse" }, heals = { 0.2, 0.12 } },
 	{ name = "Arya", class = "HUNTER", role = "DAMAGER", health = 1, overAbsorb = true },
 	{ name = "Zulrin", class = "SHAMAN", role = "DAMAGER", health = 0, dead = true, status = "rez" },
@@ -1027,6 +1070,13 @@ local function PreviewFrame(index)
 	end
 	frame.target:SetAlpha(data.target and 1 or 0)
 	frame.shadow:SetAlpha(data.target and 0 or 1)
+	if data.aggro then
+		local r, g, b = ThreatColour(data.aggro)
+		for _, piece in pairs(frame.aggroGlow) do
+			piece:SetVertexColor(r, g, b, 1)
+		end
+		frame.aggro:SetAlpha(1)
+	end
 
 	for i, kind in ipairs(data.dots or {}) do
 		PaintedDot(frame, COLOURS[kind], -DOT_X - (i - 1) * (DOT + DOT_GAP), DOT_Y, "BOTTOMRIGHT")
