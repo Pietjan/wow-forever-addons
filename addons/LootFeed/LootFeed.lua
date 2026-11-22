@@ -20,6 +20,16 @@
 --   CHAT_MSG_COMBAT_HONOR_GAIN, matched against FACTION_STANDING_* and
 --   COMBATLOG_HONOR*.
 -- - Experience: the change in UnitXP on PLAYER_XP_UPDATE.
+-- - Rolls: an item someone won by a roll gets the need / greed / transmog /
+--   disenchant icon and the winning number after the name. The winner
+--   comes from C_LootHistory (LOOT_HISTORY_UPDATE_DROP, drop.winner: state
+--   and roll), what Blizzard's loot history window shows; the chat lines
+--   of LOOT_ROLL_ROLLED_* ("Need Roll - 87 for [x] by Name") are the
+--   fallback. Whichever comes first, the receive line or the result, the
+--   other finds it within ROLL_KEEP seconds.
+-- - Class colours of group looters: the chat line's GUID through
+--   GetPlayerInfoByGUID, then the group's names and classes as saved at
+--   login, on group changes and after combat, when they are not secret.
 -- The lines never take the mouse, so they cannot get in the way of a click
 -- into the world. No Blizzard function is hooked and no Blizzard field is
 -- written.
@@ -41,6 +51,8 @@ local RING_X, RING_Y = ICON * 0.2, ICON * 0.2 - 1
 local FADE_IN, FADE_OUT = 0.15, 0.6 -- seconds
 local TEST_PACE = 0.5 -- seconds between the lines of /lootfeed test
 local BUSY_AFTER = 1 -- seconds after a merchant (mail, ...) closes that money still is not loot
+local ROLL_KEEP = 60 -- seconds a roll result waits for its receive line, and a line for its result
+local ROLL_ICON = 14
 
 local GREY = "|cff808080"
 local RED = "|cffff2020"
@@ -62,11 +74,13 @@ local DEFAULTS = { duration = 6, max = 8, money = true, rep = true, xp = true, h
 local MAX_QUALITY = 4
 
 local db, anchor, unlocked
-local Layout
+local Layout, RollAtlas, TakeRoll, Pattern, Match
 local active = {} -- the lines on screen, oldest first
 local pool = {}
 local lastMoney, lastXP, lastXPMax
 local busy, busyUntil = {}, 0
+local rolls = {} -- roll results not yet on a line: { item, who, kind, roll, time }
+local decided = {} -- "encounterID:lootListKey" of drops whose winner was taken
 
 local function Plain(v)
 	if v == nil or IsSecret(v) then
@@ -92,8 +106,38 @@ local function ClassText(name, class)
 	return name
 end
 
--- Class of a group member by short name, read from the group units.
-local function ClassOf(name)
+-- Class of the looter from the chat line's GUID (GetPlayerInfoByGUID).
+local function ClassOfGUID(guid)
+	guid = Plain(guid)
+	if type(guid) ~= "string" or guid == "" or not GetPlayerInfoByGUID then
+		return nil
+	end
+	local ok, _, class = pcall(GetPlayerInfoByGUID, guid)
+	return ok and Plain(class) or nil
+end
+
+-- Group members' classes, saved whenever the group units can be read:
+-- UnitName, UnitClass and UnitGUID are secret while unit identity is
+-- restricted (API docs), so a lookup in a fight uses what was saved
+-- before it. A secret value never overwrites a saved one. Forever
+-- characters are "First Surname" and UnitName returns the two apart, so a
+-- member is filed under the joined name and under the first name alone; a
+-- first name two members share is left out (false).
+local classByName, classByGUID = {}, {}
+
+local function File(key, class, alone)
+	if not key then
+		return
+	end
+	local old = classByName[key]
+	if alone and old ~= nil and old ~= class then
+		classByName[key] = false
+	elseif not (alone and old == false) then
+		classByName[key] = class
+	end
+end
+
+local function Snapshot()
 	local units = {}
 	if IsInRaid and IsInRaid() then
 		for i = 1, 40 do
@@ -105,19 +149,39 @@ local function ClassOf(name)
 		end
 	end
 	for _, unit in ipairs(units) do
-		local ok, unitName, class = pcall(function()
+		local ok, first, class, surname, guid = pcall(function()
 			if not UnitExists(unit) then
 				return nil
 			end
-			local n = UnitName(unit)
+			local n, sn = UnitName(unit)
 			local _, c = UnitClass(unit)
-			return n, c
+			return n, c, sn, UnitGUID and UnitGUID(unit)
 		end)
-		if ok and Plain(unitName) and Short(unitName) == name then
-			return Plain(class)
+		first, class = ok and Plain(first), ok and Plain(class)
+		surname, guid = ok and Plain(surname), ok and Plain(guid)
+		if type(first) == "string" and type(class) == "string" then
+			local full = type(surname) == "string" and surname ~= "" and (first .. " " .. surname) or first
+			File(Short(full), class)
+			if full ~= first then
+				File(Short(first), class, true)
+			end
+		end
+		if type(guid) == "string" and type(class) == "string" then
+			classByGUID[guid] = class
 		end
 	end
-	return nil
+end
+
+-- Class of a looter: from the chat line's GUID, then what the group units
+-- say now or said when they last could.
+local function ClassOf(name, guid)
+	guid = Plain(guid)
+	local class = ClassOfGUID(guid) or (type(guid) == "string" and classByGUID[guid])
+	if class then
+		return class
+	end
+	Snapshot()
+	return classByName[name] or nil
 end
 
 local function Edges(frame, color, layer)
@@ -256,6 +320,25 @@ local function CreateRow()
 	return row
 end
 
+-- The icon of a roll kind: Forever's own (-c60) first, then the loot
+-- history's, then the roll frame's button.
+local rollAtlases = {}
+function RollAtlas(kind)
+	if rollAtlases[kind] == nil then
+		rollAtlases[kind] = false
+		for _, name in ipairs({ "lootroll-icon-" .. kind, "lootroll-toast-icon-" .. kind .. "-up" }) do
+			if HasAtlas(name .. "-c60") then
+				rollAtlases[kind] = name .. "-c60"
+				break
+			elseif HasAtlas(name) then
+				rollAtlases[kind] = name
+				break
+			end
+		end
+	end
+	return rollAtlases[kind] or nil
+end
+
 -- What a line says, from what it holds.
 local TEXT = {
 	item = function(row)
@@ -264,10 +347,14 @@ local TEXT = {
 			text = text .. " x" .. row.amount
 		end
 		if row.who then
-			return text .. "  " .. row.who
-		end
-		if row.total and row.total > 0 then
+			text = text .. "  " .. row.who
+		elseif row.total and row.total > 0 then
 			text = text .. "  " .. GREY .. "(" .. row.total .. ")|r"
+		end
+		if row.rollKind then
+			local atlas = RollAtlas(row.rollKind)
+			text = text .. "  " .. (atlas and ("|A:%s:%d:%d|a"):format(atlas, ROLL_ICON, ROLL_ICON) or "")
+				.. (row.roll and (" " .. row.roll) or "")
 		end
 		return text
 	end,
@@ -350,6 +437,9 @@ local function Push(key, spec)
 		if row.key == key then
 			row.amount = row.amount + spec.amount
 			row.expires = now + db.duration
+			if spec.rollKind then
+				row.rollKind, row.roll = spec.rollKind, spec.roll
+			end
 			Refresh(row)
 			return row
 		end
@@ -357,6 +447,7 @@ local function Push(key, spec)
 	local row = table.remove(pool) or CreateRow()
 	row.key, row.kind, row.amount = key, spec.kind, spec.amount
 	row.label, row.link, row.who, row.total = spec.label, spec.link, spec.who, nil
+	row.itemID, row.whoKey, row.rollKind, row.roll = spec.itemID, spec.whoKey, spec.rollKind, spec.roll
 	row.born, row.expires = now, now + db.duration
 	row.icon:SetTexture(spec.icon or ICON_UNKNOWN)
 	Refresh(row)
@@ -377,9 +468,150 @@ local function Clear()
 	end
 end
 
+-- Rolls -----------------------------------------------------------------
+
+local function Forget()
+	local now = GetTime()
+	for i = #rolls, 1, -1 do
+		if now - rolls[i].time > ROLL_KEEP then
+			table.remove(rolls, i)
+		end
+	end
+end
+
+-- The oldest result of this item for this player (who: short name, "" for
+-- you), taken off the list along with copies of it from the other source.
+function TakeRoll(item, who)
+	Forget()
+	for i, r in ipairs(rolls) do
+		if r.item == item and r.who == who then
+			table.remove(rolls, i)
+			for j = #rolls, 1, -1 do
+				local o = rolls[j]
+				if o.item == item and o.who == who and o.roll == r.roll and o.kind == r.kind then
+					table.remove(rolls, j)
+				end
+			end
+			return r
+		end
+	end
+	return nil
+end
+
+-- A roll result: onto the line already up for it, or kept for the line to come.
+local function AddRoll(item, who, kind, roll)
+	if not item or not who or not kind then
+		return
+	end
+	local now = GetTime()
+	for _, row in ipairs(active) do
+		if row.kind == "item" and row.itemID == item and row.whoKey == who and not row.rollKind
+			and now - row.born <= ROLL_KEEP then
+			row.rollKind, row.roll = kind, roll
+			Refresh(row)
+			return
+		end
+	end
+	for _, row in ipairs(active) do
+		-- The same result from the other source, already shown.
+		if row.kind == "item" and row.itemID == item and row.whoKey == who and row.rollKind == kind and row.roll == roll then
+			return
+		end
+	end
+	rolls[#rolls + 1] = { item = item, who = who, kind = kind, roll = roll, time = now }
+end
+
+local function WhoKey(name, isSelf)
+	if isSelf then
+		return ""
+	end
+	name = Short(name)
+	if not name then
+		return nil
+	end
+	local me = Short(UnitName("player"))
+	if name == me or name == YOU then
+		return ""
+	end
+	return name
+end
+
+-- Enum.EncounterLootDropRollState -> roll kind (Pass and NoRoll win nothing).
+local function StateKind(state)
+	local states = Enum and Enum.EncounterLootDropRollState
+	if not states or state == nil then
+		return nil
+	end
+	if state == states.NeedMainSpec or state == states.NeedOffSpec then
+		return "need"
+	elseif state == states.Greed then
+		return "greed"
+	elseif state == states.Transmog then
+		return "transmog"
+	end
+	return nil
+end
+
+local function OnDrop(encounterID, lootListKey)
+	encounterID, lootListKey = Plain(encounterID), Plain(lootListKey)
+	if not (encounterID and lootListKey and C_LootHistory and C_LootHistory.GetSortedInfoForDrop) then
+		return
+	end
+	local key = encounterID .. ":" .. lootListKey
+	if decided[key] then
+		return
+	end
+	local drop = C_LootHistory.GetSortedInfoForDrop(encounterID, lootListKey)
+	local winner = type(drop) == "table" and drop.winner
+	if type(winner) ~= "table" then
+		return
+	end
+	decided[key] = true
+	local item = type(Plain(drop.itemHyperlink)) == "string" and drop.itemHyperlink:match("|Hitem:(%d+)")
+	AddRoll(item, WhoKey(winner.playerName, Plain(winner.isSelf)), StateKind(Plain(winner.state)), Plain(winner.roll))
+end
+
+-- "Need Roll - 87 for [x] by Name": who rolled what. Only the winner
+-- receives the item, so their number is the one a receive line takes.
+local ROLLED = {
+	{ "LOOT_ROLL_ROLLED_NEED", "need" },
+	{ "LOOT_ROLL_ROLLED_NEED_ROLE_BONUS", "need" },
+	{ "LOOT_ROLL_ROLLED_GREED", "greed" },
+	{ "LOOT_ROLL_ROLLED_TRANSMOG", "transmog" },
+	{ "LOOT_ROLL_ROLLED_DE", "disenchant" },
+}
+local rolledPatterns
+
+local function CompileRolled()
+	local out = {}
+	for _, entry in ipairs(ROLLED) do
+		local format = _G[entry[1]]
+		local pattern = Pattern(format)
+		if pattern then
+			-- With the history link: id, roll, item, name; without it the id goes.
+			local fields = { "roll", "item", "name" }
+			if format:find("^|HlootHistory") then
+				fields = { "id", "roll", "item", "name" }
+			end
+			out[#out + 1] = { pattern = pattern, fields = fields, kind = entry[2] }
+		end
+	end
+	return out
+end
+
+local function OnRolled(text)
+	local entry, f = Match(rolledPatterns, text)
+	if not entry then
+		return false
+	end
+	AddRoll(f.item:match("|Hitem:(%d+)"), WhoKey(f.name), entry.kind, tonumber(f.roll))
+	return true
+end
+
 -- An item line. `text` is the item as the chat line has it (a link);
--- `who` is nil for your own loot; `class` is theirs when already known.
-local function PushItem(text, count, who, class)
+-- `who` is nil for your own loot; `class` is theirs when already known,
+-- `guid` the looter's from the chat line.
+local function PushItem(text, count, who, class, guid)
 	local id = text:match("|Hitem:(%d+)")
 	if not id then
 		return
@@ -393,9 +625,11 @@ local function PushItem(text, count, who, class)
 		end
 	end
 	local icon = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(tonumber(id))
-	class = who and (class or ClassOf(who))
+	class = who and (class or ClassOf(who, guid))
+	local result = TakeRoll(id, who or "")
 	Push("item:" .. id .. ":" .. (who or ""), {
 		kind = "item", amount = count or 1, icon = icon, link = text,
+		itemID = id, whoKey = who or "", rollKind = result and result.kind, roll = result and result.roll,
 		label = (text:gsub("|h%[(.-)%]|h", "|h%1|h")), -- the link without its brackets, colour kept
 		who = who and ClassText(who, class),
 	})
@@ -405,7 +639,7 @@ end
 
 -- A format string as a pattern; `open` leaves the end free, for strings
 -- that can carry a bonus note after the part that matters.
-local function Pattern(format, open)
+function Pattern(format, open)
 	if type(format) ~= "string" then
 		return nil
 	end
@@ -458,7 +692,7 @@ local function Compile(list)
 end
 
 -- The first pattern of `list` that fits: the entry and its fields by name.
-local function Match(list, text)
+function Match(list, text)
 	for _, entry in ipairs(list) do
 		local found = { text:match(entry.pattern) }
 		if found[1] then
@@ -474,9 +708,14 @@ end
 
 local lootPatterns, repPatterns, honorPatterns
 
-local function OnLoot(text)
+-- The chat event's arguments: text first, the looter's GUID twelfth.
+local function OnLoot(text, ...)
+	local guid = select(11, ...)
 	text = Plain(text)
 	if type(text) ~= "string" then
+		return
+	end
+	if OnRolled(text) then
 		return
 	end
 	local entry, f = Match(lootPatterns, text)
@@ -488,7 +727,7 @@ local function OnLoot(text)
 	elseif db.party then
 		local who = Short(f.name)
 		if who then
-			PushItem(f.item, tonumber(f.count), who)
+			PushItem(f.item, tonumber(f.count), who, nil, guid)
 		end
 	end
 end
@@ -628,6 +867,14 @@ local function Test()
 		steps[#steps + 1] = function() PushItem(TestLink(item), item[4]) end
 	end
 	steps[#steps + 1] = function() PushItem(TestLink(TEST_ITEMS[1]), 2, "Thrall", "SHAMAN") end
+	steps[#steps + 1] = function()
+		AddRoll(tostring(TEST_ITEMS[4][1]), "Thrall", "need", 87)
+		PushItem(TestLink(TEST_ITEMS[4]), 1, "Thrall", "SHAMAN")
+	end
+	steps[#steps + 1] = function()
+		PushItem(TestLink(TEST_ITEMS[2]), 1)
+		AddRoll(tostring(TEST_ITEMS[2][1]), "", "greed", 42)
+	end
 	steps[#steps + 1] = function() Push("money", { kind = "money", amount = 214 }) end
 	steps[#steps + 1] = function() Push("rep:Orgrimmar", { kind = "rep", amount = 75, label = "Orgrimmar", icon = ICON_REP }) end
 	steps[#steps + 1] = function() Push("xp", { kind = "xp", amount = 120, icon = ICON_XP }) end
@@ -732,24 +979,31 @@ events:SetScript("OnEvent", function(self, event, ...)
 			end
 		end
 		lootPatterns, repPatterns, honorPatterns = Compile(LOOT), Compile(REP), Compile(HONORS)
+		rolledPatterns = CompileRolled()
 		CreateAnchor()
 		local ok, err = pcall(RegisterSettings)
 		if not ok then
 			print("|cffffd100LootFeed|r: options panel unavailable (" .. tostring(err) .. "); use /lootfeed instead")
 		end
 		for _, e in ipairs({ "PLAYER_ENTERING_WORLD", "CHAT_MSG_LOOT", "CHAT_MSG_COMBAT_FACTION_CHANGE", "CHAT_MSG_COMBAT_HONOR_GAIN",
-			"PLAYER_MONEY", "PLAYER_XP_UPDATE", "BAG_UPDATE_DELAYED" }) do
+			"PLAYER_MONEY", "PLAYER_XP_UPDATE", "BAG_UPDATE_DELAYED", "LOOT_HISTORY_UPDATE_DROP",
+			"GROUP_ROSTER_UPDATE", "PLAYER_REGEN_ENABLED" }) do
 			pcall(self.RegisterEvent, self, e)
 		end
 		for open, close in pairs(WINDOWS) do
 			pcall(self.RegisterEvent, self, open)
 			pcall(self.RegisterEvent, self, close)
 		end
+	elseif event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_REGEN_ENABLED" then
+		pcall(Snapshot)
 	elseif event == "PLAYER_ENTERING_WORLD" then
+		pcall(Snapshot)
 		lastMoney = Plain(GetMoney())
 		lastXP, lastXPMax = ReadXP()
 	elseif event == "CHAT_MSG_LOOT" then
 		pcall(OnLoot, ...)
+	elseif event == "LOOT_HISTORY_UPDATE_DROP" then
+		pcall(OnDrop, ...)
 	elseif event == "CHAT_MSG_COMBAT_FACTION_CHANGE" then
 		pcall(OnRep, ...)
 	elseif event == "CHAT_MSG_COMBAT_HONOR_GAIN" then
