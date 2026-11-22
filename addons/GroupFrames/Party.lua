@@ -117,6 +117,10 @@ local PET_SCALE = 0.75 -- the pet row: the same frames, smaller
 local PET_GAP = 4 -- between the party row and the pet row
 local PET_COLOUR = { 0.3, 0.75, 0.3 } -- pets have no class colour of their own
 
+-- The LFG micro icons, gold ring (21 px art). Forever's bronze
+-- groupfinder-icon-role-large set was tried 2026-11-22: copper-red next to
+-- the edge, its cross squashed. Ask -c60 atlases by their plain name: the
+-- "-c60" names showed nothing in game.
 local ROLE_ATLAS = {
 	TANK = "UI-LFG-RoleIcon-Tank-Micro-GroupFinder",
 	HEALER = "UI-LFG-RoleIcon-Healer-Micro-GroupFinder",
@@ -396,6 +400,15 @@ end
 -- given offsets (left, top, right, bottom, outward).
 local EDGE_SPEC = { x0 = EDGE_X0, x1 = EDGE_X1, y0 = EDGE_Y0, y1 = EDGE_Y1,
 	cut = { CUT_L, CUT_T, CUT_R, CUT_B }, off = { EDGE_L, EDGE_T, EDGE_R, EDGE_B } }
+-- Gold like the role icon's ring (user, 2026-11-22): the art's pale bronze
+-- tinted to the ring's median (188, 140, 55), and a second copy added on top
+-- (ADD) in the same gold at half strength for the shine the ring has; picked
+-- side by side. The middle, the bar's dark background, is left alone.
+local EDGE_TINT = { 1, 0.88, 0.43 }
+local EDGE_SHINE = 0.5
+-- The band behind the name: tall enough to cover the edge's top line, dark
+-- enough to hide it, fading out over the name's last PLATE_FADE at each end.
+local PLATE_H, PLATE_ALPHA, PLATE_FADE = 6, 0.8, 2
 
 local function NineSlice(frame, bar, withMiddle, spec, layer)
 	local cutL, cutT, cutR, cutB = unpack(spec.cut)
@@ -517,6 +530,16 @@ local function BuildLook(btn)
 	btn.statusIcon = statusIcon
 
 	btn.edge = NineSlice(back, bar, true, EDGE_SPEC)
+	btn.edgeShine = NineSlice(back, bar, false, EDGE_SPEC, "BORDER")
+	for key, piece in pairs(btn.edge) do
+		if key ~= "m" then
+			piece:SetVertexColor(unpack(EDGE_TINT))
+		end
+	end
+	for _, piece in pairs(btn.edgeShine) do
+		piece:SetBlendMode("ADD")
+		piece:SetVertexColor(EDGE_TINT[1], EDGE_TINT[2], EDGE_TINT[3], EDGE_SHINE)
+	end
 
 	local top = CreateFrame("Frame", nil, body)
 	top:SetFrameLevel(level + 4)
@@ -548,7 +571,16 @@ local function BuildLook(btn)
 	local role = top:CreateTexture(nil, "ARTWORK")
 	role:SetSize(ROLE_SIZE, ROLE_SIZE)
 	-- On the ring's top-left corner, where its bronze lines meet.
-	role:SetPoint("CENTER", bar, "TOPLEFT", LINE_X, LINE_Y)
+	-- 1.5 below the name line and 1.5 further in (user, 2026-11-22; half
+	-- units work as the icon is not snapped to the pixel grid).
+	role:SetPoint("CENTER", bar, "TOPLEFT", LINE_X + 1.5, LINE_Y - 1.5)
+	-- Not snapped to the pixel grid: snapping rounds each side on its own,
+	-- which can squash a small icon by a pixel one way (a guess for the
+	-- squashed cross seen 2026-11-22, not confirmed).
+	if role.SetSnapToPixelGrid then
+		role:SetSnapToPixelGrid(false)
+		role:SetTexelSnappingBias(0)
+	end
 	btn.role = role
 
 	local name = top:CreateFontString(nil, "ARTWORK")
@@ -556,10 +588,42 @@ local function BuildLook(btn)
 	-- fonts for Korean, Chinese and Cyrillic names. SetFont with Friz's file
 	-- dropped those and drew such a name as empty boxes (raid, 2026-11-22).
 	name:SetFontObject(SystemFont_Shadow_Med1_Outline or "GameFontHighlightSmall")
-	name:SetPoint("LEFT", bar, "TOPLEFT", LINE_X + NAME_X, LINE_Y)
+	-- Half a unit below the line (user, 2026-11-22).
+	name:SetPoint("LEFT", bar, "TOPLEFT", LINE_X + NAME_X, LINE_Y - 0.5)
 	name:SetJustifyH("LEFT")
 	name:SetWordWrap(false)
 	btn.name = name
+
+	-- A dark band behind the name, so the edge's top line does not show
+	-- through the letters (inside a D, user 2026-11-22). Anchored to the
+	-- name's own ends, so it follows the text without reading its width
+	-- (secret names cannot be measured); its ends fade out.
+	local function Plate()
+		local tex = top:CreateTexture(nil, "BACKGROUND")
+		tex:SetColorTexture(1, 1, 1, 1)
+		tex:SetHeight(PLATE_H)
+		return tex
+	end
+	local mid, left, right = Plate(), Plate(), Plate()
+	-- The fades fall inside the name's ends, not past them (it poked out,
+	-- user 2026-11-22).
+	mid:SetPoint("LEFT", name, "LEFT", PLATE_FADE, 0)
+	-- The text box runs past the last letter: the right end 2 further in.
+	mid:SetPoint("RIGHT", name, "RIGHT", -PLATE_FADE - 2, 0)
+	mid:SetVertexColor(0, 0, 0, PLATE_ALPHA)
+	left:SetPoint("RIGHT", mid, "LEFT")
+	left:SetWidth(PLATE_FADE)
+	right:SetPoint("LEFT", mid, "RIGHT")
+	right:SetWidth(PLATE_FADE)
+	if CreateColor and left.SetGradient then
+		local clear, dark = CreateColor(0, 0, 0, 0), CreateColor(0, 0, 0, PLATE_ALPHA)
+		left:SetGradient("HORIZONTAL", clear, dark)
+		right:SetGradient("HORIZONTAL", dark, clear)
+	else
+		left:SetVertexColor(0, 0, 0, PLATE_ALPHA / 2)
+		right:SetVertexColor(0, 0, 0, PLATE_ALPHA / 2)
+	end
+	btn.namePlate = { mid = mid, left = left, right = right }
 
 	local status = top:CreateFontString(nil, "ARTWORK")
 	Outlined(status, 9)
