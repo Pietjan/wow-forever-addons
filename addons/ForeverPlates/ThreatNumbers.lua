@@ -26,7 +26,7 @@
 -- 0.5 s sweep.
 
 local _, ns = ...
-local IsSecret = ns.IsSecret
+local IsSecret, Shared = ns.IsSecret, ns.Shared
 
 local SWEEP = 0.5
 local SIZE = 0.85 -- of the nameplate name's height, as Enemy targets
@@ -115,11 +115,6 @@ local function LabelFor(plate)
 	frame:Hide()
 	labels[plate] = frame
 	return frame
-end
-
--- Whether there is anyone else to share threat with.
-local function Shared()
-	return IsInGroup() or UnitExists("pet")
 end
 
 -- Fill one plate's numbers; false when there is nothing to show.

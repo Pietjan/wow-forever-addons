@@ -4,6 +4,12 @@
 -- colours: green when you are a tank (it should be on you), red otherwise,
 -- grey for NPCs and pets.
 --
+-- YOU shows only where it tells you something: in a group or with a pet
+-- out (alone, everything is on you). As tank, only while the enemy casts:
+-- otherwise the green bar says it already, but its target is then who the
+-- cast is aimed at, which the threat colour does not show. Where YOU is
+-- left out, the plate shows nothing while it is on you.
+--
 -- How, within Forever's nameplate rules (see Core.lua): the text is a
 -- FontString on a frame of this addon's own, parented to the nameplate and
 -- anchored under the unit frame's HealthBarsContainer, and moved under
@@ -25,7 +31,7 @@
 -- fire an event.
 
 local _, ns = ...
-local IsSecret, IsTank = ns.IsSecret, ns.IsTank
+local IsSecret, IsTank, Shared = ns.IsSecret, ns.IsTank, ns.Shared
 
 -- ThreatColor's green and red.
 local YOU_TANK = CreateColor(0.20, 0.80, 0.20, 1) -- tank: it should be on you
@@ -35,6 +41,7 @@ local SWEEP = 0.2
 local SIZE = 0.85 -- of the nameplate name's height: the same font, a little smaller
 
 local feature
+local Update -- below
 local texts = {} -- nameplate -> our frame
 local lastError -- the last error caught, for /fplates target
 
@@ -85,6 +92,7 @@ local function TextFor(plate)
 	-- Under the health bar, or under the cast bar while one shows: the
 	-- cast bar area has no usable position when nothing is being cast.
 	local function Anchor(casting)
+		frame.casting = casting
 		text:ClearAllPoints()
 		if casting and casts then
 			text:SetPoint("TOP", casts, "BOTTOM", 0, -1)
@@ -100,8 +108,15 @@ local function TextFor(plate)
 		-- text. Guarded: should Forever refuse it, the text simply stays
 		-- under the health bar.
 		local okHook, err = pcall(function()
-			castBar:HookScript("OnShow", function() Anchor(true) end)
-			castBar:HookScript("OnHide", function() Anchor(false) end)
+			-- Refilled at once: whether YOU shows depends on the cast.
+			local function Cast(casting)
+				Anchor(casting)
+				if frame.unit then
+					Update(frame.unit)
+				end
+			end
+			castBar:HookScript("OnShow", function() Cast(true) end)
+			castBar:HookScript("OnHide", function() Cast(false) end)
 		end)
 		frame.castHooked = okHook
 		if not okHook then
@@ -149,6 +164,11 @@ local function YouColor()
 	return IsTank() and YOU_TANK or YOU_OTHER
 end
 
+-- Whether YOU may show on this plate (see the top of this file).
+local function WantYou(frame)
+	return Shared() and (not IsTank() or frame.casting == true)
+end
+
 -- Fill one plate's texts; false when there is nothing to show.
 local function Fill(frame, unit)
 	local text, you = frame.text, frame.you
@@ -164,18 +184,26 @@ local function Fill(frame, unit)
 	text:SetTextColor(ClassColor(target):GetRGB())
 	you:SetTextColor(YouColor():GetRGB())
 	local isMe = UnitIsUnit(target, "player")
+	local wantYou = WantYou(frame)
 	if IsSecret(isMe) then
 		-- The game picks which of the two is visible.
-		you:SetAlphaFromBoolean(isMe)
+		if wantYou then
+			you:SetAlphaFromBoolean(isMe)
+		else
+			you:SetAlpha(0)
+		end
 		text:SetAlphaFromBoolean(isMe, 0, 255)
 	else
+		if isMe and not wantYou then
+			return false
+		end
 		you:SetAlpha(isMe and 1 or 0)
 		text:SetAlpha(isMe and 0 or 1)
 	end
 	return true
 end
 
-local function Update(unit)
+function Update(unit)
 	local plate = C_NamePlate.GetNamePlateForUnit(unit)
 	if not plate then
 		return
@@ -185,6 +213,7 @@ local function Update(unit)
 		Note(frame)
 		return
 	end
+	frame.unit = unit
 	local ok, shown = pcall(Fill, frame, unit)
 	if not ok then
 		Note(shown)
@@ -242,7 +271,7 @@ local ticker
 feature = ns.Feature({
 	key = "target",
 	title = "Enemy targets",
-	tooltip = "Enemy nameplates show who the enemy is targeting, under the bar (below the cast bar while casting); class colours; YOU when it is you, green for tanks, red otherwise.",
+	tooltip = "Enemy nameplates show who the enemy is targeting, under the bar (below the cast bar while casting); class colours; YOU when it is you (in a group or with a pet out; as tank only while it casts), green for tanks, red otherwise.",
 	defaults = { enabled = true },
 	events = { "NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "UNIT_TARGET", "PLAYER_TARGET_CHANGED" },
 	Command = Report,
@@ -268,6 +297,7 @@ function feature.OnEvent(event, unit)
 		local plate = C_NamePlate.GetNamePlateForUnit(unit)
 		if plate and texts[plate] then
 			texts[plate]:Hide()
+			texts[plate].unit = nil
 		end
 	elseif event == "PLAYER_TARGET_CHANGED" then
 		UpdateAll()

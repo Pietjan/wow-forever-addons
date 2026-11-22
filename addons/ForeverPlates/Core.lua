@@ -65,6 +65,13 @@ function ns.IsTank()
 	return ok and tank == true
 end
 
+-- Whether there is anyone else to share threat with: a party or raid, or
+-- your pet. Alone, every mob is on you, so Threat numbers and the YOU of
+-- Enemy targets say nothing.
+function ns.Shared()
+	return IsInGroup() or UnitExists("pet")
+end
+
 -- The nameplate name's own font: Blizzard's rule from
 -- Blizzard_NamePlateUnitFrame.lua (GetNamePlateFontObject, a local there),
 -- read from its plain NamePlateSetupOptions table, never from the plate.
