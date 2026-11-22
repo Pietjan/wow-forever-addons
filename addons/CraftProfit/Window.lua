@@ -7,8 +7,12 @@
 --                  (the count shows before its name); Shift-click links
 --                  the item in chat
 --   Materials      opens the plan's materials beside the list (Plan.lua)
---   the checkbox   also lists recipes a character has seen in its
---                  profession window but not learned
+--   Known, Could learn, All
+--                  which recipes: learned ones; also those the character
+--                  could learn now, from a trainer (needs a visit to the
+--                  trainer, see Core.lua) or a pattern with a price, with
+--                  how many crafts pay for learning it; or every one seen
+--                  in a profession window
 --
 -- Columns: profit per craft, what the item brings after the cut, what the
 -- materials cost, how many were listed in the last scan, who knows it.
@@ -97,6 +101,21 @@ local function RowTooltip(self)
 	end
 	GameTooltip:AddLine(" ")
 	GameTooltip:AddLine(("%s, known by %s"):format(row.profession, table.concat(row.who, ", ")), 0.6, 0.6, 0.6, true)
+	local learnCost
+	if row.train then
+		learnCost = row.train.cost
+		GameTooltip:AddLine(("Trainer: skill %d%s"):format(row.train.skill, learnCost and learnCost > 0 and (", " .. Money(learnCost)) or ""), 0.6, 0.6, 0.6)
+	elseif row.pattern then
+		learnCost = row.pattern.cost
+		local pattern = row.pattern
+		local from = pattern.vendor and ("%s%s"):format(pattern.vendor, pattern.limited and ", limited stock" or "") or pattern.from
+		GameTooltip:AddLine(("%s: skill %d, %s (%s)"):format(ItemName(pattern.item), pattern.skill, Money(learnCost), from), 0.6, 0.6, 0.6)
+	end
+	-- How many crafts the profit takes to pay for learning it.
+	if learnCost and learnCost > 0 and row.profit and row.profit > 0 then
+		local crafts = math.ceil(learnCost / row.profit)
+		GameTooltip:AddLine(("Pays back after %d craft%s"):format(crafts, crafts == 1 and "" or "s"), 0.25, 0.75, 0.25)
+	end
 	if m.sell then
 		GameTooltip:AddDoubleLine("Sells for", Money(m.sell) .. " each", 1, 0.82, 0, 1, 1, 1)
 		GameTooltip:AddDoubleLine("  last scan", m.now and Money(m.now) or "none", 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
@@ -205,7 +224,7 @@ local function FillRow(button, row)
 	local colour = item and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[item.quality]
 	button.icon:SetTexture(row.icon or 134400) -- the question mark
 	local name = colour and colour.hex and (colour.hex .. row.name .. "|r") or row.name
-	name = row.learned and name or ("|cff808080" .. row.name .. "|r")
+	name = row.learned and name or ((row.learnable and "|cffc0c0c0" or "|cff808080") .. row.name .. "|r")
 	local planned = ns.Planned(row.id)
 	button.name:SetText(planned > 0 and ("|cffffd100%dx|r %s"):format(planned, name) or name)
 	if row.profit then
@@ -251,6 +270,13 @@ local function Draw()
 		window.thumb:Hide()
 	end
 	window.status:SetText(Status())
+	for _, button in ipairs(window.show) do
+		if button.key == ns.db.show then
+			button:LockHighlight()
+		else
+			button:UnlockHighlight()
+		end
+	end
 end
 
 local function Header(column, label, justify)
@@ -310,20 +336,37 @@ local function MakeWindow()
 	window.status:SetJustifyH("LEFT")
 	window.status:SetWordWrap(false)
 
-	local box = CreateFrame("CheckButton", nil, window, "UICheckButtonTemplate")
-	box:SetSize(24, 24)
-	box:SetPoint("BOTTOMRIGHT", -230, 8)
-	local caption = box.Text or box.text
-	if caption then
-		caption:SetText("Also not learned")
-		caption:SetFontObject("GameFontHighlightSmall")
+	-- Which recipes: known, also those a trainer would teach now, or all.
+	window.show = {}
+	local SHOW = { { "known", "Known" }, { "learnable", "Could learn" }, { "all", "All" } }
+	for i = #SHOW, 1, -1 do
+		local key, label = SHOW[i][1], SHOW[i][2]
+		local button = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
+		button:SetSize(i == 2 and 86 or 56, 22)
+		if i == #SHOW then
+			button:SetPoint("BOTTOMRIGHT", -108, 8)
+		else
+			button:SetPoint("RIGHT", window.show[i + 1], "LEFT", -2, 0)
+		end
+		button:SetText(label)
+		button.key = key
+		button:SetScript("OnClick", function(self)
+			ns.db.show = self.key
+			ns.Invalidate()
+		end)
+		button:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_TOP")
+			GameTooltip:AddLine(({
+				known = "Recipes your characters have learned.",
+				learnable = "Also recipes the character could learn now: from a trainer (visit your profession trainers to fill this in), or from a pattern with an auction or vendor price. Its skill is high enough for either.",
+				all = "Also every recipe your characters have seen in their profession windows but not learned.",
+			})[self.key], 1, 1, 1, true)
+			GameTooltip:Show()
+		end)
+		button:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		window.show[i] = button
 	end
-	box:SetChecked(ns.db.unlearned and true or false)
-	box:SetScript("OnClick", function(self)
-		ns.db.unlearned = self:GetChecked() and true or nil
-		ns.Invalidate()
-	end)
-	window.status:SetPoint("RIGHT", box, "LEFT", -8, 0)
+	window.status:SetPoint("RIGHT", window.show[1], "LEFT", -8, 0)
 
 	local materials = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
 	materials:SetSize(90, 22)

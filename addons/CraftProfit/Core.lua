@@ -138,6 +138,100 @@ function ns.Record()
 	ns.Invalidate()
 end
 
+-- Reading trainers ---------------------------------------------------------------
+--
+-- What a recipe needs to be learned is not in the client, and the profession
+-- window says nothing of it for recipes not learned. A profession trainer's
+-- window lists each recipe it teaches with the skill it wants and its cost:
+-- kept in CraftProfitDB.trainer[profession][recipe name] = { skill, cost },
+-- for every character. The trainer lists only what its filters show
+-- (available and unavailable, by default); what one visit missed, another
+-- adds.
+
+function ns.RecordTrainer()
+	if not ns.db or not GetNumTrainerServices or (IsTradeskillTrainer and not IsTradeskillTrainer()) then
+		return
+	end
+	local changed = false
+	for index = 1, GetNumTrainerServices() or 0 do
+		local name, kind = GetTrainerServiceInfo(index)
+		if name and kind ~= "header" then
+			local profession, rank = GetTrainerServiceSkillReq(index)
+			local cost = GetTrainerServiceCost and GetTrainerServiceCost(index)
+			if profession and type(rank) == "number" then
+				local book = ns.db.trainer[profession] or {}
+				ns.db.trainer[profession] = book
+				local old = book[name]
+				if not old or old.skill ~= rank or old.cost ~= cost then
+					book[name] = { skill = rank, cost = cost }
+					changed = true
+				end
+			end
+		end
+	end
+	if changed then
+		ns.Invalidate()
+	end
+end
+
+-- Reading vendors ----------------------------------------------------------------
+--
+-- Auctionator keeps a vendor's prices only for what it sells in unlimited
+-- stock, and many vendor patterns come one or two at a time. So patterns
+-- (items in Data.lua) are read here whenever a merchant opens, limited or
+-- not: CraftProfitDB.vendor[pattern item] = { cost, vendor, limited }, the
+-- cheapest seen. Items that cost something other than gold are left out.
+
+local patternItems -- pattern item -> true, from Data.lua
+local function IsPattern(item)
+	if not patternItems then
+		patternItems = {}
+		for _, list in pairs(ns.patterns or {}) do
+			for i = 1, #list, 2 do
+				patternItems[list[i]] = true
+			end
+		end
+	end
+	return patternItems[item]
+end
+
+local function MerchantItem(index)
+	if C_MerchantFrame and C_MerchantFrame.GetItemInfo then
+		local info = C_MerchantFrame.GetItemInfo(index)
+		if info then
+			return info.price, info.stackCount, info.numAvailable, info.hasExtendedCost
+		end
+		return nil
+	end
+	local _, _, price, stack, available, _, _, extended = GetMerchantItemInfo(index)
+	return price, stack, available, extended
+end
+
+function ns.RecordMerchant()
+	if not ns.db or not GetMerchantNumItems then
+		return
+	end
+	local vendor = UnitName("npc") or "a vendor"
+	local changed = false
+	for index = 1, GetMerchantNumItems() or 0 do
+		local item = GetMerchantItemID(index)
+		if item and IsPattern(item) then
+			local price, stack, available, extended = MerchantItem(index)
+			if price and price > 0 and not extended then
+				local cost = price / math.max(1, stack or 1)
+				local old = ns.db.vendor[item]
+				if not old or cost <= old.cost then
+					ns.db.vendor[item] = { cost = cost, vendor = vendor, limited = available ~= -1 }
+					changed = changed or not old or old.cost ~= cost or old.vendor ~= vendor
+				end
+			end
+		end
+	end
+	if changed then
+		ns.Invalidate()
+	end
+end
+
 -- Prices -----------------------------------------------------------------------
 
 local market -- per Collect: itemID -> what Auctionator says
@@ -381,6 +475,37 @@ local function Better(a, b)
 	return (a.name or "") < (b.name or "")
 end
 
+-- The cheapest pattern that teaches a recipe at this skill and has a price
+-- (Data.lua, from the client tables): { item, skill, cost, from, vendor,
+-- limited }, or nil. A price: the auction house, Auctionator's vendor
+-- prices, or a vendor read here.
+local function Pattern(id, skill)
+	local list = ns.patterns and ns.patterns[id]
+	if not list then
+		return nil
+	end
+	local best
+	for i = 1, #list, 2 do
+		local item, need = list[i], list[i + 1]
+		if need <= skill then
+			local m = ns.Market(item)
+			local cost, from = m.now, "auction"
+			local vendor, limited
+			if m.vendor and (not cost or m.vendor < cost) then
+				cost, from = m.vendor, "vendor"
+			end
+			local seen = ns.db.vendor[item]
+			if seen and (not cost or seen.cost <= cost) then
+				cost, from, vendor, limited = seen.cost, "vendor", seen.vendor, seen.limited
+			end
+			if cost and (not best or cost < best.cost) then
+				best = { item = item, skill = need, cost = cost, from = from, vendor = vendor, limited = limited }
+			end
+		end
+	end
+	return best
+end
+
 -- Every recipe of every character, one row per recipe with who knows it.
 function ns.Collect()
 	market, costs = {}, {}
@@ -393,7 +518,15 @@ function ns.Collect()
 				if recipe.learned then
 					count = count + 1
 				end
-				if recipe.learned or ns.db.unlearned then
+				-- What a trainer said of it ({ skill, cost }), or a pattern with
+				-- a price: learnable when this character's skill is there.
+				local trained = not recipe.learned and ns.db.trainer[profession] and ns.db.trainer[profession][recipe.name]
+				if trained and (entry.skill or 0) < trained.skill then
+					trained = nil
+				end
+				local pattern = not recipe.learned and not trained and ns.db.show == "learnable" and Pattern(id, entry.skill or 0) or nil
+				local learnable = (trained or pattern) and true or false
+				if recipe.learned or ns.db.show == "all" or (learnable and ns.db.show == "learnable") then
 					local row = byRecipe[id]
 					if not row then
 						local item = Item(recipe.item)
@@ -409,8 +542,19 @@ function ns.Collect()
 					end
 					if row then
 						local name = ShortName(who)
-						row.who[#row.who + 1] = recipe.learned and name or (name .. " (not learned)")
+						if recipe.learned then
+							row.who[#row.who + 1] = name
+						elseif trained then
+							row.who[#row.who + 1] = ("%s (learn at %d)"):format(name, trained.skill)
+							row.train = trained
+						elseif pattern then
+							row.who[#row.who + 1] = ("%s (pattern, %d)"):format(name, pattern.skill)
+							row.pattern = pattern
+						else
+							row.who[#row.who + 1] = name .. " (not learned)"
+						end
 						row.learned = row.learned or recipe.learned
+						row.learnable = row.learnable or learnable
 					end
 				end
 			end
@@ -429,14 +573,14 @@ end
 
 -- Events -------------------------------------------------------------------------
 
-local pending
+local pending = {} -- fn -> true while it waits to run
 local function Later(fn)
-	if pending then
+	if pending[fn] then
 		return
 	end
-	pending = true
+	pending[fn] = true
 	C_Timer.After(0.3, function()
-		pending = false
+		pending[fn] = nil
 		fn()
 	end)
 end
@@ -456,12 +600,22 @@ events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("TRADE_SKILL_SHOW")
 events:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
 events:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+events:RegisterEvent("TRAINER_SHOW")
+events:RegisterEvent("TRAINER_UPDATE")
+events:RegisterEvent("MERCHANT_SHOW")
 events:SetScript("OnEvent", function(_, event, arg, arg2)
 	if event == "ADDON_LOADED" and arg == ADDON then
 		CraftProfitDB = type(CraftProfitDB) == "table" and CraftProfitDB or {}
 		ns.db = CraftProfitDB
 		ns.db.characters = ns.db.characters or {}
 		ns.db.bind = ns.db.bind or {}
+		ns.db.trainer = ns.db.trainer or {}
+		ns.db.vendor = ns.db.vendor or {}
+		-- "known", "learnable" or "all"; 1.1's checkbox meant "all".
+		if ns.db.unlearned then
+			ns.db.show, ns.db.unlearned = "all", nil
+		end
+		ns.db.show = ns.db.show or "known"
 	elseif event == "PLAYER_LOGIN" then
 		local api = Api()
 		if api and api.RegisterForDBUpdate then
@@ -469,6 +623,10 @@ events:SetScript("OnEvent", function(_, event, arg, arg2)
 		end
 	elseif event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" then
 		Later(ns.Record)
+	elseif event == "TRAINER_SHOW" or event == "TRAINER_UPDATE" then
+		Later(ns.RecordTrainer)
+	elseif event == "MERCHANT_SHOW" then
+		Later(ns.RecordMerchant)
 	elseif event == "GET_ITEM_INFO_RECEIVED" then
 		-- Only an item the list waits for, and only when it did load.
 		if ns.Answered(arg, arg2) and ns.Shown and ns.Shown() then
