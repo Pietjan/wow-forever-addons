@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: GroupFrames
-## Notes: Party frames of its own in Forever's bronze bar look: first names on the top edge, dots for Renew, Power Word: Shield and Weakened Soul, dispel icons after the name, faded out of range, centred. First names on Blizzard's raid frames. /groupframes to move.
+## Notes: Party frames of its own in Forever's bronze bar look: first names on the top edge, dots for Renew, Power Word: Shield and Weakened Soul, dispel icons after the name, faded out of range, centred. Raid frames the same, one group per row, sized by the raid. /groupframes to move.
 ## Author: Pietjan
 ## Version: 3.0
 ## SavedVariables: GroupFramesDB
@@ -9,3 +9,5 @@ GroupFrames.lua
 BigDefensiveData.lua
 Party.lua
 Party.xml
+Raid.lua
+Options.lua

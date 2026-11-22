@@ -63,13 +63,25 @@ local LINE_X = -EDGE_L + 1.5
 local NAME_ABOVE = math.ceil(LINE_Y + 6) -- whole units: the secure setup string takes integers
 local BUTTON_W = EDGE_L + BAR_W + EDGE_R
 local BUTTON_H = NAME_ABOVE + BAR_H + EDGE_B
-local GAP = 10
-local ROLE_SIZE = 15 -- 12 first; the user asked for it bigger
+local GAP = 6 -- 10 before; the user asked a bit smaller
+local ROLE_SIZE = 17 -- 12, then 15; the user asked for it bigger again
 local NAME_X = ROLE_SIZE / 2 + 1.5 -- the name starts just right of the icon
 local FADED = 0.45
+
+-- The settings on the options page (Options.lua), with what they start as.
+local DEFAULTS = {
+	soloFrame = true, -- your own frame (and pet) when not in a group
+	partyPets = true,
+	aggro = true,
+	rangeFade = true,
+	fadedAlpha = FADED, -- how faded an out-of-range member is
+	partyLayout = "rowCentre",
+}
 local DOT, DOT_GAP = 5, 2
+local WEAKENED_SOUL_SECONDS = 15
 local DOT_X, DOT_Y = 3, 3 -- in from the bar's side and up from its bottom (user: 3 and 3)
-local DISPEL_ICON = 10
+local DISPEL_TYPES = { "Magic", "Curse", "Disease", "Poison", "Bleed" }
+local DISPEL_ICON = 15 -- 10, then 13; the user asked them bigger again
 -- The big defensive in the middle of the bar, sticking out of the frame,
 -- dressed as the other addons here dress icons (GroupDebuffs, BuffDrop):
 -- the Cooldown Manager's rounded mask and its soft ring, the ring's reach
@@ -287,11 +299,17 @@ local function CreateAuras(btn)
 	-- On the right end of the name line, growing leftward (user, 2026-11-22).
 	auras.dispel:SetFlowLayoutAnchorPoint("RIGHT")
 	auras.dispel:SetFlowLayoutGrowthDirection(AnchorUtil.FlowDirection.Left, AnchorUtil.FlowDirection.Down)
-	auras.dispel:AddAuraGroup("Dispel", "HARMFUL|RAID", {
-		maxFrameCount = 3,
-		initializeFrame = DispelIcon,
-		layout = { elementSpacing = 1, elementWidth = DISPEL_ICON, elementHeight = DISPEL_ICON },
-	})
+	-- One icon per dispel type, however many debuffs of it (user: three
+	-- magic icons said nothing more than one): a group per type, one frame
+	-- each. Dispel types may be filtered on friends; only spell IDs may not.
+	for _, dispelType in ipairs(DISPEL_TYPES) do
+		auras.dispel:AddAuraGroup("Dispel" .. dispelType, "HARMFUL|RAID", {
+			maxFrameCount = 1,
+			initializeFrame = DispelIcon,
+			candidateFilters = { includeDispelTypes = { [dispelType] = true } },
+			layout = { elementSpacing = 1, elementWidth = DISPEL_ICON, elementHeight = DISPEL_ICON },
+		})
+	end
 	auras.dispel:SetPoint("RIGHT", btn.bar, "TOPRIGHT", -4, LINE_Y)
 
 	auras.dots = Container(btn.body, level)
@@ -313,9 +331,31 @@ local function CreateAuras(btn)
 
 	auras.weakened = Container(btn.body, level)
 	auras.weakened:SetFlowLayoutAnchorPoint("BOTTOMLEFT")
+	-- Your Weakened Soul: a debuff you applied lasting at most 15 s, its
+	-- duration in this build (SpellMisc/SpellDuration, 1.60.1.71037). The
+	-- limit keeps your own long debuffs off it: Ghost (permanent; the
+	-- container's maxDuration drops permanent auras) lit it while you were
+	-- dead (user, 2026-11-22), Recently Bandaged lasts 60 s.
 	auras.weakened:AddAuraGroup("WeakenedSoul", "HARMFUL|PLAYER", {
 		maxFrameCount = 1,
 		initializeFrame = Dot(COLOURS.weakened),
+		candidateFilters = { maxDuration = WEAKENED_SOUL_SECONDS },
+		layout = DotLayout(),
+	})
+	-- Another priest's: not readable on a friend (see above), so their
+	-- shield stands in for it (user's choice): a Power Word: Shield not cast
+	-- by you means their Weakened Soul is almost surely up. Not exact: it
+	-- lasts 15 s, the shield up to 30 s or until broken. Both cannot show at
+	-- once: your Weakened Soul blocks their shield.
+	-- "Not cast by you" is the filter string's negation, "!PLAYER" (the
+	-- opposite of the Renew dot's "PLAYER"). The candidate filter
+	-- isFromPlayerOrPlayerPet = false was tried first and showed nothing for
+	-- another priest's shield (user, 2026-11-22): it most likely means cast
+	-- by any player, which every priest's shield is.
+	auras.weakened:AddAuraGroup("OthersShield", "HELPFUL|!PLAYER", {
+		maxFrameCount = 1,
+		initializeFrame = Dot(COLOURS.weakened),
+		candidateFilters = { includeSpellIDs = Set(SHIELD) },
 		layout = DotLayout(),
 	})
 	auras.weakened:SetPoint("BOTTOMLEFT", btn.bar, "BOTTOMLEFT", DOT_X, DOT_Y)
@@ -512,7 +552,10 @@ local function BuildLook(btn)
 	btn.role = role
 
 	local name = top:CreateFontString(nil, "ARTWORK")
-	Outlined(name, 12) -- the mock-up's size
+	-- A font family, not a font file: Friz 12 outlined, with Blizzard's
+	-- fonts for Korean, Chinese and Cyrillic names. SetFont with Friz's file
+	-- dropped those and drew such a name as empty boxes (raid, 2026-11-22).
+	name:SetFontObject(SystemFont_Shadow_Med1_Outline or "GameFontHighlightSmall")
 	name:SetPoint("LEFT", bar, "TOPLEFT", LINE_X + NAME_X, LINE_Y)
 	name:SetJustifyH("LEFT")
 	name:SetWordWrap(false)
@@ -530,6 +573,35 @@ end
 function GroupFrames_InitButton(btn)
 	BuildLook(btn)
 	CreateAuras(btn)
+
+	-- Right-click: a button gets only the clicks it is registered for, and
+	-- by default that is the left button's release; the "*type2" togglemenu
+	-- never fired (user, 2026-11-22). On release only: registering presses
+	-- too would open and close the menu in one click.
+	btn:RegisterForClicks("AnyUp")
+
+	-- The unit's tooltip, as Blizzard's unit frames show it
+	-- (UnitFrame_OnEnter/OnLeave: default anchor, SetUnit, the right-click
+	-- line); a plain SetUnit where those are missing.
+	btn:HookScript("OnEnter", function(self)
+		if not self.unit then
+			return
+		end
+		if UnitFrame_OnEnter then
+			UnitFrame_OnEnter(self)
+		else
+			GameTooltip_SetDefaultAnchor(GameTooltip, self)
+			GameTooltip:SetUnit(self.unit)
+			GameTooltip:Show()
+		end
+	end)
+	btn:HookScript("OnLeave", function(self)
+		if UnitFrame_OnLeave then
+			UnitFrame_OnLeave(self)
+		else
+			GameTooltip:Hide()
+		end
+	end)
 
 	btn:HookScript("OnAttributeChanged", function(self, key, value)
 		if key == "unit" then
@@ -666,6 +738,10 @@ local function ThreatColour(status)
 end
 
 local function UpdateAggro(btn)
+	if db and not db.aggro then
+		btn.aggro:SetAlpha(0)
+		return
+	end
 	local unit = btn.unit
 	local ok, status = pcall(UnitThreatSituation, unit)
 	if not ok or IsSecret(status) or not status or status <= 0 then
@@ -696,16 +772,17 @@ local function UpdateRange(btn)
 	-- members, and answered "not in range" for your pet (seen faded in
 	-- game, 2026-11-22). Both its answers are secret, so whether it checked
 	-- cannot be read; your pet is simply shown in full.
-	if unit == "player" or unit == "pet" then
+	if unit == "player" or unit == "pet" or (db and not db.rangeFade) then
 		btn.body:SetAlpha(1)
 		return
 	end
+	local faded = db and db.fadedAlpha or FADED
 	local inRange = UnitInRange(unit)
 	if IsSecret(inRange) then
-		btn.body:SetAlphaFromBoolean(inRange, 1, FADED)
+		btn.body:SetAlphaFromBoolean(inRange, 1, faded)
 	else
 		-- Not in a group with them, or no answer: shown in full.
-		btn.body:SetAlpha((inRange == false) and FADED or 1)
+		btn.body:SetAlpha((inRange == false) and faded or 1)
 	end
 end
 
@@ -885,6 +962,70 @@ end)
 -- Header, anchor and moving
 ------------------------------------------------------------------------------
 
+-- How the party is laid out (options page): a row or a column, and which
+-- way it grows from the anchor. point/dx/dy are the header's own
+-- attributes (each next button hangs by point off the one before); at is
+-- where the header hangs from the anchor; pet is where the pet row or
+-- column hangs from the party (its point, the party's point, and which way
+-- PET_GAP goes). Columns sit 2 apart, rows 6 (user: less vertical than
+-- horizontal).
+local COLUMN_GAP = 2
+local PARTY_LAYOUTS = {
+	{ key = "rowCentre", label = "Row, centred", point = "LEFT", dx = GAP, dy = 0, at = "CENTER", pet = { "TOP", "BOTTOM", 0, -1 } },
+	{ key = "rowRight", label = "Row, growing right", point = "LEFT", dx = GAP, dy = 0, at = "LEFT", pet = { "TOPLEFT", "BOTTOMLEFT", 0, -1 } },
+	{ key = "rowLeft", label = "Row, growing left", point = "RIGHT", dx = -GAP, dy = 0, at = "RIGHT", pet = { "TOPRIGHT", "BOTTOMRIGHT", 0, -1 } },
+	{ key = "columnDown", label = "Column, growing down", point = "TOP", dx = 0, dy = -COLUMN_GAP, at = "TOP", pet = { "TOPLEFT", "TOPRIGHT", 1, 0 } },
+	{ key = "columnUp", label = "Column, growing up", point = "BOTTOM", dx = 0, dy = COLUMN_GAP, at = "BOTTOM", pet = { "BOTTOMLEFT", "BOTTOMRIGHT", 1, 0 } },
+	{ key = "columnCentre", label = "Column, centred", point = "TOP", dx = 0, dy = -COLUMN_GAP, at = "CENTER", pet = { "LEFT", "RIGHT", 1, 0 } },
+}
+ns.PARTY_LAYOUTS = PARTY_LAYOUTS
+
+local OPPOSITE = { LEFT = "RIGHT", RIGHT = "LEFT", TOP = "BOTTOM", BOTTOM = "TOP" }
+
+-- Frames one after another, as a group header lays out its buttons: the
+-- first by point to the box's point, each next by point to the previous
+-- one's opposite side, dx/dy apart. Used for the test frames, so they sit
+-- where the real ones would.
+function ns.ChainFrames(box, frames, point, dx, dy)
+	local previous
+	for i, frame in ipairs(frames) do
+		frame:ClearAllPoints()
+		if i == 1 then
+			frame:SetPoint(point, box, point, 0, 0)
+		else
+			frame:SetPoint(point, previous, OPPOSITE[point], dx, dy)
+		end
+		frame:Show()
+		previous = frame
+	end
+end
+
+-- The size n frames take, chained as above.
+function ns.ChainSize(n, point, dx, dy)
+	if n == 0 then
+		return 0.1, 0.1
+	end
+	if point == "LEFT" or point == "RIGHT" then
+		return n * BUTTON_W + (n - 1) * math.abs(dx), BUTTON_H
+	end
+	return BUTTON_W, n * BUTTON_H + (n - 1) * math.abs(dy)
+end
+
+-- A header's buttons lose their anchors before its layout attributes
+-- change: the header re-anchors them without clearing, so an old anchor
+-- would stay on. Not in combat.
+function ns.ClearHeaderButtons(h)
+	local i = 1
+	while true do
+		local button = h:GetAttribute("child" .. i)
+		if not button then
+			return
+		end
+		button:ClearAllPoints()
+		i = i + 1
+	end
+end
+
 local anchor = CreateFrame("Frame", "GroupFramesPartyAnchor", UIParent)
 anchor:SetSize(5 * BUTTON_W + 4 * GAP, BUTTON_H)
 anchor:SetMovable(true)
@@ -937,6 +1078,41 @@ petHeader:SetAttribute("xOffset", GAP)
 petHeader:SetAttribute("initialConfigFunction", header:GetAttribute("initialConfigFunction"))
 ns.PetHeader = petHeader
 
+local function PartyLayout()
+	local key = db and db.partyLayout
+	for _, layout in ipairs(PARTY_LAYOUTS) do
+		if layout.key == key then
+			return layout
+		end
+	end
+	return PARTY_LAYOUTS[1]
+end
+
+-- The drag box follows the shape: a row of five or a column of five.
+local function SizeAnchor(layout)
+	if layout.point == "LEFT" or layout.point == "RIGHT" then
+		anchor:SetSize(5 * BUTTON_W + 4 * GAP, BUTTON_H)
+	else
+		anchor:SetSize(BUTTON_W, 5 * BUTTON_H + 4 * math.abs(layout.dy))
+	end
+end
+
+local function ApplyPartyLayout()
+	local layout = PartyLayout()
+	SizeAnchor(layout)
+	for _, h in ipairs({ header, petHeader }) do
+		ns.ClearHeaderButtons(h)
+		h:SetAttribute("xOffset", layout.dx)
+		h:SetAttribute("yOffset", layout.dy)
+		h:SetAttribute("point", layout.point)
+	end
+	header:ClearAllPoints()
+	header:SetPoint(layout.at, anchor, layout.at)
+	petHeader:ClearAllPoints()
+	petHeader:SetPoint(layout.pet[1], header, layout.pet[2],
+		layout.pet[3] * PET_GAP / PET_SCALE, layout.pet[4] * PET_GAP / PET_SCALE)
+end
+
 -- Shown in a party (and solo), hidden in a raid, where Blizzard's raid
 -- frames take over.
 local VISIBILITY = "[group:raid] hide; show"
@@ -957,6 +1133,24 @@ anchor:SetScript("OnDragStop", function()
 end)
 
 local unlocked = false
+local soloHidden = false -- test mode hides your solo frame
+local testing = false -- test mode is on (ns.PartyTest)
+local testCount -- how many test frames
+
+local function ApplySolo()
+	local solo = (not db or db.soloFrame) and not soloHidden
+	header:SetAttribute("showSolo", solo)
+	petHeader:SetAttribute("showSolo", solo)
+end
+
+local function ApplyPartyPets()
+	if db.partyPets and not testing then
+		RegisterStateDriver(petHeader, "visibility", VISIBILITY)
+	else
+		UnregisterStateDriver(petHeader, "visibility")
+		petHeader:Hide()
+	end
+end
 
 function ns.PartyUnlock(unlock, withoutSolo)
 	if InCombatLockdown() then
@@ -966,9 +1160,10 @@ function ns.PartyUnlock(unlock, withoutSolo)
 	handle:SetShown(unlock)
 	label:SetShown(unlock)
 	anchor:EnableMouse(unlock)
-	-- Solo you always see your own frame, except in test mode, whose
-	-- frames stand in for everyone.
-	header:SetAttribute("showSolo", not (unlock and withoutSolo))
+	-- Solo you see your own frame (if that setting is on), except in test
+	-- mode, whose frames stand in for everyone.
+	soloHidden = unlock and withoutSolo or false
+	ApplySolo()
 	return true
 end
 
@@ -995,6 +1190,11 @@ end
 
 function ns.PartyLogin(saved)
 	db = saved
+	for key, value in pairs(DEFAULTS) do
+		if db[key] == nil then
+			db[key] = value
+		end
+	end
 	db.point = db.point or { DEFAULT_POINT[1], DEFAULT_POINT[2], DEFAULT_POINT[3] }
 	ApplyPosition()
 	HideBlizzardParty()
@@ -1004,10 +1204,41 @@ function ns.PartyLogin(saved)
 		print(("|cffffd100GroupFrames|r: %d spells count as big defensives."):format(count))
 		db.bigDefensives = count
 	end
-	-- In a raid Blizzard's raid frames take over.
+	-- In a raid the raid frames take over.
+	ApplyPartyLayout()
 	RegisterStateDriver(header, "visibility", VISIBILITY)
-	RegisterStateDriver(petHeader, "visibility", VISIBILITY)
+	ApplyPartyPets()
+	ApplySolo()
 end
+
+-- After a setting changed (Options.lua). What touches the secure headers
+-- waits for the end of combat; the rest shows at once.
+local settingsPending = false
+
+function ns.PartyApplySettings()
+	for _, btn in pairs(byUnit) do
+		UpdateRange(btn)
+		UpdateAggro(btn)
+	end
+	if InCombatLockdown() then
+		settingsPending = true
+		return false
+	end
+	settingsPending = false
+	ApplyPartyLayout()
+	ApplySolo()
+	ApplyPartyPets()
+	if testing then
+		ns.PartyTest(testCount) -- the test frames take the new layout too
+	end
+	return true
+end
+
+function ns.PartySettingsPending()
+	return settingsPending
+end
+
+ns.PARTY_DEFAULTS = DEFAULTS
 
 
 ------------------------------------------------------------------------------
@@ -1040,13 +1271,10 @@ local function PaintedDot(frame, colour, x, y, point)
 	dot:SetVertexColor(colour[1], colour[2], colour[3], 1)
 end
 
-local function PreviewFrame(index)
-	local frame = previews[index]
-	if frame then
-		return frame
-	end
-	local data = PREVIEW[index]
-	frame = CreateFrame("Frame", nil, anchor)
+-- A look-only frame on parent, painted with a made-up member (data as in
+-- PREVIEW). Shared with the raid's test mode (Raid.lua).
+function ns.PaintPreview(parent, data)
+	local frame = CreateFrame("Frame", nil, parent)
 	frame:SetSize(BUTTON_W, BUTTON_H)
 	BuildLook(frame)
 
@@ -1059,10 +1287,15 @@ local function PreviewFrame(index)
 	frame.absorb:SetValue(data.absorb or 0)
 	frame.overAbsorb:SetAlpha(data.overAbsorb and OVER_ABSORB_ALPHA or 0)
 	local c = data.dead and { r = COLOURS.gone[1], g = COLOURS.gone[2], b = COLOURS.gone[3] }
+		or data.pet and { r = PET_COLOUR[1], g = PET_COLOUR[2], b = PET_COLOUR[3] }
 		or (RAID_CLASS_COLORS and RAID_CLASS_COLORS[data.class]) or { r = 1, g = 1, b = 1 }
 	frame.bar:SetStatusBarColor(c.r, c.g, c.b)
 	frame.name:SetText(ns.Cut(data.name))
-	frame.role:SetAtlas(ROLE_ATLAS[data.role])
+	if data.role and ROLE_ATLAS[data.role] then
+		frame.role:SetAtlas(ROLE_ATLAS[data.role])
+	else
+		frame.role:SetAlpha(0)
+	end
 	frame.status:SetText(data.dead and "Dead" or "")
 	if data.status then
 		frame.statusIcon:SetAtlas(STATUS_ATLAS[data.status])
@@ -1102,15 +1335,38 @@ local function PreviewFrame(index)
 		icon:SetSize(DISPEL_ICON, DISPEL_ICON)
 		icon:SetPoint("RIGHT", frame.bar, "TOPRIGHT", -4 - (i - 1) * (DISPEL_ICON + 1), LINE_Y)
 	end
-
-	previews[index] = frame
 	return frame
 end
 
-local testing = false
+-- Made-up pets, each with the test member it belongs to: shown with the
+-- test party when that member is in it and party pets are on.
+local PET_PREVIEW = {
+	{ owner = 3, name = "Gobnip", pet = true, health = 0.7, dots = { "renew" } },
+	{ owner = 4, name = "Stitches", pet = true, health = 1 },
+}
 
--- count 1 to 5 shows that many, centred as the header centres a party;
--- nil ends the test.
+local petPreviews = {}
+-- The test row stands in for the header (sized to its frames, hung from
+-- the anchor as the header is); the pets' holder for the pet header,
+-- scaled as it is.
+local previewBox = CreateFrame("Frame", nil, anchor)
+previewBox:SetSize(0.1, 0.1)
+local petHolder = CreateFrame("Frame", nil, anchor)
+petHolder:SetScale(PET_SCALE)
+petHolder:SetSize(0.1, 0.1)
+petHolder:Hide()
+
+local function PreviewFrame(index)
+	local frame = previews[index]
+	if not frame then
+		frame = ns.PaintPreview(anchor, PREVIEW[index])
+		previews[index] = frame
+	end
+	return frame
+end
+
+-- count 1 to 5 shows that many, laid out as the party layout lays the real
+-- ones; nil ends the test.
 function ns.PartyTest(count)
 	if count and InCombatLockdown() then
 		return false
@@ -1123,24 +1379,51 @@ function ns.PartyTest(count)
 		header:Hide()
 		UnregisterStateDriver(petHeader, "visibility")
 		petHeader:Hide()
-	elseif not count and testing then
-		RegisterStateDriver(header, "visibility", VISIBILITY)
-		RegisterStateDriver(petHeader, "visibility", VISIBILITY)
 	end
+	local wasTesting = testing
 	testing = count and true or false
-	local width = count and (count * BUTTON_W + (count - 1) * GAP) or 0
+	testCount = count
+	if not count and wasTesting then
+		RegisterStateDriver(header, "visibility", VISIBILITY)
+		ApplyPartyPets()
+	end
+
+	local layout = PartyLayout()
+	local list = {}
 	for i = 1, #PREVIEW do
 		local frame = (count and i <= count) and PreviewFrame(i) or previews[i]
 		if frame then
 			if count and i <= count then
-				frame:ClearAllPoints()
-				frame:SetPoint("LEFT", anchor, "CENTER", -width / 2 + (i - 1) * (BUTTON_W + GAP), 0)
-				frame:Show()
+				list[#list + 1] = frame
 			else
 				frame:Hide()
 			end
 		end
 	end
+	previewBox:SetSize(ns.ChainSize(#list, layout.point, layout.dx, layout.dy))
+	previewBox:ClearAllPoints()
+	previewBox:SetPoint(layout.at, anchor, layout.at)
+	ns.ChainFrames(previewBox, list, layout.point, layout.dx, layout.dy)
+
+	-- Their pets, as the pet header would show them (party pets on).
+	for _, frame in pairs(petPreviews) do
+		frame:Hide()
+	end
+	local shown = {}
+	if count and db and db.partyPets then
+		for i, pet in ipairs(PET_PREVIEW) do
+			if pet.owner <= count then
+				petPreviews[i] = petPreviews[i] or ns.PaintPreview(petHolder, pet)
+				shown[#shown + 1] = petPreviews[i]
+			end
+		end
+	end
+	petHolder:SetSize(ns.ChainSize(#shown, layout.point, layout.dx, layout.dy))
+	petHolder:ClearAllPoints()
+	petHolder:SetPoint(layout.pet[1], previewBox, layout.pet[2],
+		layout.pet[3] * PET_GAP / PET_SCALE, layout.pet[4] * PET_GAP / PET_SCALE)
+	petHolder:SetShown(#shown > 0)
+	ns.ChainFrames(petHolder, shown, layout.point, layout.dx, layout.dy)
 	return true
 end
 
@@ -1148,5 +1431,6 @@ function ns.PartyTesting()
 	return testing
 end
 
-ns.Party = { previews = previews, buttons = buttons, byUnit = byUnit, header = header, petHeader = petHeader, anchor = anchor, hidden = hidden,
-	UpdateAll = UpdateAll, UpdateRange = UpdateRange, BUTTON_W = BUTTON_W, BUTTON_H = BUTTON_H }
+ns.Party = { petPreviews = petPreviews, petHolder = petHolder, PET_SCALE = PET_SCALE, previews = previews, buttons = buttons, byUnit = byUnit, header = header, petHeader = petHeader, anchor = anchor, hidden = hidden,
+	UpdateAll = UpdateAll, UpdateRange = UpdateRange, BUTTON_W = BUTTON_W, BUTTON_H = BUTTON_H, GAP = GAP, PREVIEW = PREVIEW,
+	handleColour = { 0.1, 0.8, 0.2, 0.35 } }

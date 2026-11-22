@@ -1,10 +1,17 @@
--- GroupFrames: party frames of our own (Party.lua), and until the raid
--- frames are ours too, first names on Blizzard's raid frames.
+-- GroupFrames: party frames (Party.lua) and raid frames (Raid.lua) of our
+-- own. First names are also written on Blizzard's raid frames, should they
+-- ever show.
 --
 -- /groupframes          unlock (a green box to drag) or lock again
 -- /groupframes reset    back to the starting place
 -- /groupframes test [n] n look-only frames with made-up members (1 to 5,
 --                       default 5), unlocked to drag; /groupframes ends it
+-- /groupframes test raid 10|25|40
+--                       the same for a raid of that size
+-- /groupframes raidpets raid pets on or off for the raid layout shown now
+--                       (10, 25 or 40; off at first)
+--
+-- The same and more on the options page (Options.lua: Options > AddOns).
 --
 -- First names: Forever characters are "First Surname"; Blizzard's
 -- CompactUnitFrame_UpdateName writes both. UnitName returns the two apart,
@@ -92,7 +99,31 @@ SlashCmdList.GROUPFRAMES = function(message)
 	end
 	if command == "reset" then
 		ns.PartyReset()
-		Say("party frames back at the starting place.")
+		ns.RaidReset()
+		Say("party and raid frames back at their starting places.")
+		return
+	end
+	if command == "raidpets" then
+		-- For the layout shown now (10, 25 or 40).
+		local size = ns.RaidCurrentSize()
+		local on = not ns.RaidPetsShown(size)
+		ns.RaidPets(on, size)
+		Say(("raid pets in the %d layout %s."):format(size, on and "shown" or "hidden"))
+		return
+	end
+	if command == "test" and rest == "raid" then
+		local count = tonumber((message or ""):match("raid%s+(%d+)") or "25")
+		if count ~= 10 and count ~= 25 and count ~= 40 then
+			Say("/groupframes test raid 10, 25 or 40.")
+			return
+		end
+		if ns.PartyTesting() then
+			ns.PartyTest(nil)
+		end
+		ns.RaidTest(count)
+		ns.PartyUnlock(true, true)
+		ns.RaidUnlock(true)
+		Say(("test: a raid of %d. Drag the blue box; /groupframes to end."):format(count))
 		return
 	end
 	if command == "test" and rest ~= "off" then
@@ -101,20 +132,27 @@ SlashCmdList.GROUPFRAMES = function(message)
 			Say("/groupframes test 1 to 5.")
 			return
 		end
+		if ns.RaidTesting() then
+			ns.RaidTest(nil)
+			ns.RaidUnlock(false)
+		end
 		ns.PartyTest(count)
 		ns.PartyUnlock(true, true)
 		Say(("test: %d made-up members. Drag the green box; /groupframes to end."):format(count))
 		return
 	end
-	if ns.PartyTesting() then
+	if ns.PartyTesting() or ns.RaidTesting() then
 		ns.PartyTest(nil)
+		ns.RaidTest(nil)
 		ns.PartyUnlock(false)
+		ns.RaidUnlock(false)
 		Say("test over, locked.")
 		return
 	end
 	local unlock = not ns.PartyUnlocked()
 	ns.PartyUnlock(unlock)
-	Say(unlock and "unlocked: drag the green box. /groupframes to lock." or "locked.")
+	ns.RaidUnlock(unlock)
+	Say(unlock and "unlocked: drag the green box (party) or the blue one (raid). /groupframes to lock." or "locked.")
 end
 
 local loader = CreateFrame("Frame")
@@ -123,6 +161,7 @@ loader:RegisterEvent("PLAYER_LOGIN")
 -- A test running into combat ends, so the real frames are back for the
 -- fight; this event comes before the combat lockdown.
 loader:RegisterEvent("PLAYER_REGEN_DISABLED")
+loader:RegisterEvent("PLAYER_REGEN_ENABLED")
 loader:SetScript("OnEvent", function(_, event, name)
 	if event == "ADDON_LOADED" then
 		if name == ADDON_NAME then
@@ -131,14 +170,26 @@ loader:SetScript("OnEvent", function(_, event, name)
 				hooksecurefunc("CompactUnitFrame_UpdateName", OnUpdateName)
 			end
 		end
+	elseif event == "PLAYER_REGEN_ENABLED" then
+		-- Settings changed in combat that touch the secure headers.
+		if ns.PartySettingsPending() then
+			ns.PartyApplySettings()
+		end
 	elseif event == "PLAYER_REGEN_DISABLED" then
-		if ns.PartyTesting() then
+		if ns.PartyTesting() or ns.RaidTesting() then
 			ns.PartyTest(nil)
+			ns.RaidTest(nil)
 			ns.PartyUnlock(false)
+			ns.RaidUnlock(false)
 			Say("test ended: combat.")
 		end
 	elseif event == "PLAYER_LOGIN" then
 		RestoreCVars(GroupFramesDB)
 		ns.PartyLogin(GroupFramesDB)
+		ns.RaidLogin(GroupFramesDB)
+		local ok, err = pcall(ns.RegisterSettings, GroupFramesDB)
+		if not ok then
+			Say("options page unavailable (" .. tostring(err) .. "); /groupframes still works")
+		end
 	end
 end)
