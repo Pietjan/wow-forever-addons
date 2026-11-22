@@ -468,15 +468,29 @@ local function WrapUnitFrame(frame)
 end
 
 -- A unit frame and every unit frame inside it (target of target, say).
+-- Aura containers are not looked into: their buttons are locked down by
+-- the game, and GetChildren on one raised "Attempt to access forbidden
+-- object" at every end of combat (a battleground, 2026-11-22; PetAuras
+-- hangs a container on PetFrame). Any other frame the game will not open
+-- is skipped the same way.
 local function WrapUnitFramesIn(frame)
 	if not frame or (frame.IsForbidden and frame:IsForbidden()) then
+		return
+	end
+	if frame.GetObjectType and frame:GetObjectType() == "AuraContainer" then
 		return
 	end
 	local unit = frame.GetAttribute and frame:GetAttribute("unit")
 	if IsSecret(unit) or unit ~= nil then
 		WrapUnitFrame(frame)
 	end
-	for _, child in ipairs({ frame:GetChildren() }) do
+	local ok, children = pcall(function()
+		return { frame:GetChildren() }
+	end)
+	if not ok then
+		return
+	end
+	for _, child in ipairs(children) do
 		WrapUnitFramesIn(child)
 	end
 end
