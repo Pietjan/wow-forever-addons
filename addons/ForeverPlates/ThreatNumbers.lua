@@ -1,7 +1,12 @@
 -- Threat numbers (/fplates numbers): your threat on an enemy as a
 -- percentage, right of its nameplate's health bar, or right of the level
 -- box while that shows (OnShow/OnHide hooked on it, as Enemy targets does
--- with the cast bar). Only in a party or raid, or with a pet out: alone,
+-- with the cast bar), or right of the crowd-control icons (a charge's stun,
+-- say) while there are any. Blizzard puts those icons in the plate's
+-- AurasFrame.CrowdControlListFrame, right of the level box or bar; an icon
+-- is a child of that list only while it shows (released icons lose their
+-- parent), so the list's child count says whether there are any, without
+-- measuring anything. Only in a party or raid, or with a pet out: alone,
 -- every mob is on you and the numbers say nothing.
 --
 -- The number is the one Blizzard puts on the target frame (Options >
@@ -74,12 +79,18 @@ local function LabelFor(plate)
 	local unitFrame = plate.UnitFrame
 	local health = unitFrame and unitFrame.HealthBarsContainer
 	local level = unitFrame and unitFrame.PlayerLevelDiffFrame
+	local auras = unitFrame and unitFrame.AurasFrame
+	frame.cc = auras and auras.CrowdControlListFrame
+	local levelShown = false
 
-	-- Right of the level box while it shows, else right of the health bar.
-	local function Anchor(levelShown)
+	-- Right of the crowd-control icons while there are any, else right of
+	-- the level box while it shows, else right of the health bar.
+	local function Anchor()
 		for _, text in ipairs({ behind, ahead }) do
 			text:ClearAllPoints()
-			if levelShown and level then
+			if frame.ccShown then
+				text:SetPoint("LEFT", frame.cc, "RIGHT", 3, 0)
+			elseif levelShown and level then
 				text:SetPoint("LEFT", level, "RIGHT", 3, 0)
 			elseif health then
 				-- More room than beside the level box: the bar's border art
@@ -94,21 +105,23 @@ local function LabelFor(plate)
 		text:SetJustifyH("LEFT")
 		text:SetWordWrap(false)
 	end
-	Anchor(false)
+	frame.Anchor = Anchor
+	Anchor()
 	if level then
 		-- HookScript runs after Blizzard's own handler and only moves our
 		-- text. Guarded: should Forever refuse it, the text stays beside
 		-- the health bar.
 		local okHook, err = pcall(function()
-			level:HookScript("OnShow", function() Anchor(true) end)
-			level:HookScript("OnHide", function() Anchor(false) end)
+			level:HookScript("OnShow", function() levelShown = true; Anchor() end)
+			level:HookScript("OnHide", function() levelShown = false; Anchor() end)
 		end)
 		if not okHook then
 			Note(err)
 		end
 		local okShown, shown = pcall(level.IsShown, level)
 		if okShown and not IsSecret(shown) and shown == true then
-			Anchor(true)
+			levelShown = true
+			Anchor()
 		end
 	end
 	frame.behind, frame.ahead = behind, ahead
@@ -117,9 +130,26 @@ local function LabelFor(plate)
 	return frame
 end
 
+-- Move the numbers beside the crowd-control icons when they come or go.
+local function FollowIcons(frame)
+	local cc = frame.cc
+	local any = false
+	if cc then
+		local okShown, shown = pcall(cc.IsShown, cc)
+		local okCount, count = pcall(cc.GetNumChildren, cc)
+		any = okShown and okCount and not IsSecret(shown) and not IsSecret(count)
+			and shown == true and type(count) == "number" and count > 0
+	end
+	if frame.ccShown ~= any then
+		frame.ccShown = any
+		frame.Anchor()
+	end
+end
+
 -- Fill one plate's numbers; false when there is nothing to show.
 local function Fill(frame, unit)
 	ApplyFont(frame)
+	FollowIcons(frame)
 	if not Shared() then
 		return false
 	end
@@ -202,11 +232,11 @@ end
 feature = ns.Feature({
 	key = "numbers",
 	title = "Threat numbers",
-	tooltip = "In a group or with a pet out, your threat on each enemy as a percentage, right of its health bar and level box: the number Blizzard shows on the target frame.",
+	tooltip = "In a group or with a pet out, your threat on each enemy as a percentage, right of its health bar, level box and crowd-control icons: the number Blizzard shows on the target frame.",
 	defaults = { enabled = true },
 	events = {
 		"NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "UNIT_THREAT_LIST_UPDATE", "UNIT_THREAT_SITUATION_UPDATE",
-		"GROUP_ROSTER_UPDATE",
+		"UNIT_AURA", "GROUP_ROSTER_UPDATE",
 	},
 	unitEvents = { { "UNIT_PET", "player" } },
 	Command = Report,
@@ -235,7 +265,7 @@ function feature.OnEvent(event, unit)
 		end
 	elseif type(unit) == "string" and not IsSecret(unit) and unit:find("^nameplate") then
 		Update(unit)
-	else
+	elseif event ~= "UNIT_AURA" then
 		-- Your threat situation, your group or your pet: any plate may change.
 		UpdateAll()
 	end

@@ -1,5 +1,11 @@
 -- Quest enemies (/fplates quest): puts a quest icon next to the nameplate of every enemy that
 -- still counts towards one of your quest objectives.
+--
+-- The icon goes left of the health bar, where Blizzard also puts the raid
+-- mark (the unit frame's RaidTargetFrame, against the bar's left edge).
+-- While a mark is set, the icon moves left of it: Blizzard shows and hides
+-- that frame as marks come and go, and OnShow/OnHide are hooked on it
+-- (HookScript, which only moves this file's icon).
 
 local _, ns = ...
 local IsSecret = ns.IsSecret
@@ -11,6 +17,7 @@ local LineType = Enum.TooltipDataLineType
 
 local plateOfUnit = {} -- nameplate unit token -> nameplate frame, while shown
 local indicators = {} -- nameplate frame -> icon frame, created on first use
+local markHooked = setmetatable({}, { __mode = "k" }) -- raid mark frames hooked
 
 -- What the unit's tooltip says about my quests:
 --   true   it lists an objective I have not finished
@@ -70,13 +77,36 @@ local function GetIndicator(plate)
 	end
 	-- The default health bar is recreated whenever the plate is reused, and
 	-- is absent when another addon draws the plate, so anchor every time.
-	local bar = plate.UnitFrame and plate.UnitFrame.HealthBarsContainer
-	indicator:ClearAllPoints()
-	if bar then
-		indicator:SetPoint("RIGHT", bar, "LEFT", -2, 0)
-	else
-		indicator:SetPoint("RIGHT", plate, "LEFT", 0, 0)
+	local unitFrame = plate.UnitFrame
+	local bar = unitFrame and unitFrame.HealthBarsContainer
+	local mark = unitFrame and unitFrame.RaidTargetFrame
+	-- The "!" is narrow in a square texture: the offsets pull its clear
+	-- edge in over the mark or the bar's border, so the mark itself sits close.
+	local function Anchor(marked)
+		indicator:ClearAllPoints()
+		if marked and mark then
+			indicator:SetPoint("RIGHT", mark, "LEFT", 6, 0)
+		elseif bar then
+			indicator:SetPoint("RIGHT", bar, "LEFT", 4, 0)
+		else
+			indicator:SetPoint("RIGHT", plate, "LEFT", 0, 0)
+		end
 	end
+	local marked = false
+	if mark then
+		if not markHooked[mark] then
+			-- Guarded: should Forever refuse it, the icon stays by the bar.
+			local ok = pcall(function()
+				mark:HookScript("OnShow", function() local i = indicators[plate]; if i then i.Anchor(true) end end)
+				mark:HookScript("OnHide", function() local i = indicators[plate]; if i then i.Anchor(false) end end)
+			end)
+			markHooked[mark] = ok
+		end
+		local ok, shown = pcall(mark.IsShown, mark)
+		marked = ok and not IsSecret(shown) and shown == true
+	end
+	indicator.Anchor = Anchor
+	Anchor(marked)
 	return indicator
 end
 
