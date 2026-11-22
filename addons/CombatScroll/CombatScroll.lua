@@ -185,12 +185,38 @@ local debug = false
 -- The pairing frame number (see CurrentFrame).
 local frameNo, frameTime = 0, nil
 
+-- Trace (/cscroll trace): for TRACE_SECONDS, every debug message plus the
+-- raw events and each line drawn go into db.trace, which the game writes
+-- to SavedVariables/CombatScroll.lua on /reload or logout. Only plain
+-- values are stored: a secret one is written as "secret".
+local TRACE_SECONDS = 60
+local TRACE_MAX = 3000
+local tracing = false
+
+local function Trace(text)
+	if tracing and #db.trace < TRACE_MAX then
+		table.insert(db.trace, ("%.3f f%d %s"):format(GetTime(), frameNo, text))
+	end
+end
+
+-- A value as trace text.
+local function T(v)
+	if not CanAccess(v) then
+		return "secret"
+	end
+	return tostring(v)
+end
+
 local function Debug(...)
-	if debug then
-		-- Game time (constant within a frame) and the pairing frame
-		-- number, read without advancing it, so the gap between a line
-		-- and its hit can be measured.
-		print(("|cffffd100CombatScroll|r %.3f f%d"):format(GetTime(), frameNo), ...)
+	if debug or tracing then
+		local text = table.concat({ ... }, " ")
+		Trace(text)
+		if debug then
+			-- Game time (constant within a frame) and the pairing frame
+			-- number, read without advancing it, so the gap between a
+			-- line and its hit can be measured.
+			print(("|cffffd100CombatScroll|r %.3f f%d"):format(GetTime(), frameNo), text)
+		end
 	end
 end
 
@@ -432,7 +458,25 @@ end
 -- a line of its own: the first line counts it ("95 x3") and shows the
 -- latest amount. The amounts are secret, so they cannot be added up.
 -- Crits always get a line of their own.
+local function ColorName(color)
+	if color == HEAL then
+		return "heal"
+	elseif color == MISS then
+		return "miss"
+	end
+	for school, c in pairs(SCHOOL_COLORS) do
+		if c == color then
+			return "school" .. school
+		end
+	end
+	return "other"
+end
+
 function Spawn(lane, format, value, color, crit, pet, icon, stack)
+	if tracing then
+		Trace(("draw %s %q colour %s crit %s pet %s icon %s stack %s"):format(
+			lane.key, format, ColorName(color), tostring(crit), tostring(pet), T(icon), T(stack)))
+	end
 	local now = GetTime()
 	if stack and not crit and value ~= nil then
 		local held = lane.stacks[stack]
@@ -646,7 +690,7 @@ local function OnCast(unit, _, id)
 	end
 	local spell = data[id]
 	if spell then
-		Debug(("cast %d by %s: school %d, direct %d, tick %g, every %g"):format(id, unit, spell[1], spell[2], spell[3], spell[4]))
+		Debug(("cast %d by %s: school %d, direct %d, tick %g, every %g, ticks do %d, hits do %d"):format(id, unit, spell[1], spell[2], spell[3], spell[4], spell[5], spell[6]))
 	else
 		Debug(("cast %d by %s: not a damage or heal spell, counts for a miss only"):format(id, unit))
 	end
@@ -665,13 +709,19 @@ local function OnCast(unit, _, id)
 	end
 end
 
-local function DirectIcon(school, now)
+-- What a spell's ticks (Data.lua's fifth field) or direct hits (sixth) do.
+local DAMAGES, HEALS = 1, 2
+
+-- kind: HEALS for a heal, else DAMAGES. Only a spell whose direct hits do
+-- that can claim it, so a Smite cast cannot give its icon to the Flash
+-- Heal after it.
+local function DirectIcon(school, now, kind)
 	local oldestFree, latest
 	for _, cast in ipairs(casts) do
 		local age = now - cast.time
 		local spell = data[cast.id]
 		-- A cast that is not in the data never claims a hit or a heal.
-		if spell and age >= 0 and SameSchool(spell, school) then
+		if spell and age >= 0 and bit.band(spell[6], kind) ~= 0 and SameSchool(spell, school) then
 			if spell[4] > 0 then
 				-- A channel: each of its hits, as long as it may last.
 				if age <= CHANNEL_WINDOW then
@@ -714,12 +764,16 @@ local function MissIcon(now)
 	return nil
 end
 
-local function TickIcon(school, now)
+-- kind: HEALS for a heal tick, else DAMAGES. Only a spell whose ticks do
+-- that (Data.lua's fifth field) can claim it, so a damage over time cannot
+-- give its icon to a heal tick (heals are matched on timing alone, see
+-- IconFor).
+local function TickIcon(school, now, kind)
 	local best, bestOff
 	for id, cast in pairs(applied) do
 		local spell = data[id]
 		local age = now - cast.time
-		if age > 0 and age <= MAX_DOT and SameSchool(spell, school) then
+		if age > 0 and age <= MAX_DOT and bit.band(spell[5], kind) ~= 0 and SameSchool(spell, school) then
 			local period = spell[3]
 			local phase = age % period
 			local off = math.min(phase, period - phase)
@@ -933,9 +987,9 @@ function IconFor(logEvent, hit)
 	elseif logEvent:find("^RANGE") then
 		return GetInventoryItemTexture("player", RANGED_SLOT) or C_Spell.GetSpellTexture(75), "ranged"
 	elseif logEvent:find("^SPELL_PERIODIC") then
-		return TickIcon(school, now)
+		return TickIcon(school, now, logEvent == "SPELL_PERIODIC_HEAL" and HEALS or DAMAGES)
 	elseif logEvent:find("^SPELL") then
-		local icon, key = DirectIcon(school, now)
+		local icon, key = DirectIcon(school, now, logEvent == "SPELL_HEAL" and HEALS or DAMAGES)
 		if icon then
 			return icon, key
 		end
@@ -1315,6 +1369,9 @@ local function ShowPetHit(event, flags, amount)
 end
 
 local function OnUnitCombat(unit, event, flags, amount, school)
+	if tracing then
+		Trace(("UNIT_COMBAT %s %s %s school %s amount %s"):format(T(unit), T(event), T(flags), T(school), T(amount)))
+	end
 	if not (CanAccess(unit) and CanAccess(event) and CanAccess(flags)) then
 		return
 	end
@@ -1340,6 +1397,9 @@ local function OnUnitCombat(unit, event, flags, amount, school)
 end
 
 local function OnCombatLogMessage(_, r, g, b, order)
+	if tracing then
+		Trace(("COMBAT_LOG_MESSAGE rgb %s %s %s order %s"):format(T(r), T(g), T(b), T(order)))
+	end
 	-- Oldest: Blizzard refilling the tab from history, not something new.
 	if order ~= Enum.CombatLogMessageOrder.Newest then
 		return
@@ -1661,6 +1721,30 @@ events:SetScript("OnUpdate", function()
 	end
 end)
 
+local traceRun = 0
+
+local function StopTrace()
+	if not tracing then
+		return
+	end
+	tracing = false
+	Say(("trace stopped, %d entries. /reload to write them to the saved file."):format(#db.trace))
+end
+
+local function StartTrace()
+	db.trace = {}
+	tracing = true
+	traceRun = traceRun + 1
+	local run = traceRun
+	Trace(("trace start, build %s"):format(T(select(2, GetBuildInfo()))))
+	C_Timer.After(TRACE_SECONDS, function()
+		if run == traceRun then
+			StopTrace()
+		end
+	end)
+	Say(("tracing for %d s (/cscroll trace again to stop early)."):format(TRACE_SECONDS))
+end
+
 SLASH_COMBATSCROLL1 = "/cscroll"
 SLASH_COMBATSCROLL2 = "/combatscroll"
 SlashCmdList.COMBATSCROLL = function(msg)
@@ -1691,10 +1775,16 @@ SlashCmdList.COMBATSCROLL = function(msg)
 		WINDOW = math.min(3, math.max(0, math.floor(tonumber(arg))))
 		db.window = WINDOW
 		Say(("a line and its hit may be %d frame(s) apart"):format(WINDOW))
+	elseif cmd == "trace" then
+		if tracing then
+			StopTrace()
+		else
+			StartTrace()
+		end
 	elseif cmd == "debug" then
 		debug = not debug
 		Say("debug " .. (debug and "on" or "off"))
 	else
-		Say("/cscroll unlock | lock | test | setup | undo | scale 0.5-2 | reset | stats | debug | window 0-3")
+		Say("/cscroll unlock | lock | test | setup | undo | scale 0.5-2 | reset | stats | debug | trace | window 0-3")
 	end
 end
