@@ -1,11 +1,15 @@
 -- Route.lua: the current step's route drawn as a marching ant trail on the
--- world map and the minimap.
+-- world map and the minimap, and the shown steps' marked places.
 --
 -- A route is the step's route points (RXP .waypoint and optional .goto
 -- with a radius, WoW-Pro path points) in the order the arrow walks them,
 -- closed into a loop for patrol steps. It is drawn as small gold dots
 -- that move along it in the walking direction; dots on segments already
 -- walked are muted.
+--
+-- Marked places are RXP ".goto ...,0" points ("He has 4 spawnpoints
+-- (marked on the map)"): places to look out for that the arrow never
+-- points at. Each is a larger gold disc with a dark rim.
 --
 -- Everything drawn is our own frames and textures. Blizzard's map is only
 -- read (canvas size and scale, map id) and its methods are followed with
@@ -19,8 +23,11 @@ local Nav = ns.Nav
 local AHEAD = { 1, 0.82, 0, 1 }         -- dots still to walk
 local WALKED = { 0.55, 0.47, 0.25, 1 }  -- dots already walked
 local UNDER = { 0.08, 0.06, 0.02, 0.7 } -- thin dark edge under each dot
+local MARK = { 1, 0.62, 0.1, 1 }        -- a marked place
+local MARK_RIM = { 0.08, 0.06, 0.02, 0.85 }
 -- Sizes in screen pixels; the dot texture fades over its outer fifth.
 local CORE, EDGE_SIZE = 2.5, 4.5 -- dot size, and of its dark edge
+local MARK_SIZE, MARK_RIM_SIZE = 9, 13 -- marked place, and its dark rim
 local SPACING = 6                -- from dot to dot along the route
 local SPEED = 8                  -- pixels per second along the route
 local DOT = "Interface\\AddOns\\ForeverGuide\\Textures\\RouteDot"
@@ -34,6 +41,7 @@ local INTERVAL = 0.03   -- seconds between redraws
 -- route[i] = point; segments go i -> i + 1, and last -> first on a loop.
 local route = {}
 local closed = false
+local marks = {} -- the shown steps' marked places
 
 local function rebuild()
     for i = #route, 1, -1 do
@@ -49,6 +57,14 @@ local function rebuild()
     if #route < 2 then
         for i = #route, 1, -1 do
             route[i] = nil
+        end
+    end
+    for i = #marks, 1, -1 do
+        marks[i] = nil
+    end
+    for _, p in ipairs(Engine.marks or {}) do
+        if Maps.Resolve(p) then
+            marks[#marks + 1] = p
         end
     end
 end
@@ -88,6 +104,8 @@ local function newPainter(parent)
         under = newPool(parent, "ARTWORK", 0),
         walked = newPool(parent, "OVERLAY", 0),
         ahead = newPool(parent, "OVERLAY", 2),
+        markRim = newPool(parent, "OVERLAY", 4),
+        mark = newPool(parent, "OVERLAY", 6),
     }
 end
 
@@ -138,6 +156,15 @@ local function trail(painter, anchor, point, path, unit, keep)
     end
 end
 
+-- Draws the marked places in `spots` (x, y offsets from `point` of
+-- `anchor`), sized like the trail by `unit`.
+local function markers(painter, anchor, point, spots, unit)
+    for _, s in ipairs(spots) do
+        dot(painter.markRim, MARK_RIM, MARK_RIM_SIZE * unit, anchor, point, s[1], s[2])
+        dot(painter.mark, MARK, MARK_SIZE * unit, anchor, point, s[1], s[2])
+    end
+end
+
 -- Repeats `draw` every INTERVAL while `frame` is shown, for the marching.
 local function animate(frame, draw)
     local since = 0
@@ -156,6 +183,7 @@ end
 local canvas, mapLayer, mapPainter
 local scratch = CreateVector2D and CreateVector2D(0, 0)
 local mapPath = {}
+local mapSpots = {}
 
 -- Where a point falls on a map, 0..1, or nil when it is not on it.
 local function onMap(p, mapID)
@@ -181,10 +209,19 @@ local function drawWorldMap()
     for i = #mapPath, 1, -1 do
         mapPath[i] = nil
     end
-    local mapID = WorldMapFrame:IsShown() and #route > 1 and WorldMapFrame:GetMapID()
+    for i = #mapSpots, 1, -1 do
+        mapSpots[i] = nil
+    end
+    local mapID = WorldMapFrame:IsShown() and (#route > 1 or #marks > 0) and WorldMapFrame:GetMapID()
     local info = mapID and C_Map.GetMapInfo(mapID)
     if info and info.mapType >= Enum.UIMapType.Continent then
         mapWidth, mapHeight = canvas:GetSize()
+        for _, p in ipairs(marks) do
+            local x, y = onMap(p, mapID)
+            if x and onCanvas(x * mapWidth, -y * mapHeight) then
+                mapSpots[#mapSpots + 1] = { x * mapWidth, -y * mapHeight }
+            end
+        end
         for i = 1, segments() do
             local b = segmentEnd(i)
             local ax, ay = onMap(route[i], mapID)
@@ -194,7 +231,7 @@ local function drawWorldMap()
             end
         end
     end
-    if #mapPath > 0 then
+    if #mapPath > 0 or #mapSpots > 0 then
         -- Above the explored-area art and fog, where ForeverQuests puts its
         -- dots; the game hands out pin levels as pins appear, so ask each
         -- time.
@@ -204,7 +241,9 @@ local function drawWorldMap()
         mapLayer:SetFrameLevel(ok and level or canvas:GetFrameLevel() + 1)
         -- The canvas is scaled with the zoom; keep sizes on screen.
         local scale = WorldMapFrame:GetCanvasScale()
-        trail(mapPainter, canvas, "TOPLEFT", mapPath, 1 / (scale > 0 and scale or 1), onCanvas)
+        local unit = 1 / (scale > 0 and scale or 1)
+        trail(mapPainter, canvas, "TOPLEFT", mapPath, unit, onCanvas)
+        markers(mapPainter, canvas, "TOPLEFT", mapSpots, unit)
     end
     finishPainter(mapPainter)
 end
@@ -227,6 +266,7 @@ end
 ---------------------------------------------------------------------------
 local miniLayer, miniPainter
 local miniPath = {}
+local miniSpots = {}
 local limit = 0 -- squared radius a dot must stay within
 local pinX, pinY -- the pin on the minimap, or nil
 
@@ -243,11 +283,14 @@ local function drawMinimap()
     for i = #miniPath, 1, -1 do
         miniPath[i] = nil
     end
+    for i = #miniSpots, 1, -1 do
+        miniSpots[i] = nil
+    end
     local inst, px, py = Maps.Player()
     local radius = C_Minimap.GetViewRadius()
     local rotates = GetCVarBool("rotateMinimap") and not C_Minimap.IsRotateMinimapIgnored()
     local facing = rotates and GetPlayerFacing() or nil
-    if #route > 1 and inst and radius and radius > 0 and (facing or not rotates) then
+    if (#route > 1 or #marks > 0) and inst and radius and radius > 0 and (facing or not rotates) then
         local half = Minimap:GetWidth() / 2
         local perYard = half / radius
         limit = (half * RIM) ^ 2
@@ -281,6 +324,17 @@ local function drawMinimap()
             end
         end
         trail(miniPainter, miniLayer, "CENTER", miniPath, 1, onMinimap)
+        -- Only marks inside the round frame; the arrow does the far ones.
+        local inside = (half * RIM - MARK_RIM_SIZE / 2) ^ 2
+        for _, p in ipairs(marks) do
+            if p.inst == inst then
+                local x, y = place(p)
+                if x * x + y * y <= inside then
+                    miniSpots[#miniSpots + 1] = { x, y }
+                end
+            end
+        end
+        markers(miniPainter, miniLayer, "CENTER", miniSpots, 1)
     end
     finishPainter(miniPainter)
 end

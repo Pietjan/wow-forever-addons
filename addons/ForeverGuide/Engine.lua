@@ -8,7 +8,8 @@
 --   * the first ordinary step with something left to do is the main step
 --     and ends the walk.
 -- The result is Engine.view (what the tracker draws), Engine.nav (where
--- the arrow and the map pin go) and Engine.quests (what to track).
+-- the arrow and the map pin go), Engine.marks (places only marked on the
+-- maps) and Engine.quests (what to track).
 local _, ns = ...
 
 local State = ns.State
@@ -1315,6 +1316,7 @@ local function emptyView(titleText, line)
     Engine.view.lead = Engine.view.blocks[1]
     Engine.shown = {}
     Engine.nav = nil
+    Engine.marks = {}
     Engine.quests = {}
     Engine.arrivals = {}
     Engine.pickups = {}
@@ -1509,6 +1511,9 @@ function refresh()
     -- main step, for what later steps need), so the list reads in the order
     -- things are done. `first` is the one "skip" goes by.
     local nav
+    -- Places the shown steps only mark (",0": look out here), drawn on the
+    -- maps; the arrow never goes to them.
+    local marks = {}
     local spot = standing()
     local inOrder = {}
     for _, index in ipairs(order) do
@@ -1571,6 +1576,11 @@ function refresh()
         if block then
             locate(block, step)
             view.blocks[#view.blocks + 1] = block
+            for _, p in ipairs(step.points or {}) do
+                if p.noArrow then
+                    marks[#marks + 1] = p
+                end
+            end
             if index == main and not view.lead then
                 view.lead = block
             end
@@ -1617,6 +1627,7 @@ function refresh()
     Engine.view = view
     Engine.shown = shown
     Engine.nav = nav
+    Engine.marks = marks
     Engine.quests = quests
     Engine.arrivals = arrivals
     Engine.pickups = lack
