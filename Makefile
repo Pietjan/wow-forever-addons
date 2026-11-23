@@ -44,6 +44,11 @@ no-unpushed:
 audit:
 	@python3 -I scripts/check-lua.py
 
+## test: run the offline Lua tests (ForeverData's API, on fixtures and its real data)
+.PHONY: test
+test:
+	@lua5.1 scripts/foreverdata-test.lua real
+
 # ==================================================================================== #
 # DEVELOPMENT
 # ==================================================================================== #
