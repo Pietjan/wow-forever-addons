@@ -79,6 +79,7 @@ local DEFAULTS = {
 }
 local DOT, DOT_GAP = 5, 2
 local WEAKENED_SOUL_SECONDS = 15
+local FORBEARANCE_SECONDS = 60 -- SpellMisc/SpellDuration for 25771, 1.60.1.71037
 local DOT_X, DOT_Y = 3, 3 -- in from the bar's side and up from its bottom (user: 3 and 3)
 local DISPEL_TYPES = { "Magic", "Curse", "Disease", "Poison", "Bleed" }
 
@@ -165,6 +166,7 @@ local COLOURS = {
 	renew = { 0.25, 0.88, 0.35 },
 	shield = { 1, 0.83, 0.29 },
 	weakened = { 0.88, 0.16, 0.16 },
+	forbearance = { 0.68, 0.3, 0.95 }, -- purple (user, 2026-11-23)
 	gone = { 0.35, 0.35, 0.35 },
 }
 
@@ -366,36 +368,55 @@ local function CreateAuras(btn)
 	})
 	auras.dots:SetPoint("BOTTOMRIGHT", btn.bar, "BOTTOMRIGHT", -DOT_X, DOT_Y)
 
+	-- The bottom-left dot is your class's: a priest's red Weakened Soul, a
+	-- paladin's purple Forbearance, none for the rest. Both are found as "a
+	-- short debuff you applied", which on other classes catches other
+	-- things: a hunter's own Dazed from Aspect of the Cheetah or the Pack
+	-- (15571, 4 s) lit it (user, 2026-11-23). PLAYER is you, your pet or
+	-- vehicle (warcraft.wiki.gg, C_UnitAuras.GetAuraDataByIndex).
+	local _, class = UnitClass("player")
 	auras.weakened = Container(btn.body, level)
 	auras.weakened:SetFlowLayoutAnchorPoint("BOTTOMLEFT")
-	-- Your Weakened Soul: a debuff you applied lasting at most 15 s, its
-	-- duration in this build (SpellMisc/SpellDuration, 1.60.1.71037). The
-	-- limit keeps your own long debuffs off it: Ghost (permanent; the
-	-- container's maxDuration drops permanent auras) lit it while you were
-	-- dead (user, 2026-11-22), Recently Bandaged lasts 60 s.
-	auras.weakened:AddAuraGroup("WeakenedSoul", "HARMFUL|PLAYER", {
-		maxFrameCount = 1,
-		initializeFrame = Dot(COLOURS.weakened),
-		candidateFilters = { maxDuration = WEAKENED_SOUL_SECONDS },
-		layout = DotLayout(),
-	})
-	-- Another priest's: not readable on a friend (see above), so their
-	-- shield stands in for it (user's choice): a Power Word: Shield not cast
-	-- by you means their Weakened Soul is almost surely up. Not exact: it
-	-- lasts 15 s, the shield up to 30 s or until broken. Both cannot show at
-	-- once: your Weakened Soul blocks their shield.
-	-- "Not cast by you" is the filter string's negation, "!PLAYER" (the
-	-- opposite of the Renew dot's "PLAYER"). The candidate filter
-	-- isFromPlayerOrPlayerPet = false was tried first and showed nothing for
-	-- another priest's shield (user, 2026-11-22): it most likely means cast
-	-- by any player, which every priest's shield is.
-	auras.weakened:AddAuraGroup("OthersShield", "HELPFUL|!PLAYER", {
-		maxFrameCount = 1,
-		initializeFrame = Dot(COLOURS.weakened),
-		candidateFilters = { includeSpellIDs = Set(SHIELD) },
-		layout = DotLayout(),
-	})
 	auras.weakened:SetPoint("BOTTOMLEFT", btn.bar, "BOTTOMLEFT", DOT_X, DOT_Y)
+	if class == "PALADIN" then
+		-- Your Forbearance: a debuff you applied lasting at most 60 s. Other
+		-- paladins' are not read (spell IDs are refused on friends).
+		auras.weakened:AddAuraGroup("Forbearance", "HARMFUL|PLAYER", {
+			maxFrameCount = 1,
+			initializeFrame = Dot(COLOURS.forbearance),
+			candidateFilters = { maxDuration = FORBEARANCE_SECONDS },
+			layout = DotLayout(),
+		})
+	end
+	if class == "PRIEST" then
+		-- Your Weakened Soul: a debuff you applied lasting at most 15 s, its
+		-- duration in this build (SpellMisc/SpellDuration, 1.60.1.71037). The
+		-- limit keeps your own long debuffs off it: Ghost (permanent; the
+		-- container's maxDuration drops permanent auras) lit it while you were
+		-- dead (user, 2026-11-22), Recently Bandaged lasts 60 s.
+		auras.weakened:AddAuraGroup("WeakenedSoul", "HARMFUL|PLAYER", {
+			maxFrameCount = 1,
+			initializeFrame = Dot(COLOURS.weakened),
+			candidateFilters = { maxDuration = WEAKENED_SOUL_SECONDS },
+			layout = DotLayout(),
+		})
+		-- Another priest's: not readable on a friend (see above), so their
+		-- shield stands in for it (user's choice): a Power Word: Shield not cast
+		-- by you means their Weakened Soul is almost surely up. Not exact: it
+		-- lasts 15 s, the shield up to 30 s or until broken. Both cannot show at
+		-- once: your Weakened Soul blocks their shield.
+		-- "Not cast by you" is the filter string's negation, "!PLAYER" (the
+		-- opposite of the Renew dot's "PLAYER"). The candidate filter
+		-- isFromPlayerOrPlayerPet = false was tried first and showed nothing for
+		-- another priest's shield (user, 2026-11-22): it means applied by any
+		-- player (warcraft.wiki.gg), which every priest's shield is.
+		auras.weakened:AddAuraGroup("OthersShield", "HELPFUL|!PLAYER", {
+			maxFrameCount = 1,
+			initializeFrame = Dot(COLOURS.weakened),
+			candidateFilters = { includeSpellIDs = Set(SHIELD) },
+			layout = DotLayout(),
+		})
+	end
 
 	-- The big defensive: one icon in the middle of the bar, on top of
 	-- everything (the user's wish for the centre icon), Blizzard's own pick
@@ -1450,8 +1471,11 @@ function ns.PaintPreview(parent, data)
 		pcall(Glow, holder)
 		frame.big = holder
 	end
-	if data.weakened then
-		PaintedDot(frame, COLOURS.weakened, DOT_X, DOT_Y, "BOTTOMLEFT")
+	-- The bottom-left dot as your class shows it (CreateAuras).
+	local _, class = UnitClass("player")
+	local mark = class == "PRIEST" and COLOURS.weakened or class == "PALADIN" and COLOURS.forbearance
+	if data.weakened and mark then
+		PaintedDot(frame, mark, DOT_X, DOT_Y, "BOTTOMLEFT")
 	end
 	for i, dispelType in ipairs(data.dispel or {}) do
 		local icon = frame.top:CreateTexture(nil, "OVERLAY")
