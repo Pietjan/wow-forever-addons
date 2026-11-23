@@ -3,7 +3,7 @@
 ## Notes: Shows an icon, and pings, while a buff you chose is missing on you or your party. Configured from a tab in the Cooldown Manager's settings. /bn
 ## Author: Pietjan
 ## OptionalDeps: ForeverSnap
-## Version: 2.1
+## Version: 2.2
 ## SavedVariables: BuffNagDB
 ## SavedVariablesPerCharacter: BuffNagCharDB
 
