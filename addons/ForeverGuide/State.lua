@@ -241,6 +241,22 @@ local function coveringRanks(id)
                 petRanks[pair[1]], petRanks[pair[2]] = covering, covering
             end
         end
+        -- Professions: training a higher rank replaces the lower spell
+        -- (IsPlayerSpell(2550) is false once Journeyman Cooking is known),
+        -- so any spell of that rank or a higher one covers it.
+        for _, ranks in ipairs(ns.PROFESSION_RANKS) do
+            for rank, spells in ipairs(ranks) do
+                local covering = {}
+                for higher = rank, #ranks do
+                    for _, spell in ipairs(ranks[higher]) do
+                        covering[#covering + 1] = spell
+                    end
+                end
+                for _, spell in ipairs(spells) do
+                    petRanks[spell] = covering
+                end
+            end
+        end
     end
     return petRanks[id]
 end

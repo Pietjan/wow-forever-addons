@@ -11,6 +11,7 @@ Core.lua
 Text.lua
 Maps.lua
 PetRanks.lua
+ProfessionRanks.lua
 State.lua
 ParserRXP.lua
 ParserWoWPro.lua
