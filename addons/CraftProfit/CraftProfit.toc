@@ -1,8 +1,8 @@
 ## Interface: 16001
 ## Title: CraftProfit
-## Notes: A list of what your characters can craft, best profit first, from Auctionator's scanned prices: what the item sells for after the auction house's cut, less what the materials cost at the auction house or a vendor. Each character's recipes are read when it opens a profession window. Click recipes to plan crafts; the Materials pane lists what to buy, with what you own counted, and makes an Auctionator shopping list. /profit
+## Notes: A list of what your characters can craft, best profit first, from Auctionator's scanned prices: what the item sells for after the auction house's cut, less what the materials cost at the auction house or a vendor. Each character's recipes are read when it opens a profession window. Click recipes to plan crafts; the Materials pane lists what to buy, with what you own counted, and makes an Auctionator shopping list. /profit. /farm lists raw goods worth farming to sell, with price and supply trends.
 ## Author: Pietjan
-## Version: 1.2
+## Version: 1.3
 ## Dependencies: Auctionator
 ## OptionalDeps: Syndicator, ForeverSnap
 ## SavedVariables: CraftProfitDB
@@ -11,3 +11,4 @@ Data.lua
 Core.lua
 Window.lua
 Plan.lua
+Farm.lua

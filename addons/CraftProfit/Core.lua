@@ -258,6 +258,8 @@ local function History(id)
 	return ok and type(days) == "table" and days or nil
 end
 
+ns.History = History
+
 local function Median(values)
 	if #values == 0 then
 		return nil
@@ -266,6 +268,7 @@ local function Median(values)
 	local middle = (#values + 1) / 2
 	return (values[math.floor(middle)] + values[math.ceil(middle)]) / 2
 end
+ns.Median = Median
 
 function ns.Market(id)
 	local known = market and market[id]
