@@ -7,7 +7,8 @@
 -- window (Escape > Options > Cooldown Manager, or /bn): the buffs on offer
 -- are the ones the game lists for your class there, the group buffs it
 -- knows, a food buff, a flask, elixirs, scrolls and weapon enchants (the
--- last four only when a fitting item is in the bags), a hunter's pet, and
+-- last four only when a fitting item is in the bags), a hunter's pet, a
+-- warlock's soulstone (one on anyone in the group is enough), and
 -- the minimap's tracking when none is on. Buffs are matched by name,
 -- so any rank counts. The bar hides in combat, while resting, mounted, on a
 -- flight path or dead.
@@ -82,6 +83,22 @@ local FEED_PET, FEED_PET_EFFECT, PET_HAPPY = 6991, 1539, 3 -- happiness: 1 Unhap
 -- 54), so a weapon can carry an imbue and a sharpening stone at once:
 -- the imbue gets its own entry, apart from the weapon enchants.
 local IMBUES = { 8232, 8024, 8033, 8017 } -- Windfury, Flametongue, Frostbrand, Rockbiter
+
+-- A warlock's soulstone, from the game's data (build 1.60.1.71037): each
+-- Create Soulstone rank makes an item, and using the item on someone puts
+-- Soulstone Resurrection on them. The five items share one 30-minute
+-- cooldown (category 831). One stone in the group is enough, whoever cast
+-- it: with two warlocks in the group the second is not nagged.
+local SOULSTONES = { -- strongest first: { Create Soulstone rank, the item it makes }
+	{ 20757, 16896 }, -- Major
+	{ 20756, 16895 }, -- Greater
+	{ 20755, 16893 }, -- Soulstone
+	{ 20752, 16892 }, -- Lesser
+	{ 693, 5232 }, -- Minor
+}
+local SOULSTONE_AURAS = { 20707, 20762, 20763, 20764, 20765 } -- Soulstone Resurrection, one per item
+local SOULSTONE_RANGE = 30 -- yards, the item's range
+local HEALER_CLASSES = { PRIEST = 1, DRUID = 2, SHAMAN = 3, PALADIN = 4 } -- who gets the stone, without a healer role set
 
 -- Items that put a temporary enchant on a weapon, from the game's data,
 -- with the weapon subclasses each fits as a bit mask (0: any weapon).
@@ -591,6 +608,26 @@ local function BuildCatalog()
 			auraNames = {}, castNames = {}, party = false, unlessNames = chewing, seedDefault = true, feedSpell = feedPet,
 		})
 	end
+	-- A warlock's soulstone on someone in the group: there once Create
+	-- Soulstone is known. Watched on the party by default: the stone is for
+	-- whoever needs it most, not only for you.
+	for _, stone in ipairs(SOULSTONES) do
+		local name = SpellName(stone[1])
+		if name and knownSpells[name] then
+			local auraNames = {}
+			for _, id in ipairs(SOULSTONE_AURAS) do
+				local auraName = SpellName(id)
+				if auraName then
+					auraNames[auraName] = true
+				end
+			end
+			AddEntry({
+				key = "soulstone", name = SpellName(SOULSTONE_AURAS[1]) or "Soulstone", icon = SpellIcon(stone[1]), kind = "soulstone", source = "extra",
+				auraNames = auraNames, castNames = {}, party = true, unlessNames = {}, seedDefault = true,
+			})
+			break
+		end
+	end
 	-- Tracking on the minimap: there once the character has a tracking spell.
 	local tracking = TrackingSpells()
 	if #tracking > 0 then
@@ -612,7 +649,7 @@ local function SeedChoices()
 			-- Seeded by an earlier version: count everything it had as
 			-- offered, except the entries added since.
 			for _, key in ipairs(catalogOrder) do
-				if key ~= "flask" and key ~= "elixir" and key ~= "pet" and key ~= "scroll" and key ~= "tracking" and key ~= "imbue" then
+				if key ~= "flask" and key ~= "elixir" and key ~= "pet" and key ~= "scroll" and key ~= "tracking" and key ~= "imbue" and key ~= "soulstone" then
 					cdb.offered[key] = true
 				end
 			end
@@ -1127,6 +1164,118 @@ local function ScrollCandidates(entry)
 	return FamilyCandidates(entry, SCROLLS, SCROLL_FAMILY_NAMES, SCROLL_BLOCKER_NAMES, "read")
 end
 
+-- The group to look at for a buff one member's worth is enough for: the
+-- raid in a raid, else the party, or only you when the party is not
+-- watched.
+local function GroupUnits(party)
+	if not party then
+		return { "player" }
+	end
+	if IsInRaid and IsInRaid() then
+		local units = {}
+		local count = GetNumGroupMembers and GetNumGroupMembers() or 0
+		for i = 1, (type(count) == "number" and not IsSecret(count)) and count or 0 do
+			units[#units + 1] = "raid" .. i
+		end
+		return #units > 0 and units or { "player" }
+	end
+	return PARTY_UNITS
+end
+
+-- Seconds left on an item's cooldown, 0 when ready or when the game will
+-- not say. The global cooldown (1.5 s or less) does not count.
+local function ItemCooldownLeft(itemID)
+	local getCooldown = (C_Container and C_Container.GetItemCooldown) or GetItemCooldown
+	if not getCooldown then
+		return 0
+	end
+	local ok, start, duration = pcall(getCooldown, itemID)
+	if not ok or IsSecret(start) or IsSecret(duration) or type(start) ~= "number" or type(duration) ~= "number" then
+		return 0
+	end
+	if start <= 0 or duration <= 1.5 then
+		return 0
+	end
+	return math.max(0, start + duration - GetTime())
+end
+
+-- Who the soulstone goes on: a member with the healer role, else a
+-- healing class, else you. Only those alive, online and within the
+-- item's reach.
+local function SoulstoneTarget(units)
+	local best, bestRank
+	for _, unit in ipairs(units) do
+		if UnitUsable(unit) and UnitNear(unit, nil, SOULSTONE_RANGE) then
+			local rank
+			local role = UnitGroupRolesAssigned and Ask(UnitGroupRolesAssigned, unit)
+			if role == "HEALER" then
+				rank = 0
+			else
+				local _, class = Ask(UnitClass, unit)
+				rank = (class and HEALER_CLASSES[class]) or (UnitIsUnit("player", unit) and 9) or nil
+			end
+			if rank and (not bestRank or rank < bestRank) then
+				best, bestRank = unit, rank
+			end
+		end
+	end
+	return best or "player"
+end
+
+-- No soulstone on anyone in the group (or the only one running out): the
+-- stone in the bags to put on someone, or Create Soulstone when there is
+-- none. Anyone's soulstone counts, so of two warlocks only one has to
+-- give one. While the stone's cooldown runs there is nothing to do.
+local function SoulstoneCandidates(entry, choice)
+	entry.expiring = false
+	local units = GroupUnits(choice.party and db.party)
+	local anyExpiring = false
+	for _, unit in ipairs(units) do
+		local exists = unit == "player" or Ask(UnitExists, unit)
+		if exists then
+			local has, present, endTime, duration = UnitHas(unit, entry.auraNames, true)
+			if has then
+				return {}
+			elseif present then
+				anyExpiring = true
+				NoteEnd(entry, endTime, duration)
+			end
+		end
+	end
+	entry.expiring = anyExpiring
+	local inBags = {}
+	EachBagItem(function(itemID)
+		inBags[itemID] = true
+	end)
+	local createName
+	for _, stone in ipairs(SOULSTONES) do
+		local spell, item = stone[1], stone[2]
+		if ItemCooldownLeft(item) > 0 then
+			return {}
+		end
+		if inBags[item] then
+			local target = SoulstoneTarget(units)
+			local icon, name = ItemLook(item)
+			return { { kind = "item", value = item, icon = icon, text = name, target = target,
+				state = anyExpiring and "Soulstone running out" or "No soulstone on anyone" } }
+		end
+		local name = SpellName(spell)
+		if not createName and name and knownSpells[name] then
+			createName = { name = name, icon = SpellIcon(spell) }
+		end
+	end
+	if createName then
+		-- Not usable without being short of mana: no Soul Shard. Shown
+		-- greyed and quiet, like a spell there is no mana for.
+		local okUsable, usable, short = pcall(C_Spell.IsSpellUsable, createName.name)
+		local noShard = okUsable and not IsSecret(usable) and not IsSecret(short) and usable == false and short == false
+		local state = anyExpiring and "Soulstone running out, none in the bags" or "No soulstone on anyone, none in the bags"
+		return { { kind = "spell", value = createName.name, icon = createName.icon, text = createName.name,
+			state = noShard and (state .. ", no Soul Shard") or state, quiet = noShard } }
+	end
+	return {}
+end
+
 -- The candidate to act on: the one the player picked for this entry by
 -- right-clicking, when it is at hand, otherwise the first.
 local function Pick(entry, list)
@@ -1440,7 +1589,7 @@ local function IconTooltip(button)
 	GameTooltip:SetOwner(button, "ANCHOR_BOTTOM")
 	GameTooltip:SetText(button.entry.name)
 	if button.missingText then
-		local prefix = (button.entry.kind == "pet" or button.entry.kind == "tracking") and "" or "Missing: "
+		local prefix = (button.entry.kind == "pet" or button.entry.kind == "tracking" or button.entry.kind == "soulstone") and "" or "Missing: "
 		GameTooltip:AddLine(prefix .. button.missingText, 1, 1, 1, true)
 	end
 	if button.applyText then
@@ -1518,7 +1667,7 @@ end
 local function Missing(entry, choice)
 	local missing = {}
 	entry.endsAt, entry.endDuration = nil, nil
-	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "scroll" or entry.kind == "food" or entry.kind == "pet" or entry.kind == "tracking" or entry.kind == "weapon" or entry.kind == "offhand" or entry.kind == "imbue" then
+	if entry.kind == "flask" or entry.kind == "elixir" or entry.kind == "scroll" or entry.kind == "food" or entry.kind == "pet" or entry.kind == "tracking" or entry.kind == "weapon" or entry.kind == "offhand" or entry.kind == "imbue" or entry.kind == "soulstone" then
 		local list
 		if entry.kind == "tracking" then
 			list = TrackingCandidates(entry)
@@ -1532,6 +1681,8 @@ local function Missing(entry, choice)
 			list = FoodCandidates(entry)
 		elseif entry.kind == "pet" then
 			list = PetCandidates(entry)
+		elseif entry.kind == "soulstone" then
+			list = SoulstoneCandidates(entry, choice)
 		else
 			local slot = entry.kind == "offhand" and OFF_HAND or MAIN_HAND
 			local imbue = entry.kind == "imbue"
@@ -1549,7 +1700,7 @@ local function Missing(entry, choice)
 					labels[i] = candidate.text
 				end
 				entry.fix.count, entry.fix.list = #list, table.concat(labels, ", ")
-			elseif entry.kind == "pet" or entry.kind == "tracking" then
+			elseif entry.kind == "pet" or entry.kind == "tracking" or entry.kind == "soulstone" then
 				entry.fix.count, entry.fix.list = 1, entry.fix.state
 			else
 				entry.fix.count, entry.fix.list = 1, entry.fix.text
@@ -1623,7 +1774,7 @@ function Refresh()
 			if #missing > 0 then
 				count = count + 1
 				local fixKind = entry.fix and entry.fix.kind
-				local short = not previewing and (fixKind == "cast" or fixKind == "spell") and CannotAfford(entry.fix.value)
+				local short = not previewing and (((fixKind == "cast" or fixKind == "spell") and CannotAfford(entry.fix.value)) or (entry.fix and entry.fix.quiet) or false)
 				if not entry.expiring and not short then
 					anyMissing = true
 				end
@@ -1669,6 +1820,9 @@ function Refresh()
 					elseif entry.fix.feed then
 						button:SetAttribute("macrotext", ("/cast %s\n/use item:%d"):format(entry.fix.feed, entry.fix.value))
 						button.applyText = "Click to feed it " .. entry.fix.text .. "."
+					elseif entry.fix.target then
+						button:SetAttribute("macrotext", ("/use [@%s] item:%d"):format(entry.fix.target, entry.fix.value))
+						button.applyText = ("Click to put %s on %s."):format(entry.fix.text, ShortName(entry.fix.target))
 					else
 						-- [@player]: a scroll otherwise goes on a friendly target
 						button:SetAttribute("macrotext", ("/use [@player] item:%d"):format(entry.fix.value))
