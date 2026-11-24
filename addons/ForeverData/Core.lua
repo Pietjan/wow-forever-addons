@@ -20,6 +20,7 @@ local METHOD = { d = "drop", k = "skinning", p = "pickpocketing", c = "contained
 -- How a chance is known: counted in Forever, counted in Classic Era, a
 -- percentage wowhead shows, CMaNGOS's Classic table, or only seen dropping.
 local BASIS = { f = "forever", e = "classicEra", s = "shown", c = "classic", v = "seen" }
+local REACTION = { h = "hostile", n = "neutral", f = "friendly" }
 
 -- split cuts s at each sep (plain), keeping empty fields.
 local function split(s, sep)
@@ -86,9 +87,10 @@ local npc = cached(function(id)
 		return nil
 	end
 	local f = split(s, "|")
+	local reaction = f[6] or ""
 	return {
 		id = id, name = f[1], title = text(f[2]), minLevel = number(f[3]), maxLevel = number(f[4]),
-		rank = number(f[5]), reacts = text(f[6]),
+		rank = number(f[5]), alliance = REACTION[string.sub(reaction, 1, 1)], horde = REACTION[string.sub(reaction, 2, 2)],
 	}
 end)
 
@@ -205,9 +207,10 @@ end
 -- items (not available to players by wowhead).
 function FD.Item(id) return item(id) end
 
--- {id, name, title, minLevel, maxLevel, rank, reacts}: rank 0 normal,
--- 1 elite, 2 rare elite, 3 boss, 4 rare; reacts "A", "H" or "AH" when
--- friendly, nil when hostile to both.
+-- {id, name, title, minLevel, maxLevel, rank, alliance, horde}: rank 0
+-- normal, 1 elite, 2 rare elite, 3 boss, 4 rare; alliance and horde how
+-- it takes that side's players, "hostile", "neutral" (you can attack it, it
+-- does not attack you) or "friendly", from its faction; nil when unknown.
 function FD.Npc(id) return npc(id) end
 
 -- {id, name, type}: type 3 chest (veins and herbs too), 25 fishing hole.
@@ -294,28 +297,216 @@ local function names(kind)
 	return list
 end
 
--- Things whose name holds the text, any case: rows {kind, id, name}, names
--- that start with the text first, then shorter names. kinds limits the
--- search ({"item", "npc"}); limit caps the rows (default 50).
-function FD.Search(text, limit, kinds)
-	if type(text) ~= "string" or text == "" then
-		return EMPTY
-	end
-	local needle = string.lower(text)
-	local found = {}
-	for _, kind in ipairs(kinds or SEARCHED) do
-		if SOURCE[kind] then
+-- Fuzzy search, as a command palette ranks: each word typed must match
+-- the name somehow, and the name scores by how well each did:
+--   100  the name starts with it          "turtle" Turtle Scale
+--    85  a word of the name starts with it "scale"  Turtle Scale
+--    60  it is inside the name            "urtl"
+--    45  a word of the name is one typo away (4 letters or more) "tutrle"
+--  30-40 its letters are in the name in order (3 letters or more) "trtl",
+--        the closer together the better
+-- Within a score, shorter names first. The search is staged: first only
+-- the plain tiers (100, 85, 60); typos and letters in order only when that
+-- finds fewer than asked for. Typos are found against the distinct words
+-- of all names, not every name.
+
+-- wordsBy collects the distinct words of all names searched, by first
+-- letter, on first use.
+local wordsByFirst
+local function wordsBy(letter)
+	if not wordsByFirst then
+		local seen = {}
+		wordsByFirst = {}
+		for _, kind in ipairs(SEARCHED) do
 			for _, entry in ipairs(names(kind)) do
-				local at = string.find(entry[2], needle, 1, true)
-				if at then
-					found[#found + 1] = { kind = kind, id = entry[1], name = entry[3], prefix = at == 1 }
+				for word in string.gmatch(entry[2], "[%w']+") do
+					if not seen[word] and #word >= 3 then
+						seen[word] = true
+						local first = string.sub(word, 1, 1)
+						wordsByFirst[first] = wordsByFirst[first] or {}
+						table.insert(wordsByFirst[first], word)
+					end
 				end
 			end
 		end
 	end
+	return wordsByFirst[letter] or EMPTY
+end
+
+-- oneEdit tells whether a and b differ by at most one insertion, deletion,
+-- change, or swap of two neighbouring letters.
+local function oneEdit(a, b)
+	local la, lb = #a, #b
+	if math.abs(la - lb) > 1 then
+		return false
+	end
+	if la == lb then
+		local first
+		for i = 1, la do
+			if string.byte(a, i) ~= string.byte(b, i) then
+				first = i
+				break
+			end
+		end
+		if not first then
+			return true
+		end
+		-- one change, or a swap of first and first + 1
+		if string.sub(a, first + 1) == string.sub(b, first + 1) then
+			return true
+		end
+		return string.sub(a, first, first) == string.sub(b, first + 1, first + 1)
+			and string.sub(a, first + 1, first + 1) == string.sub(b, first, first)
+			and string.sub(a, first + 2) == string.sub(b, first + 2)
+	end
+	if la < lb then
+		a, b, la, lb = b, a, lb, la
+	end
+	-- a is one longer: drop one of its letters
+	for i = 1, la do
+		if string.byte(a, i) ~= string.byte(b, i) then
+			return string.sub(a, i + 1) == string.sub(b, i)
+		end
+	end
+	return true
+end
+
+-- term prepares a typed word for the plain tiers; fuzzy adds what the
+-- fuzzy tiers need (its letters-in-order pattern, its typo words), when
+-- they are needed.
+local function term(token)
+	return { text = token }
+end
+
+local typoCache = setmetatable({}, { __mode = "k" })
+
+local function fuzzy(t)
+	if t.fuzzy then
+		return
+	end
+	t.fuzzy = true
+	local token = t.text
+	if #token >= 3 then
+		local parts = {}
+		for i = 1, #token do
+			parts[i] = (string.gsub(string.sub(token, i, i), "(%W)", "%%%1"))
+		end
+		t.pattern = table.concat(parts, ".-")
+	end
+	if #token >= 4 then
+		t.typos = typoCache[token]
+		if not t.typos then
+			-- A typo in both of the first two letters is rare: the words to
+			-- try start with the first or the second letter (a swap).
+			t.typos = {}
+			local first, second = string.sub(token, 1, 1), string.sub(token, 2, 2)
+			for _, letter in ipairs(first == second and { first } or { first, second }) do
+				for _, word in ipairs(wordsBy(letter)) do
+					if word ~= token and oneEdit(word, token) then
+						t.typos[#t.typos + 1] = word
+					end
+				end
+			end
+			typoCache[token] = t.typos
+		end
+	end
+end
+
+local function scoreTerm(name, t, allowFuzzy)
+	local at = string.find(name, t.text, 1, true)
+	if at == 1 then
+		return 100
+	end
+	if at then
+		local before = string.sub(name, at - 1, at - 1)
+		if string.find(before, "[^%w']") then
+			return 85
+		end
+		return 60
+	end
+	if not allowFuzzy then
+		return nil
+	end
+	if t.typos then
+		for _, word in ipairs(t.typos) do
+			local w = string.find(name, word, 1, true)
+			if w then
+				local before, after = string.sub(name, w - 1, w - 1), string.sub(name, w + #word, w + #word)
+				if not string.find(before, "[%w']") and not string.find(after, "[%w']") then
+					return 45
+				end
+			end
+		end
+	end
+	if t.pattern then
+		local first, last = string.find(name, t.pattern)
+		if first then
+			return 30 + math.max(0, 10 - (last - first + 1 - #t.text))
+		end
+	end
+	return nil
+end
+
+-- Things whose name matches the text, best first: rows {kind, id, name}.
+-- kinds limits the search ({"item", "npc"}); limit caps the rows (default
+-- 50). A whole search takes up to a few tens of milliseconds; to keep the
+-- game smooth, call it in a coroutine with options {yieldEvery = n}: it
+-- yields after every n names, and the caller resumes it a frame later.
+function FD.Search(text, limit, kinds, options)
+	local yieldEvery = options and options.yieldEvery
+	local seen = 0
+	if type(text) ~= "string" then
+		return EMPTY
+	end
+	local terms = {}
+	for token in string.gmatch(string.lower(text), "%S+") do
+		terms[#terms + 1] = term(token)
+	end
+	if #terms == 0 then
+		return EMPTY
+	end
+	local found, matched = {}, {}
+	local want = limit or 50
+	-- pass scores every name the plain tiers (or, when fuzzy, all tiers) match.
+	local function pass(allowFuzzy)
+		for _, kind in ipairs(kinds or SEARCHED) do
+			if SOURCE[kind] then
+				for _, entry in ipairs(names(kind)) do
+					if yieldEvery then
+						seen = seen + 1
+						if seen % yieldEvery == 0 then
+							coroutine.yield()
+						end
+					end
+					if not matched[entry] then
+						local total = 0
+						for _, t in ipairs(terms) do
+							local s = scoreTerm(entry[2], t, allowFuzzy)
+							if not s then
+								total = nil
+								break
+							end
+							total = total + s
+						end
+						if total then
+							matched[entry] = true
+							found[#found + 1] = { kind = kind, id = entry[1], name = entry[3], score = total }
+						end
+					end
+				end
+			end
+		end
+	end
+	pass(false)
+	if #found < want then
+		for _, t in ipairs(terms) do
+			fuzzy(t)
+		end
+		pass(true)
+	end
 	table.sort(found, function(a, b)
-		if a.prefix ~= b.prefix then
-			return a.prefix
+		if a.score ~= b.score then
+			return a.score > b.score
 		end
 		if #a.name ~= #b.name then
 			return #a.name < #b.name
@@ -326,7 +517,7 @@ function FD.Search(text, limit, kinds)
 		return a.id < b.id
 	end)
 	local out = {}
-	for i = 1, math.min(#found, limit or 50) do
+	for i = 1, math.min(#found, want) do
 		local f = found[i]
 		out[i] = { kind = f.kind, id = f.id, name = f.name }
 	end

@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="FOREVERSEARCH_TOGGLE" header="FOREVERSEARCH" category="ADDONS">
+		ForeverSearch_Toggle()
+	</Binding>
+</Bindings>

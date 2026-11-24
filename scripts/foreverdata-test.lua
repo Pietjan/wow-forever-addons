@@ -25,7 +25,7 @@ local function fixture()
 	local ns = {
 		meta = { contract = 1, sources = { client = "1.60.1.71037" } },
 		items = { [8167] = "Turtle Scale|1|7|6|39|0|1", [288824] = "Arcanist Leggings|||||||0", [2589] = "Linen Cloth|1|7|5|5|0|1" },
-		npcs = { [2505] = "Saltwater Snapjaw||49|50|0|", [54] = "Corina Steele|Weaponsmith|10|10|0|A" },
+		npcs = { [2505] = "Saltwater Snapjaw||49|50|0|nn", [54] = "Corina Steele|Weaponsmith|10|10|0|fh", [1] = "No Faction|||||--" },
 		objects = { [1731] = "Copper Vein|3" },
 		quests = { [17] = "|42|||0", [92479] = "A Scribbled Letter|1|1|1" },
 		zones = { [47] = "The Hinterlands|", [2257] = "Deeprun Tram|" },
@@ -50,8 +50,9 @@ check("item not available", FD.Item(288824).available == false and FD.Item(28882
 check("item cached", FD.Item(8167) == it)
 check("unknown item", FD.Item(1) == nil)
 local n = FD.Npc(54)
-check("npc", n.name == "Corina Steele" and n.title == "Weaponsmith" and n.reacts == "A" and n.rank == 0)
-check("hostile npc", FD.Npc(2505).reacts == nil and FD.Npc(2505).title == nil)
+check("npc", n.name == "Corina Steele" and n.title == "Weaponsmith" and n.alliance == "friendly" and n.horde == "hostile" and n.rank == 0)
+check("neutral npc", FD.Npc(2505).alliance == "neutral" and FD.Npc(2505).horde == "neutral" and FD.Npc(2505).title == nil)
+check("npc without a faction", FD.Npc(1).alliance == nil and FD.Npc(1).horde == nil)
 check("quest without a name", FD.Quest(17).name == nil and FD.Quest(17).level == 42 and FD.Quest(17).new == false)
 check("new quest", FD.Quest(92479).new)
 local loot = FD.Loot("npc", 2505)
@@ -75,6 +76,14 @@ check("search any case", #hits == 1 and hits[1].name == "Linen Cloth")
 hits = FD.Search("e", 3)
 check("search limit", #hits == 3)
 check("search prefix first", FD.Search("s")[1].name:sub(1, 1):lower() == "s")
+check("search: a typo", FD.Search("tutrle")[1] and FD.Search("tutrle")[1].name == "Turtle Scale")
+check("search: letters in order", FD.Search("trtl scl")[1] and FD.Search("trtl scl")[1].name == "Turtle Scale")
+check("search: every word must match", #FD.Search("turtle cloth") == 0 and #FD.Search("lnen clth") == 1)
+check("search: a word start beats the inside", (function()
+	local r = FD.Search("scal")
+	return r[1] and r[1].name == "Turtle Scale"
+end)())
+check("search: a prefix beats a word start", FD.Search("salt")[1].name == "Saltwater Snapjaw" and FD.Search("snap")[1].name == "Saltwater Snapjaw")
 check("search by kind", #FD.Search("copper", nil, { "npc" }) == 0 and #FD.Search("copper", nil, { "object" }) == 1)
 
 if arg[1] == "real" then
@@ -101,6 +110,20 @@ if arg[1] == "real" then
 	FD.Search("turtle")
 	print(string.format("next search: %.3f s", os.clock() - start))
 	check("real spawns", #FD.Spawns("npc", 2505) > 10)
+	-- In steps, as ForeverSearch runs it: the same answer, in many steps.
+	local steps = 0
+	local co = coroutine.create(function() return FD.Search("tutrle scale", 20, nil, { yieldEvery = 3000 }) end)
+	local ok, stepped
+	repeat
+		ok, stepped = coroutine.resume(co)
+		steps = steps + 1
+	until coroutine.status(co) == "dead"
+	local whole = FD.Search("tutrle scale", 20)
+	local same = ok and #stepped == #whole
+	for i = 1, #whole do
+		same = same and stepped[i].id == whole[i].id and stepped[i].kind == whole[i].kind
+	end
+	check("real search in steps", same and steps > 10, steps)
 end
 
 if failures > 0 then
