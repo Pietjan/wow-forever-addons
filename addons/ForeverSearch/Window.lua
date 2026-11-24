@@ -3,7 +3,8 @@
 -- details in a panel beside them. /find [text] or the key bound under
 -- Key Bindings > AddOns opens it, Escape closes it.
 --
---   typing        searches as you type
+--   typing        searches as you type; words narrow it: item: npc: object:
+--                 quest: zone:, q:rare (quality), lvl:40-50, in:hinterlands
 --   Up, Down      choose a find (its details show beside the list)
 --   Enter         closes, keeping the text for next time
 --   Shift-Enter   or Shift-click: links the chosen item in chat
@@ -35,7 +36,7 @@ local finds, offset, chosen = {}, 0, 1
 -- starting a moment after the last key, so typing stays smooth.
 local PAUSE = 0.1      -- seconds after the last key
 local BUDGET = 6       -- milliseconds of searching a frame
-local STEP = 3000      -- names a step
+local STEP = 500       -- names a step (each may be decoded for a filter)
 local job, startAt, jobText
 local driver = CreateFrame("Frame")
 driver:Hide()
@@ -249,7 +250,7 @@ local function MakeBar()
 	box:SetAutoFocus(false)
 	box.hint = box:CreateFontString(nil, "ARTWORK", "GameFontDisableLarge")
 	box.hint:SetPoint("LEFT")
-	box.hint:SetText("Items, creatures, objects, quests, zones")
+	box.hint:SetText("Items, creatures, objects, quests, zones   (item: q:rare lvl:40-50 in:barrens)")
 	box:SetScript("OnTextChanged", function(_, typed)
 		if typed then
 			Search()

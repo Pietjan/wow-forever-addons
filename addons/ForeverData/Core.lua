@@ -447,11 +447,141 @@ local function scoreTerm(name, t, allowFuzzy)
 	return nil
 end
 
+-- Filters ---------------------------------------------------------------------
+
+-- Which kinds each ready-made filter applies to; set, it limits the search
+-- to them.
+local FILTER_KINDS = {
+	quality = { item = true },
+	level = { item = true, npc = true, quest = true },
+	zone = { npc = true, object = true, item = true },
+}
+
+-- standsIn tells whether a creature (code n) or object (o) stands in one
+-- of the zones. The packed spots name their zones ("47:...;12:..."): look
+-- there rather than decode every point.
+local function standsIn(code, id, zones)
+	local packed = ns.spawns and ns.spawns[code] and ns.spawns[code][id]
+	if not packed then
+		return false
+	end
+	packed = ";" .. packed
+	for _, zoneID in ipairs(zones) do
+		if string.find(packed, ";" .. zoneID .. ":", 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+-- givenIn tells whether something in one of the zones gives the item: a
+-- creature or object standing there, or fishing there. Reads the drop
+-- index ("n9028,o1731,a47"), decoding no loot.
+local function givenIn(itemID, zones)
+	local refs = ns.drops and ns.drops[itemID]
+	if not refs then
+		return false
+	end
+	for ref in string.gmatch(refs, "[^,]+") do
+		local code, id = string.sub(ref, 1, 1), tonumber(string.sub(ref, 2))
+		if code == "a" then
+			for _, zoneID in ipairs(zones) do
+				if id == zoneID then
+					return true
+				end
+			end
+		elseif (code == "n" or code == "o") and standsIn(code, id, zones) then
+			return true
+		end
+	end
+	return false
+end
+
+-- accepter builds the test a match must pass from the options: filter
+-- (function(kind, id) returning true to keep), quality (items of at least
+-- this quality), level ({min, max}: items by required level, creatures by
+-- their level range, quests by level), zone (an area ID or a list:
+-- creatures and objects that stand there, items something there gives). Returns nil without filters, and the kinds
+-- the filters allow.
+local function accepter(options)
+	if not options then
+		return nil, nil
+	end
+	local allowed
+	for key, kindsOf in pairs(FILTER_KINDS) do
+		if options[key] ~= nil then
+			local next = {}
+			for kind in pairs(kindsOf) do
+				if not allowed or allowed[kind] then
+					next[kind] = true
+				end
+			end
+			allowed = next
+		end
+	end
+	if not allowed and not options.filter then
+		return nil, nil
+	end
+	local quality, level, custom = options.quality, options.level, options.filter
+	local zones = options.zone
+	if type(zones) == "number" then
+		zones = { zones }
+	end
+	local lo, hi = level and level[1] or 0, level and (level[2] or level[1]) or math.huge
+	return function(kind, id)
+		if quality then
+			local it = item(id)
+			if not it or (it.quality or -1) < quality then
+				return false
+			end
+		end
+		if level then
+			if kind == "item" then
+				local it = item(id)
+				local need = it and it.requiredLevel or 0
+				if need < lo or need > hi then
+					return false
+				end
+			elseif kind == "npc" then
+				local n = npc(id)
+				if not n or not n.minLevel or (n.maxLevel or n.minLevel) < lo or n.minLevel > hi then
+					return false
+				end
+			elseif kind == "quest" then
+				local q = quest(id)
+				if not q or not q.level or q.level < lo or q.level > hi then
+					return false
+				end
+			end
+		end
+		if zones then
+			if kind == "item" then
+				if not givenIn(id, zones) then
+					return false
+				end
+			elseif not standsIn(kind == "npc" and "n" or "o", id, zones) then
+				return false
+			end
+		end
+		return not custom or custom(kind, id) and true or false
+	end, allowed
+end
+
 -- Things whose name matches the text, best first: rows {kind, id, name}.
 -- kinds limits the search ({"item", "npc"}); limit caps the rows (default
--- 50). A whole search takes up to a few tens of milliseconds; to keep the
--- game smooth, call it in a coroutine with options {yieldEvery = n}: it
--- yields after every n names, and the caller resumes it a frame later.
+-- 50). options narrow what is found, before the limit:
+--   filter   function(kind, id): true to keep
+--   quality  items of at least this quality (3 rare)
+--   level    {min, max}: items by required level, creatures by level, quests by level
+--   zone     an area ID, or a list of them: creatures and objects that stand
+--            there, items something there gives (or that are fished there)
+--   distinct one row a kind and name, with all its IDs in ids ({1731, 2055, ...}
+--            for the Copper Veins), before the limit
+-- quality, level and zone limit the search to the kinds they apply to.
+-- With a filter the text may be empty: everything that passes, shortest
+-- names first. A whole search takes up to a few tens of milliseconds; to
+-- keep the game smooth, call it in a coroutine with options {yieldEvery =
+-- n}: it yields after every n names, and the caller resumes it a frame later.
 function FD.Search(text, limit, kinds, options)
 	local yieldEvery = options and options.yieldEvery
 	local seen = 0
@@ -462,7 +592,8 @@ function FD.Search(text, limit, kinds, options)
 	for token in string.gmatch(string.lower(text), "%S+") do
 		terms[#terms + 1] = term(token)
 	end
-	if #terms == 0 then
+	local accept, allowed = accepter(options)
+	if #terms == 0 and not accept then
 		return EMPTY
 	end
 	local found, matched = {}, {}
@@ -470,7 +601,7 @@ function FD.Search(text, limit, kinds, options)
 	-- pass scores every name the plain tiers (or, when fuzzy, all tiers) match.
 	local function pass(allowFuzzy)
 		for _, kind in ipairs(kinds or SEARCHED) do
-			if SOURCE[kind] then
+			if SOURCE[kind] and (not allowed or allowed[kind]) then
 				for _, entry in ipairs(names(kind)) do
 					if yieldEvery then
 						seen = seen + 1
@@ -488,7 +619,7 @@ function FD.Search(text, limit, kinds, options)
 							end
 							total = total + s
 						end
-						if total then
+						if total and (not accept or accept(kind, entry[1])) then
 							matched[entry] = true
 							found[#found + 1] = { kind = kind, id = entry[1], name = entry[3], score = total }
 						end
@@ -498,7 +629,7 @@ function FD.Search(text, limit, kinds, options)
 		end
 	end
 	pass(false)
-	if #found < want then
+	if #found < want and #terms > 0 then
 		for _, t in ipairs(terms) do
 			fuzzy(t)
 		end
@@ -517,6 +648,21 @@ function FD.Search(text, limit, kinds, options)
 		return a.id < b.id
 	end)
 	local out = {}
+	if options and options.distinct then
+		local byName = {}
+		for _, f in ipairs(found) do
+			local key = f.kind .. "\0" .. f.name
+			local row = byName[key]
+			if row then
+				row.ids[#row.ids + 1] = f.id
+			elseif #out < want then
+				row = { kind = f.kind, id = f.id, name = f.name, ids = { f.id } }
+				byName[key] = row
+				out[#out + 1] = row
+			end
+		end
+		return out
+	end
 	for i = 1, math.min(#found, want) do
 		local f = found[i]
 		out[i] = { kind = f.kind, id = f.id, name = f.name }

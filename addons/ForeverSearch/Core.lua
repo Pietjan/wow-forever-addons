@@ -160,28 +160,160 @@ local function Weight(kind, id)
 	return #FD.Spawns(kind, id) + #FD.Loot(kind, id)
 end
 
+-- The search bar's words for narrowing a search, as command palettes have
+-- them: a kind ("item:", "npc:"), "q:rare" (or q:3) for item quality,
+-- "lvl:40-50" (or lvl:40, lvl:40+) for level, "in:hinterlands" for a zone.
+-- A kind word may carry text: "npc:snapjaw".
+local KIND_WORD = {
+	item = "item", items = "item", npc = "npc", npcs = "npc", creature = "npc", creatures = "npc", mob = "npc", mobs = "npc",
+	object = "object", objects = "object", obj = "object", quest = "quest", quests = "quest", zone = "zone", zones = "zone",
+}
+local QUALITY_WORD = {
+	poor = 0, grey = 0, gray = 0, common = 1, white = 1, uncommon = 2, green = 2,
+	rare = 3, blue = 3, epic = 4, purple = 4, legendary = 5, orange = 5,
+}
+
+-- The zone an area lies in: a subzone's top zone, a zone itself.
+local function TopZone(id)
+	local zone = FD.Zone(id)
+	local guard = 0
+	while zone and zone.parent and guard < 8 do
+		local parent = FD.Zone(zone.parent)
+		if not parent then
+			break
+		end
+		zone, guard = parent, guard + 1
+	end
+	return zone
+end
+
+-- Zones a word names: every zone with a word of its name starting with it
+-- ("blackrock": Blackrock Depths, Blackrock Spire, ...); failing that, the
+-- best fuzzy match ("hinterlnds"). Spots are filed under whole zones, so
+-- when the word names only subzones ("goldshire"), their zones count
+-- (Elwynn Forest); when it names a whole zone too, only whole zones do.
+local function ZonesNamed(word)
+	local found = FD.Search(word, 50, { "zone" })
+	local lower = string.lower(word)
+	local matched = {}
+	for _, z in ipairs(found) do
+		local name = string.lower(z.name)
+		if string.sub(name, 1, #lower) == lower or string.find(name, "[^%w']" .. lower:gsub("%W", "%%%0")) then
+			matched[#matched + 1] = z
+		end
+	end
+	if #matched == 0 and found[1] then
+		matched[1] = found[1]
+	end
+	local whole = {}
+	for _, z in ipairs(matched) do
+		local zone = FD.Zone(z.id)
+		if zone and not zone.parent then
+			whole[#whole + 1] = z
+		end
+	end
+	local out, names, seen = {}, {}, {}
+	if #whole > 0 then
+		for _, z in ipairs(whole) do
+			out[#out + 1], names[#names + 1] = z.id, z.name
+		end
+		return out, names
+	end
+	for _, z in ipairs(matched) do
+		local top = TopZone(z.id)
+		if top and not seen[top.id] then
+			seen[top.id] = true
+			out[#out + 1] = top.id
+			names[#names + 1] = top.id == z.id and z.name or (z.name .. " (" .. top.name .. ")")
+		end
+	end
+	return out, names
+end
+
+-- Parse splits what was typed into the text to match, the kinds, and the
+-- options for ForeverData.Search. A word that is not a filter is text. A
+-- filter word with nothing after its colon takes the next word ("in:
+-- blackrock" is "in:blackrock").
+function ns.Parse(typed)
+	local list = {}
+	for word in string.gmatch(typed or "", "%S+") do
+		list[#list + 1] = word
+	end
+	local words, kinds, options = {}, nil, {}
+	local i = 1
+	while i <= #list do
+		local word = list[i]
+		local key, value = string.match(string.lower(word), "^(%a+):(.*)$")
+		if (key == "in" or key == "q" or key == "lvl") and value == "" and list[i + 1] then
+			i = i + 1
+			value = string.lower(list[i])
+		end
+		local kind = key and KIND_WORD[key]
+		if kind then
+			kinds = kinds or {}
+			kinds[#kinds + 1] = kind
+			if value ~= "" then
+				words[#words + 1] = value
+			end
+		elseif key == "q" and (QUALITY_WORD[value] or tonumber(value)) then
+			options.quality = QUALITY_WORD[value] or tonumber(value)
+		elseif key == "lvl" and string.match(value, "^%d") then
+			local lo, hi = string.match(value, "^(%d+)%-(%d+)$")
+			if lo then
+				options.level = { tonumber(lo), tonumber(hi) }
+			elseif string.match(value, "^%d+%+$") then
+				options.level = { tonumber(string.match(value, "^(%d+)")), math.huge }
+			else
+				local n = tonumber(value)
+				options.level = n and { n, n } or nil
+			end
+		elseif key == "in" and value ~= "" then
+			local zones, names = {}, {}
+			if ns.Ready() then
+				zones, names = ZonesNamed(value)
+			end
+			options.zone = #zones > 0 and zones or { -1 } -- no such zone: nothing stands there
+			options.zoneNames = names
+		else
+			words[#words + 1] = word
+		end
+		i = i + 1
+	end
+	return table.concat(words, " "), kinds, options
+end
+
 -- What a search finds: rows {kind, id, name, quality, available, ids}, one
 -- a kind and name: five Copper Vein objects are one row, its id the one
 -- most is known of, ids all of them.
-function ns.Results(text, limit, options)
+-- typed may hold filter words (see Parse); options go to ForeverData.Search
+-- along with them (yieldEvery).
+function ns.Results(typed, limit, options)
 	if not ns.Ready() then
 		return {}
 	end
-	local out, byName = {}, {}
-	for _, hit in ipairs(FD.Search(text, (limit or 30) * 2, nil, options)) do
-		local key = hit.kind .. "\0" .. hit.name
-		local row = byName[key]
-		if row then
-			row.ids[#row.ids + 1] = hit.id
-			local w = Weight(hit.kind, hit.id)
-			if w > row.weight then
-				row.id, row.weight = hit.id, w
+	local text, kinds, filters = ns.Parse(typed)
+	for k, v in pairs(options or {}) do
+		filters[k] = v
+	end
+	filters.distinct = true
+	local out = {}
+	for _, hit in ipairs(FD.Search(text, limit or 30, kinds, filters)) do
+		local row = { kind = hit.kind, id = hit.id, name = hit.name, ids = hit.ids }
+		-- Several of one name (five Copper Vein objects): the one most is
+		-- known of. Weighing decodes an item's every source, so only then.
+		if #hit.ids > 1 then
+			local best = -1
+			for _, id in ipairs(hit.ids) do
+				local w = Weight(hit.kind, id)
+				if w > best then
+					row.id, best = id, w
+				end
+				if filters.yieldEvery then
+					coroutine.yield()
+				end
 			end
-		elseif #out < (limit or 30) then
-			row = { kind = hit.kind, id = hit.id, name = hit.name, ids = { hit.id }, weight = Weight(hit.kind, hit.id) }
-			byName[key] = row
-			out[#out + 1] = row
 		end
+		out[#out + 1] = row
 	end
 	for _, row in ipairs(out) do
 		if row.kind == "item" then

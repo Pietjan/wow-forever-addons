@@ -84,6 +84,32 @@ check("search: a word start beats the inside", (function()
 	return r[1] and r[1].name == "Turtle Scale"
 end)())
 check("search: a prefix beats a word start", FD.Search("salt")[1].name == "Saltwater Snapjaw" and FD.Search("snap")[1].name == "Saltwater Snapjaw")
+local function ids(rows)
+	local out = {}
+	for _, r in ipairs(rows) do out[#out + 1] = r.kind .. r.id end
+	table.sort(out)
+	return table.concat(out, " ")
+end
+check("filter: quality keeps items of at least it", ids(FD.Search("", nil, nil, { quality = 1 })) == "item2589 item8167", ids(FD.Search("", nil, nil, { quality = 1 })))
+check("filter: quality leaves other kinds out", ids(FD.Search("saltwater", nil, nil, { quality = 0 })) == "")
+check("filter: level, items by required level (none is 0)", ids(FD.Search("", nil, { "item" }, { level = { 0, 0 } })) == "item2589 item288824 item8167")
+check("filter: level, creatures by range", ids(FD.Search("", nil, nil, { level = { 50, 55 } })) == "npc2505", ids(FD.Search("", nil, nil, { level = { 50, 55 } })))
+check("filter: level, quests by level", ids(FD.Search("", nil, { "quest" }, { level = { 1, 1 } })) == "quest92479")
+check("filter: zone keeps what stands there and what it gives", ids(FD.Search("", nil, nil, { zone = 47 })) == "item8167 npc2505"
+	and ids(FD.Search("", nil, nil, { zone = 12 })) == "", ids(FD.Search("", nil, nil, { zone = 47 })))
+check("filter: a function", ids(FD.Search("e", nil, nil, { filter = function(kind) return kind == "zone" end })) == "zone2257 zone47",
+	ids(FD.Search("e", nil, nil, { filter = function(kind) return kind == "zone" end })))
+check("filter: no text and no filter finds nothing", #FD.Search("") == 0)
+FD = fixture()
+check("distinct: one row a kind and name", (function()
+	local ns2 = { meta = { contract = 1 }, objects = { [1] = "Fire|8", [2] = "Fire|8", [3] = "Fire|8", [4] = "Torch|8" } }
+	ForeverData = nil
+	load({ "Core.lua" }, ns2)
+	local r = ForeverData.Search("", 2, nil, { distinct = true, filter = function() return true end })
+	local ok = #r == 2 and r[1].name == "Fire" and #r[1].ids == 3 and r[2].name == "Torch"
+	ForeverData = FD
+	return ok
+end)())
 check("search by kind", #FD.Search("copper", nil, { "npc" }) == 0 and #FD.Search("copper", nil, { "object" }) == 1)
 
 if arg[1] == "real" then

@@ -84,6 +84,56 @@ check("one row a kind and name", veins[1] and veins[1].name == "Copper Vein" and
 check("subtitle of a creature", ns.Subtitle(ns.Results("saltwater snapjaw")[1]) == "Creature · level 49-50 · The Hinterlands", ns.Subtitle(ns.Results("saltwater snapjaw")[1]))
 check("subtitle of an item", ns.Subtitle(ns.Results("turtle scale")[1]):find("^Item · item level 35 · 1s 50c") ~= nil, ns.Subtitle(ns.Results("turtle scale")[1]))
 check("subtitle of an object", ns.Subtitle(veins[1]):find("^Object · .+ · %d+ of this name$") ~= nil, ns.Subtitle(veins[1]))
+local text, kinds, options = ns.Parse("item: q:rare lvl:40-50 in:hinterlands cloak")
+check("parse: kinds, quality, level, zone, text", text == "cloak" and kinds[1] == "item" and options.quality == 3
+	and options.level[1] == 40 and options.level[2] == 50 and options.zone[1] == 47, text)
+text, kinds, options = ns.Parse("in: blackrock q: rare lvl: 50-60 black")
+local zoneNames = table.concat(options.zoneNames, ", ")
+check("parse: a space after the colon takes the next word", text == "black" and options.quality == 3 and options.level[1] == 50
+	and zoneNames:find("Blackrock Depths", 1, true) and zoneNames:find("Blackrock Spire", 1, true), text .. " | " .. zoneNames)
+local _, _, sub = ns.Parse("in:goldshire")
+check("parse: a subzone stands for its zone", sub.zone[1] == 12 and #sub.zone == 1 and sub.zoneNames[1] == "Goldshire (Elwynn Forest)",
+	table.concat(sub.zone, ",") .. " " .. table.concat(sub.zoneNames, ","))
+local _, _, both = ns.Parse("in:blackrock")
+check("parse: whole zones win over subzones", (function()
+	for _, id in ipairs(both.zone) do
+		if ForeverData.Zone(id).parent then return false end
+	end
+	return #both.zone >= 2
+end)(), table.concat(both.zoneNames, ", "))
+check("bar: in: items by where they drop", (function()
+	for _, r in ipairs(ns.Results("in:blackrock hand of", 30)) do
+		if r.name == "Hand of Justice" then return true end
+	end
+	return false
+end)())
+check("bar: a zone alone fills the rows with distinct names", #ns.Results("in:blackrock", 30) == 30)
+check("bar: in:goldshire finds Elwynn's creatures", #ns.Results("npc: in:goldshire kobold", 30) > 0)
+check("bar: in: blackrock finds the Blackrock dungeons' creatures", (function()
+	local r = ns.Results("in: blackrock dark iron", 30)
+	return #r > 0
+end)())
+text, kinds, options = ns.Parse("npc:snapjaw lvl:40+ Q:EPIC weird:word")
+check("parse: kind with text, open level, any case, unknown words kept", text == "snapjaw weird:word" and kinds[1] == "npc"
+	and options.level[1] == 40 and options.level[2] == math.huge and options.quality == 4, text)
+local function allOf(rows, test)
+	for _, r in ipairs(rows) do
+		if not test(r) then return false end
+	end
+	return #rows > 0
+end
+check("bar: rare items only", allOf(ns.Results("q:rare cloak", 30), function(r) return r.kind == "item" and (r.quality or 0) >= 3 end))
+check("bar: creatures in a zone", allOf(ns.Results("npc: in:hinterlands", 30), function(r)
+	for _, spot in ipairs(ForeverData.Spawns("npc", r.id)) do
+		if spot.zone == 47 then return true end
+	end
+	return false
+end))
+check("bar: a level range", allOf(ns.Results("npc: lvl:49-50 snap", 30), function(r)
+	local n = ForeverData.Npc(r.id)
+	return n.minLevel <= 50 and (n.maxLevel or n.minLevel) >= 49
+end))
+check("bar: no such zone finds nothing", #ns.Results("npc: in:zzzzqq turtle", 30) == 0)
 check("money", ns.Money(1234567) == "123g 45s 67c" and ns.Money(150) == "1s 50c" and ns.Money(7) == "7c")
 
 if failures > 0 then
