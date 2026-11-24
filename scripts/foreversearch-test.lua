@@ -49,7 +49,19 @@ check("item: a counted drop", has(lines, "Stolid Snapjaw: 14.973% of 187"), tabl
 check("item: auction price", has(lines, "Auction:|r 1s 50c"))
 check("item: owned", has(lines, "You own:|r 15 (Gorack 12, Pietjan 3)"))
 check("item: no drop left out", not has(lines, "Gammerita: 14.69"))
-check("an unavailable item", has(ns.Details("item", 16801), "Not available to players"), table.concat(ns.Details("item", 16801), "\n"))
+check("unavailable items are not shipped", ForeverData.Item(16801) == nil and ForeverData.Item(19370) == nil)
+check("nor found", (function()
+	for _, r in ipairs(ns.Results("mantle of the blackwing cabal")) do
+		if r.id == 19370 then return false end
+	end
+	return true
+end)())
+check("triggers are not shipped", (function()
+	for _, r in ipairs(ns.Results("blackwing orb trigger")) do
+		if r.name == "Blackwing Orb Trigger" then return false end
+	end
+	return true
+end)())
 
 lines = ns.Details("npc", 2505)
 check("npc: level and neutral", has(lines, "level 49-50") and has(lines, "neutral"), lines[1])
