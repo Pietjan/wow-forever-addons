@@ -290,7 +290,8 @@ local function names(kind)
 		local bar = string.find(s, "|", 1, true)
 		local name = bar and string.sub(s, 1, bar - 1) or s
 		if name ~= "" then
-			list[#list + 1] = { id, string.lower(name), name }
+			local _, words = string.gsub(name, "%S+", "")
+			list[#list + 1] = { id, string.lower(name), name, words }
 		end
 	end
 	index[kind] = list
@@ -567,7 +568,13 @@ local function accepter(options)
 	end, allowed
 end
 
+local KIND_ORDER = { item = 1, npc = 2, object = 3, quest = 4, zone = 5 }
+local COMPLETE = 30 -- bonus for a name with no words beyond those typed
+
 -- Things whose name matches the text, best first: rows {kind, id, name}.
+-- Best: how well the name matches (with a bonus for a name with no words
+-- beyond those typed), then items before the rest, better quality first,
+-- then by type, then the shorter name.
 -- kinds limits the search ({"item", "npc"}); limit caps the rows (default
 -- 50). options narrow what is found, before the limit:
 --   filter   function(kind, id): true to keep
@@ -619,6 +626,12 @@ function FD.Search(text, limit, kinds, options)
 							end
 							total = total + s
 						end
+						-- A name with no words beyond those typed is the one
+						-- meant: "turtle scale" is Turtle Scale, not Turtle
+						-- Scale Helm.
+						if total and entry[4] == #terms then
+							total = total + COMPLETE
+						end
 						if total and (not accept or accept(kind, entry[1])) then
 							matched[entry] = true
 							found[#found + 1] = { kind = kind, id = entry[1], name = entry[3], score = total }
@@ -635,9 +648,35 @@ function FD.Search(text, limit, kinds, options)
 		end
 		pass(true)
 	end
+	-- Among equal matches: items first, the best quality first, then by type
+	-- (class, subclass), then the shortest name.
+	for n, f in ipairs(found) do
+		if yieldEvery and n % yieldEvery == 0 then
+			coroutine.yield()
+		end
+		f.order = KIND_ORDER[f.kind] or 9
+		if f.kind == "item" then
+			local it = item(f.id)
+			f.quality, f.class, f.subclass = it and it.quality or -1, it and it.class or 99, it and it.subclass or 99
+		else
+			f.quality, f.class, f.subclass = -1, 99, 99
+		end
+	end
 	table.sort(found, function(a, b)
 		if a.score ~= b.score then
 			return a.score > b.score
+		end
+		if a.order ~= b.order then
+			return a.order < b.order
+		end
+		if a.quality ~= b.quality then
+			return a.quality > b.quality
+		end
+		if a.class ~= b.class then
+			return a.class < b.class
+		end
+		if a.subclass ~= b.subclass then
+			return a.subclass < b.subclass
 		end
 		if #a.name ~= #b.name then
 			return #a.name < #b.name

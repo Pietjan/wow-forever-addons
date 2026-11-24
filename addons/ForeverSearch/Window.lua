@@ -9,6 +9,9 @@
 --   Enter         closes, keeping the text for next time
 --   Shift-Enter   or Shift-click: links the chosen item in chat
 --   mouse         hover or click chooses; the wheel scrolls the finds
+--   in a dungeon or raid the bar opens with in:<that instance> in front of
+--                 the text (in:blackrock-depths), taken off again elsewhere;
+--                 a line above the finds says how the filter words were read
 local ADDON, ns = ...
 
 local WIDTH = 520
@@ -38,6 +41,7 @@ local PAUSE = 0.1      -- seconds after the last key
 local BUDGET = 6       -- milliseconds of searching a frame
 local STEP = 500       -- names a step (each may be decoded for a filter)
 local job, startAt, jobText
+local FILTER_LINE = 20 -- height of the line saying how the filter words were read
 local driver = CreateFrame("Frame")
 driver:Hide()
 
@@ -98,7 +102,18 @@ end
 
 local function DrawRows()
 	local shown = math.min(ROWS, #finds - offset)
+	-- The filter words as the bar read them, above the finds.
+	local text = box:GetText()
+	local described = text:match("%S") and ns.Describe(text)
+	local top = described and FILTER_LINE or 0
+	if described then
+		list.filters:SetText(described .. (#finds == 0 and job == nil and "  ·  nothing found" or ""))
+		list.filters:Show()
+	else
+		list.filters:Hide()
+	end
 	for i, row in ipairs(rows) do
+		row:SetPoint("TOPLEFT", 6, -6 - top - (i - 1) * ROW)
 		local find = finds[offset + i]
 		if find then
 			row.find = find
@@ -117,8 +132,8 @@ local function DrawRows()
 			row:Hide()
 		end
 	end
-	if shown > 0 then
-		list:SetHeight(shown * ROW + 12)
+	if shown > 0 or described then
+		list:SetHeight(math.max(0, shown) * ROW + top + 12)
 		list:Show()
 	else
 		list:Hide()
@@ -238,6 +253,7 @@ local function MakeBar()
 	end
 
 	local glass = bar:CreateTexture(nil, "ARTWORK")
+	bar.glass = glass
 	glass:SetSize(22, 22)
 	glass:SetPoint("LEFT", 12, 0)
 	glass:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
@@ -281,6 +297,11 @@ local function MakeBar()
 		DrawRows()
 	end)
 	list:Hide()
+	list.filters = list:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+	list.filters:SetPoint("TOPLEFT", 12, -9)
+	list.filters:SetPoint("RIGHT", -12, 0)
+	list.filters:SetJustifyH("LEFT")
+	list.filters:SetTextColor(0.4, 0.75, 1)
 	rows = {}
 	for i = 1, ROWS do
 		rows[i] = MakeRow(i)
@@ -305,11 +326,28 @@ local function MakeBar()
 	preview:Hide()
 
 	bar:SetScript("OnShow", function()
-		box:SetText(ForeverSearchDB.text or "")
+		-- In a dungeon or raid the text starts with in:<that instance>;
+		-- anywhere else an in: put there earlier is taken off again.
+		local text = ForeverSearchDB.text or ""
+		local before = ForeverSearchDB.prefill
+		if before and string.sub(text, 1, #before) == before then
+			text = string.sub(text, #before + 1)
+		end
+		local prefill
+		local inInstance, kind = IsInInstance()
+		local here = GetRealZoneText()
+		if inInstance and (kind == "party" or kind == "raid") and ns.ZoneByName(here) then
+			prefill = ns.InWord(here) .. " "
+			text = prefill .. text
+		end
+		ForeverSearchDB.prefill = prefill
+		box:SetText(text)
 		Search()
 		startAt = 0 -- reopening: no need to wait
 		box:SetFocus()
-		box:HighlightText()
+		-- Typing replaces the words after the in:, not the in: itself.
+		box:SetCursorPosition(#text)
+		box:HighlightText(prefill and #prefill or 0, -1)
 	end)
 	bar:SetScript("OnHide", function()
 		box:ClearFocus()

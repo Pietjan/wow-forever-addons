@@ -134,6 +134,57 @@ check("bar: a level range", allOf(ns.Results("npc: lvl:49-50 snap", 30), functio
 	return n.minLevel <= 50 and (n.maxLevel or n.minLevel) >= 49
 end))
 check("bar: no such zone finds nothing", #ns.Results("npc: in:zzzzqq turtle", 30) == 0)
+check("instance: the zone of that name", ns.ZoneByName("Blackrock Depths") == 1584 and ns.ZoneByName("blackrock depths") == 1584
+	and ns.ZoneByName("Nowhere Land") == nil, ns.ZoneByName("Blackrock Depths"))
+check("in: a full name with dashes is that zone only", (function()
+	local _, _, o = ns.Parse("in:blackrock-depths")
+	return #o.zone == 1 and o.zone[1] == 1584
+end)())
+check("in: the word for an instance", ns.InWord("Blackrock Depths") == "in:blackrock-depths" and ns.InWord("The Temple of Atal'Hakkar") == "in:the-temple-of-atal'hakkar")
+check("in: the word reads back", (function()
+	local _, _, o = ns.Parse(ns.InWord("The Temple of Atal'Hakkar") .. " hakkar")
+	return o.zone and #o.zone == 1 and ForeverData.Zone(o.zone[1]).name == "The Temple of Atal'Hakkar"
+end)())
+check("describe: how filters were read", ns.Describe("item: q:rare lvl:40-50 in:blackrock-depths cloak") == "Blackrock Depths · items · rare or better · level 40-50",
+	ns.Describe("item: q:rare lvl:40-50 in:blackrock-depths cloak"))
+check("describe: nothing without filters", ns.Describe("turtle scale") == nil)
+check("describe: an unknown zone", ns.Describe("in:zzzzqq") == "no such zone")
+check("rank: by filters alone, best quality first, then type", (function()
+	local r = ns.Results("in:ragefire-chasm item:", 30)
+	local lastQ, lastClass = 99, -1
+	for _, row in ipairs(r) do
+		local it = ForeverData.Item(row.id)
+		local q, c = it.quality or -1, it.class or 99
+		if q > lastQ or (q == lastQ and c < lastClass) then
+			return false
+		end
+		if q < lastQ then lastClass = -1 end
+		lastQ, lastClass = q, c
+	end
+	return #r > 0
+end)())
+check("rank: the text still comes first", ns.Results("copper ore", 5)[1].name == "Copper Ore")
+check("rank: a name with no extra words first, even with a typo", ns.Results("tutrle scale", 5)[1].name == "Turtle Scale", ns.Results("tutrle scale", 5)[1].name)
+check("rank: with text too, items by quality", (function()
+	-- Among the names that start with it (one tier of match), and leaving
+	-- out an item named just "Scarlet" (no extra words: first by design).
+	local r, last, n = ns.Results("item: scarlet", 30), 99, 0
+	for _, row in ipairs(r) do
+		if row.name:find("^Scarlet ") then
+			local q = ForeverData.Item(row.id).quality or -1
+			if q > last then return false end
+			last, n = q, n + 1
+		end
+	end
+	return n > 5
+end)())
+check("rank: items before creatures among equal matches", (function()
+	local r, seenNpc = ns.Results("scarlet", 30), false
+	for _, row in ipairs(r) do
+		if row.kind == "npc" then seenNpc = true elseif row.kind == "item" and seenNpc then return false end
+	end
+	return true
+end)())
 check("money", ns.Money(1234567) == "123g 45s 67c" and ns.Money(150) == "1s 50c" and ns.Money(7) == "7c")
 
 if failures > 0 then

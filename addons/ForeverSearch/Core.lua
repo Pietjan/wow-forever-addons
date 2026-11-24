@@ -193,6 +193,17 @@ end
 -- when the word names only subzones ("goldshire"), their zones count
 -- (Elwynn Forest); when it names a whole zone too, only whole zones do.
 local function ZonesNamed(word)
+	-- Dashes stand for spaces: in:blackrock-depths. A zone of exactly that
+	-- name is the answer.
+	word = string.gsub(word, "%-", " ")
+	local exact = ns.ZoneByName(word)
+	if exact then
+		local zone, top = FD.Zone(exact), TopZone(exact)
+		if top and top.id ~= exact then
+			return { top.id }, { zone.name .. " (" .. top.name .. ")" }
+		end
+		return { exact }, { zone.name }
+	end
 	local found = FD.Search(word, 50, { "zone" })
 	local lower = string.lower(word)
 	local matched = {}
@@ -228,6 +239,62 @@ local function ZonesNamed(word)
 		end
 	end
 	return out, names
+end
+
+-- ZoneByName finds the zone of exactly that name ("Blackrock Depths", as
+-- the game names the instance you are in), a whole zone before a subzone
+-- of the same name; nil when none has it.
+function ns.ZoneByName(name)
+	if not ns.Ready() or type(name) ~= "string" or name == "" then
+		return nil
+	end
+	local lower, best = string.lower(name), nil
+	for _, z in ipairs(FD.Search(name, 50, { "zone" })) do
+		if string.lower(z.name) == lower then
+			local zone = FD.Zone(z.id)
+			if zone and not zone.parent then
+				return z.id
+			end
+			best = best or z.id
+		end
+	end
+	return best
+end
+
+-- InWord writes a zone's name as one in: word: "in:blackrock-depths".
+function ns.InWord(name)
+	return "in:" .. string.gsub(string.lower(name), "%s+", "-")
+end
+
+local QUALITY_NAME = { [0] = "poor", "common", "uncommon", "rare", "epic", "legendary" }
+local KIND_PLURAL = { item = "items", npc = "creatures", object = "objects", quest = "quests", zone = "zones" }
+
+-- Describe says how the bar read the filter words: "Blackrock Depths ·
+-- items · rare or better · level 40-50"; nil without filters.
+function ns.Describe(typed)
+	local _, kinds, options = ns.Parse(typed)
+	local parts = {}
+	if options.zone then
+		parts[#parts + 1] = #(options.zoneNames or {}) > 0 and table.concat(options.zoneNames, ", ") or "no such zone"
+	end
+	if kinds then
+		local names = {}
+		for _, kind in ipairs(kinds) do
+			names[#names + 1] = KIND_PLURAL[kind] or kind
+		end
+		parts[#parts + 1] = table.concat(names, ", ")
+	end
+	if options.quality then
+		parts[#parts + 1] = (QUALITY_NAME[options.quality] or ("quality " .. options.quality)) .. (options.quality < 5 and " or better" or "")
+	end
+	if options.level then
+		local lo, hi = options.level[1], options.level[2]
+		parts[#parts + 1] = hi == math.huge and ("level " .. lo .. "+") or lo == hi and ("level " .. lo) or ("level %d-%d"):format(lo, hi)
+	end
+	if #parts == 0 then
+		return nil
+	end
+	return table.concat(parts, " · ")
 end
 
 -- Parse splits what was typed into the text to match, the kinds, and the
@@ -292,8 +359,11 @@ function ns.Results(typed, limit, options)
 		return {}
 	end
 	local text, kinds, filters = ns.Parse(typed)
+	-- What was typed wins: an in: typed overrides the instance's zone.
 	for k, v in pairs(options or {}) do
-		filters[k] = v
+		if filters[k] == nil then
+			filters[k] = v
+		end
 	end
 	filters.distinct = true
 	local out = {}
