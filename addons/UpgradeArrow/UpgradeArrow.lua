@@ -377,8 +377,9 @@ function UpgradeArrow.Evaluate(link)
 	return Evaluate(link)
 end
 
--- Calls fn after anything that changes the answers: gear, level, role or
--- weights.
+-- Calls fn(reason) after anything that can change the answers: "gear"
+-- (something worn changed), "level", "skills" (which also comes with every
+-- skill-up) or "weights" (the role or one of its weights).
 local listeners = {}
 function UpgradeArrow.OnChange(fn)
 	listeners[#listeners + 1] = fn
@@ -587,7 +588,7 @@ end
 
 -- Events -----------------------------------------------------------------
 
-local function Invalidate()
+local function Invalidate(reason)
 	wipe(cache)
 	weights = Weights()
 	pcall(UpdateQuestRewards)
@@ -596,7 +597,7 @@ local function Invalidate()
 		Baganator.API.RequestItemButtonsRefresh()
 	end
 	for _, fn in ipairs(listeners) do
-		pcall(fn)
+		pcall(fn, reason)
 	end
 end
 
@@ -605,7 +606,33 @@ end
 
 local function SetRole(value) -- "TANK", "HEALER", "DAMAGER", or nil for automatic
 	db.role = value
-	Invalidate()
+	Invalidate("weights")
+end
+
+-- The role, for other addons. Role: the one scored for now, as its key
+-- ("TANK", "HEALER", "DAMAGER") and its name, and whether it was fixed by
+-- hand (true) or follows your group (false).
+function UpgradeArrow.Role()
+	return role, ROLE_NAME[role], db.role ~= nil and ClassRoles()[db.role] ~= nil
+end
+
+-- The roles your class can fill, in order, each as { key = , name = }.
+function UpgradeArrow.Roles()
+	local list, roles = {}, ClassRoles()
+	for _, key in ipairs(ROLE_ORDER) do
+		if roles[key] then
+			list[#list + 1] = { key = key, name = ROLE_NAME[key] }
+		end
+	end
+	return list
+end
+
+-- Fixes the role to one of Roles' keys, or with nil follows your group
+-- again; the same as /upgradearrow role.
+function UpgradeArrow.SetRole(key)
+	if key == nil or ClassRoles()[key] then
+		SetRole(key)
+	end
 end
 
 -- A weight equal to the class default is not kept: the default applies again.
@@ -614,14 +641,14 @@ local function SetWeight(forRole, stat, value)
 	db.weights[forRole] = db.weights[forRole] or {}
 	local default = ClassRoles()[forRole][stat] or 0
 	db.weights[forRole][stat] = value ~= default and value or nil
-	Invalidate()
+	Invalidate("weights")
 end
 
 local function ResetWeights(forRole)
 	if db.weights then
 		db.weights[forRole] = nil
 	end
-	Invalidate()
+	Invalidate("weights")
 end
 
 ------------------------------------------------------------------------------
@@ -632,6 +659,48 @@ end
 ------------------------------------------------------------------------------
 
 local STAT_NAME = { dps = "Weapon damage per second, melee", rdps = "Weapon damage per second, ranged" }
+
+local function StatName(stat)
+	local key = STATS[stat]
+	return STAT_NAME[stat] or _G[type(key) == "table" and key[1] or key] or stat
+end
+
+-- For a slider: how far a weight usually goes, and the step it is set by.
+-- No class's own weight is above 3.5 (armor 0.08; it counts in hundredths
+-- of what the others do). A weight can be set higher than this.
+local function Usual(stat)
+	if stat == "armor" then
+		return 0.2, 0.005
+	end
+	return 5, 0.1
+end
+
+-- The weights, for other addons. Weights: those of the role scored for,
+-- one entry per stat in the usual order, each as { stat = (its short
+-- name), name = (the game's), value = , default = (the class's own),
+-- max = and step = (for a slider from 0, see Usual) }.
+function UpgradeArrow.Weights()
+	local list, defaults = {}, ClassRoles()[role]
+	for _, stat in ipairs(ORDER) do
+		local max, step = Usual(stat)
+		list[#list + 1] = { stat = stat, name = StatName(stat), value = weights[stat] or 0, default = defaults[stat] or 0,
+			max = max, step = step }
+	end
+	return list
+end
+
+-- One weight of the role scored for; the same as /upgradearrow <stat> <weight>.
+function UpgradeArrow.SetWeight(stat, value)
+	if STATS[stat] and type(value) == "number" and value == value and math.abs(value) < math.huge then
+		SetWeight(role, stat, value)
+	end
+end
+
+-- The class's own weights again for the role scored for; the same as
+-- /upgradearrow reset.
+function UpgradeArrow.ResetWeights()
+	ResetWeights(role)
+end
 
 local function RegisterSettings()
 	if not (Settings and Settings.RegisterVerticalLayoutCategory and Settings.RegisterVerticalLayoutSubcategory
@@ -664,8 +733,7 @@ local function RegisterSettings()
 		if roles[forRole] then
 			local page = Settings.RegisterVerticalLayoutSubcategory(category, ROLE_NAME[forRole] .. " weights")
 			for _, stat in ipairs(ORDER) do
-				local key = STATS[stat]
-				local name = (STAT_NAME[stat] or _G[type(key) == "table" and key[1] or key] or stat) .. " (" .. stat .. ")"
+				local name = StatName(stat) .. " (" .. stat .. ")"
 				-- Armor counts in hundredths of what the others do.
 				local max, step = 20, 0.1
 				if stat == "armor" then
@@ -729,10 +797,10 @@ events:SetScript("OnEvent", function(self, event, name)
 	elseif event == "PLAYER_ROLES_ASSIGNED" or event == "GROUP_ROSTER_UPDATE"
 		or event == "LFG_LIST_ROLE_UPDATE" or event == "LFG_ROLE_UPDATE" then
 		if CurrentRole() ~= role then
-			Invalidate()
+			Invalidate("weights")
 		end
 	else
-		Invalidate()
+		Invalidate(event == "PLAYER_EQUIPMENT_CHANGED" and "gear" or event == "PLAYER_LEVEL_UP" and "level" or "skills")
 	end
 end)
 
