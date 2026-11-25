@@ -1,8 +1,8 @@
 ## Interface: 16001
 ## Title: SellAdvice
-## Notes: One line in item tooltips: disenchant, vendor or auction, whichever brings the most, from Auctionator's scanned prices. A gold coin marks the quest choice worth the most. With full bags, a red cross in Baganator marks the item cheapest to drop. Hold Alt for the workings. /sell lists everything your characters own, best to sell first.
+## Notes: One line in item tooltips: disenchant, smelt, vendor or auction, whichever brings the most, from Auctionator's scanned prices. A gold coin marks the quest choice worth the most. With full bags, a red cross in Baganator marks the item cheapest to drop. Hold Alt for the workings. /sell lists everything your characters own, best to sell first.
 ## Author: Pietjan
-## Version: 1.2
+## Version: 1.3
 ## OptionalDeps: Auctionator, Baganator, Syndicator, ForeverSnap
 ## SavedVariables: SellAdviceDB
 

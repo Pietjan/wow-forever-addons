@@ -19,6 +19,12 @@
 -- - Essences: also the auction in their other form, three lesser for one
 --   greater and back, as "Convert to greater" or "Convert to lesser". It
 --   is the advice when it brings more than listing them as they are.
+-- - Smelt: an ore (or bar, or other reagent) smelted and the bars listed,
+--   as "Smelt into <bar>": the bars' auction price less the cut, less what
+--   the recipe's other reagents cost at the auction house (Tin Bar for
+--   Bronze, Coal for Steel), per one of this item. Recipes from Data.lua.
+--   Characters without the recipe see it marked "on a miner"; a recipe
+--   cast at something other than a forge names it ("Black Forge").
 --
 -- Amounts are for the stack the tooltip is about. Lesser essences count as
 -- thirds of a greater one, also in a stack that does not divide by three:
@@ -56,6 +62,10 @@ local function AuctionPrice(link)
 	return ok and type(price) == "number" and price > 0 and price or nil
 end
 
+local function ItemName(itemID)
+	return C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemID) or ("item " .. itemID)
+end
+
 local greaterOf = {}
 for lesser, greater in pairs(ns.essences) do
 	greaterOf[greater] = lesser
@@ -88,6 +98,41 @@ end
 -- Average worth of disenchanting one item, after the cut, and the
 -- materials it was worked out from ({ item ID, average amount, price });
 -- nil and why not when there is no value.
+-- The best smelting recipe for an item: per one of it, after the cut and
+-- less the other reagents bought, and the option to list it that way; nil
+-- and why not when no recipe has prices.
+local function SmeltValue(itemID)
+	local best, why = nil, nil
+	for _, recipe in ipairs(ns.smelt[itemID] or {}) do
+		local spell, bar, made, per, focus, others = unpack(recipe)
+		local barPrice = AuctionPrice(bar)
+		local cost, needs, unpriced = 0, {}, nil
+		for i = 1, #others, 2 do
+			local price = AuctionPrice(others[i])
+			if not price then
+				unpriced = others[i]
+				break
+			end
+			cost = cost + others[i + 1] * price
+			needs[#needs + 1] = { others[i], others[i + 1] / per, price }
+		end
+		if not barPrice then
+			why = why or ("no price for " .. ItemName(bar))
+		elseif unpriced then
+			why = why or ("no price for " .. ItemName(unpriced))
+		else
+			local value = math.floor((barPrice * made * CUT - cost) / per)
+			if not best or value > best.value then
+				best = { key = "smelt", value = value, item = bar, makes = made, per = per, spell = spell, focus = focus or nil, needs = needs }
+			end
+		end
+	end
+	if best then
+		return best
+	end
+	return nil, why
+end
+
 local function DisenchantValue(itemID, classID, quality, level)
 	if ns.noDisenchant[itemID] then
 		return nil, "cannot be disenchanted"
@@ -170,13 +215,33 @@ local function Money(copper)
 	return C_CurrencyInfo.GetCoinTextureString(copper)
 end
 
-local function ItemName(itemID)
-	return C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemID) or ("item " .. itemID)
+
+local LABEL = { disenchant = "Disenchant", auction = "Auction", greater = "Convert to greater", lesser = "Convert to lesser", smelt = "Smelt", vendor = "Vendor" }
+-- The options that are an auction listing: as it is, in its other form, or
+-- smelted.
+local LISTING = { auction = true, greater = true, lesser = true, smelt = true }
+-- The order the options without a value are listed in.
+local KEYS = { "disenchant", "auction", "greater", "lesser", "smelt", "vendor" }
+
+-- An option's name: "Smelt into Dark Iron Bar (Black Forge)" for smelting,
+-- else its label.
+local function OptionLabel(option)
+	if option.key == "smelt" then
+		return "Smelt into " .. ItemName(option.item) .. (option.focus and (" (" .. option.focus .. ")") or "")
+	end
+	return LABEL[option.key]
 end
 
-local LABEL = { disenchant = "Disenchant", auction = "Auction", greater = "Convert to greater", lesser = "Convert to lesser", vendor = "Vendor" }
--- The options that are an auction listing: as it is, or in its other form.
-local LISTING = { auction = true, greater = true, lesser = true }
+-- Whether this character can do it: false for disenchanting without the
+-- spell and smelting without the recipe.
+local function CanDo(option)
+	if option.key == "disenchant" then
+		return IsPlayerSpell and IsPlayerSpell(DISENCHANT_SPELL) or false
+	elseif option.key == "smelt" then
+		return IsPlayerSpell and IsPlayerSpell(option.spell) or false
+	end
+	return true
+end
 local GREY = 0.6
 
 -- Alt held: every option with its value or why it has none, and the
@@ -185,9 +250,14 @@ local function AddDetails(tooltip, options, missing, parts, level, count)
 	tooltip:AddLine("SellAdvice" .. (level and (" (item level " .. level .. ")") or "") .. (count > 1 and (" x" .. count) or ""), 1, 0.82, 0)
 	for i, option in ipairs(options) do
 		local color = i == 1 and "|cff40c040" or "|cffffffff"
-		tooltip:AddDoubleLine(color .. LABEL[option.key] .. "|r", Money(option.value * count), 1, 1, 1, 1, 1, 1)
+		tooltip:AddDoubleLine(color .. OptionLabel(option) .. "|r", Money(option.value * count), 1, 1, 1, 1, 1, 1)
+		for _, need in ipairs(option.needs or {}) do
+			local itemID, amount, price = unpack(need)
+			tooltip:AddDoubleLine(("  less %g x %s"):format(amount, ItemName(itemID)),
+				Money(amount * price) .. " (" .. Money(price) .. " each)", GREY, GREY, GREY, GREY, GREY, GREY)
+		end
 	end
-	for _, key in ipairs({ "disenchant", "auction", "greater", "lesser", "vendor" }) do
+	for _, key in ipairs(KEYS) do
 		if missing[key] then
 			tooltip:AddDoubleLine(LABEL[key], missing[key], GREY, GREY, GREY, GREY, GREY, GREY)
 		end
@@ -242,6 +312,15 @@ local function Options(link, data, slot)
 				missing[key] = Auctionator and "no price scanned" or "Auctionator not loaded"
 			end
 		end
+		-- Smelted, and the bars listed.
+		if ns.smelt[itemID] then
+			local smelt, why = SmeltValue(itemID)
+			if smelt then
+				options[#options + 1] = smelt
+			else
+				missing.smelt = Auctionator and why or "Auctionator not loaded"
+			end
+		end
 	end
 	local canDisenchant = IsPlayerSpell and IsPlayerSpell(DISENCHANT_SPELL)
 	if bound and not canDisenchant then
@@ -262,7 +341,7 @@ local function Options(link, data, slot)
 		if a.value ~= b.value then
 			return a.value > b.value
 		end
-		-- Level: an essence stays as it is.
+		-- Level: an essence or ore stays as it is.
 		return a.item == nil and b.item ~= nil
 	end)
 	-- The auction has to pay for its risk: a listing that does not sell
@@ -282,8 +361,8 @@ local function Options(link, data, slot)
 		local gain = (top.value - otherValue) * count
 		local deposit
 		if top.item then
-			-- Listed in its other form: that item's deposit, for as many as
-			-- these make.
+			-- Listed in its other form or smelted: that item's deposit, for
+			-- as many as these make.
 			local _, _, _, _, _, _, _, _, _, _, otherSell = C_Item.GetItemInfo(top.item)
 			deposit = Deposit(top.item, math.max(1, math.floor(count * top.makes / top.per)), otherSell)
 		else
@@ -333,9 +412,9 @@ local function AddAdvice(tooltip, data)
 		return
 	end
 	local best = options[1]
-	local label = LABEL[best.key]
-	if best.key == "disenchant" and not (IsPlayerSpell and IsPlayerSpell(DISENCHANT_SPELL)) then
-		label = label .. " (on an enchanter)"
+	local label = OptionLabel(best)
+	if not CanDo(best) then
+		label = label .. (best.key == "smelt" and " (on a miner)" or " (on an enchanter)")
 	end
 	tooltip:AddDoubleLine("|cff40c040" .. label .. "|r", Money(best.value * count), 1, 1, 1, 1, 1, 1)
 end
@@ -516,6 +595,7 @@ end
 
 -- For the sell list (SellList.lua): the same verdicts as the tooltip.
 ns.Options, ns.Money, ns.LABEL, ns.NeverJunk, ns.AuctionPrice = Options, Money, LABEL, NeverJunk, AuctionPrice
+ns.OptionLabel, ns.CanDo, ns.KEYS, ns.LISTING = OptionLabel, CanDo, KEYS, LISTING
 ns.DISENCHANT_SPELL = DISENCHANT_SPELL
 
 local events = CreateFrame("Frame")

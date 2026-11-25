@@ -34,7 +34,6 @@ local COLUMNS = { -- left edge, width
 	trend = { 528, 70 },
 	where = { 606, 0 },
 }
-local LISTING = { auction = true, greater = true, lesser = true }
 
 local window
 local rows = {}
@@ -144,7 +143,6 @@ local function Build()
 	end
 
 	list, totals, waiting = {}, {}, 0
-	local canDisenchant = IsPlayerSpell and IsPlayerSpell(ns.DISENCHANT_SPELL)
 	for _, group in ipairs(order) do
 		local name, _, quality, _, _, _, _, _, _, icon, _, classID, subclassID, bindType = C_Item.GetItemInfo(group.link)
 		local row
@@ -174,15 +172,15 @@ local function Build()
 			if options and options[1] and options[1].value > 0 then
 				local best = options[1]
 				local advice = ns.LABEL[best.key]
-				if best.key == "disenchant" and not canDisenchant then
-					advice = advice .. " (enchanter)"
+				if not ns.CanDo(best) then
+					advice = advice .. (best.key == "smelt" and " (miner)" or " (enchanter)")
 				end
 				row = {
 					key = group.key, id = group.id, link = group.link, name = name, icon = icon, quality = quality,
 					count = group.count, places = group.places, at = group.at, bound = group.bound,
 					options = options, missing = missing, best = best, advice = advice,
 					value = best.value * group.count,
-					trend = LISTING[best.key] and Trend(best.item or group.id) or nil,
+					trend = ns.LISTING[best.key] and Trend(best.item or group.id) or nil,
 				}
 			end
 			kept[group.key] = row or false
@@ -228,7 +226,7 @@ local function Status()
 		return "Needs Syndicator."
 	end
 	local sum, parts = 0, {}
-	for _, key in ipairs({ "auction", "greater", "lesser", "disenchant", "vendor" }) do
+	for _, key in ipairs({ "auction", "greater", "lesser", "smelt", "disenchant", "vendor" }) do
 		if totals[key] then
 			sum = sum + totals[key]
 			parts[#parts + 1] = ("%s %s"):format(ns.LABEL[key]:lower(), Money(totals[key]))
@@ -262,9 +260,9 @@ local function RowTooltip(self)
 	GameTooltip:AddLine(("All %d%s"):format(row.count, row.bound and ", bound" or ""), 1, 0.82, 0)
 	for i, option in ipairs(row.options) do
 		local colour = i == 1 and "|cff40c040" or "|cffffffff"
-		GameTooltip:AddDoubleLine(colour .. ns.LABEL[option.key] .. "|r", Money(option.value * row.count), 1, 1, 1, 1, 1, 1)
+		GameTooltip:AddDoubleLine(colour .. ns.OptionLabel(option) .. "|r", Money(option.value * row.count), 1, 1, 1, 1, 1, 1)
 	end
-	for _, key in ipairs({ "disenchant", "auction", "greater", "lesser", "vendor" }) do
+	for _, key in ipairs(ns.KEYS) do
 		if row.missing[key] then
 			GameTooltip:AddDoubleLine(ns.LABEL[key], row.missing[key], GREY, GREY, GREY, GREY, GREY, GREY)
 		end
