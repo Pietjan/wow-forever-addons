@@ -310,6 +310,32 @@ sets("q: rare scarlet", "q", nil, "scarlet")
 sets("in: blackrock black", "in", "in:the-hinterlands", "in:the-hinterlands black")
 sets("lvl:10-20 wolf", "lvl", "57-63", "lvl:57-63 wolf")
 sets("", "kind", "item", "item: ")
+-- The Dungeons button: is:dungeon replaces another is:, and goes again.
+sets("is:rare wail", "is", "dungeon", "is:dungeon wail")
+sets("is:dungeon wail", "is", nil, "wail")
+check("is:dungeon finds dungeons only", allOf(ns.Results("is:dungeon", 30), function(r)
+	return r.kind == "zone" and ForeverData.Zone(r.id).instance == "dungeon"
+end))
+-- Dungeons by level, lowest first, each with its level range.
+local dungeons = ns.Results("is:dungeon", 30)
+check("dungeons: ordered by level", (function()
+	local last = 0
+	for _, r in ipairs(dungeons) do
+		local low = ns.ZoneLevels(r.id)
+		if low then
+			if low < last then return false end
+			last = low
+		end
+	end
+	return #dungeons > 0
+end)(), (function()
+	local t = {}
+	for _, r in ipairs(dungeons) do t[#t + 1] = r.name .. " " .. tostring(ns.ZoneLevels(r.id)) end
+	return table.concat(t, ", ")
+end)())
+local rfc
+for _, r in ipairs(dungeons) do if r.name == "Ragefire Chasm" then rfc = r end end
+check("dungeons: the level range in the subtitle", rfc and ns.Subtitle(rfc):find("^Dungeon · level %d+%-%d+$"), rfc and ns.Subtitle(rfc))
 -- Filter words: from:, is:, type:, class:, skill:, and the links to them.
 local function all(results, test)
 	if #results == 0 then return false end
@@ -393,7 +419,7 @@ check("zone page: the level range searches its creatures", range == "npc: in:elw
 check("that level search finds creatures", range and #ns.Results(range, 30) > 0)
 
 -- Dungeons and raids.
-check("a dungeon says so", ns.Subtitle({ kind = "zone", id = 1581, ids = { 1581 } }) == "Dungeon" and ns.KindLabel("zone", 12) == "Zone",
+check("a dungeon says so", ns.Subtitle({ kind = "zone", id = 1581, ids = { 1581 } }) == "Dungeon · level 18-20" and ns.KindLabel("zone", 12) == "Zone",
 	ns.Subtitle({ kind = "zone", id = 1581, ids = { 1581 } }))
 check("is:raid: none open yet", #ns.Results("is:raid", 50) == 0, ids(ns.Results("is:raid", 50)))
 check("no Season of Discovery instance", not ForeverData.Zone(16236) and not ForeverData.Zone(15475))

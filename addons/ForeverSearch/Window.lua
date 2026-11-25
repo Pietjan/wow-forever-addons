@@ -249,6 +249,7 @@ local function UpdateChips()
 	for _, chip in ipairs(chips.qualities) do
 		chip:SetActive(options.quality == chip.value)
 	end
+	chips.dungeons:SetActive(string.find(" " .. string.lower(box:GetText()) .. " ", "%sis:dungeon%s") ~= nil)
 	chips.near:SetActive(options.level ~= nil)
 	chips.here:SetActive(IsHere(options.zone))
 end
@@ -517,8 +518,20 @@ local function MakeChips()
 		local chip = Chip(row, k[2], function() Apply("kind", k[1]) end)
 		chip.value = k[1]
 		row.kinds[#row.kinds + 1] = chip
-		Place(chip, i == #KIND_CHIPS and 10 or 3)
+		Place(chip)
 	end
+	-- Dungeons: is:dungeon, which only zones pass, so any other kind goes.
+	-- It replaces another is: word (is:rare and is:dungeon find nothing).
+	row.dungeons = Chip(row, "Dungeons", function(self)
+		local text = ns.SetFilter(box:GetText(), "kind", nil)
+		text = ns.SetFilter(text, "is", not self.active and "dungeon" or nil)
+		box:SetText(text)
+		box:SetCursorPosition(#text)
+		Search()
+		startAt = 0
+		box:SetFocus()
+	end)
+	Place(row.dungeons, 10)
 	for i, q in ipairs(QUALITY_CHIPS) do
 		local c = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q[1]]
 		local chip = Chip(row, "", function(self)

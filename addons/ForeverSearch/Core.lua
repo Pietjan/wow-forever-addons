@@ -919,7 +919,7 @@ end
 -- ("40-50") or "in" (an in: word); value nil lifts it. The other words
 -- stay as they were; the filter goes in front. A kind word's text stays
 -- ("npc:snapjaw" becomes "item: snapjaw").
-local FILTER_KEY = { q = "q", lvl = "lvl", ["in"] = "in" }
+local FILTER_KEY = { q = "q", lvl = "lvl", ["in"] = "in", is = "is" }
 function ns.SetFilter(typed, which, value)
 	local list = {}
 	for word in string.gmatch(typed or "", "%S+") do
@@ -1059,6 +1059,40 @@ local function Signpost(row)
 	return true
 end
 
+-- ZoneLevels is the level of what you fight in a zone: the middle 80% of
+-- its hostile creatures that give loot (bosses aside), so a dragon or a
+-- rare does not stretch it. low, high; nil with fewer than 3 such
+-- creatures. Kept once worked out: it searches the zone's creatures.
+local zoneLevels = {}
+function ns.ZoneLevels(id)
+	local known = zoneLevels[id]
+	if known == nil then
+		known = false
+		local levels = {}
+		for _, row in ipairs(FD.Search("", 1000, { "npc" }, { zone = { id }, distinct = true })) do
+			local n = FD.Npc(row.id)
+			if n and not n.boss and n.alliance ~= "friendly" and n.horde ~= "friendly" and n.maxLevel
+				and FD.HasLoot("npc", row.id) then
+				levels[#levels + 1] = n.maxLevel
+			end
+		end
+		if #levels >= 3 then
+			table.sort(levels)
+			known = { levels[math.max(1, math.floor(#levels * 0.1 + 0.5))], levels[math.min(#levels, math.ceil(#levels * 0.9))] }
+		end
+		zoneLevels[id] = known
+	end
+	if known then
+		return known[1], known[2]
+	end
+	return nil
+end
+
+-- RangeText says a level range: "37-45", or "40" when it is one level.
+local function RangeText(low, high)
+	return low == high and tostring(low) or ("%d-%d"):format(low, high)
+end
+
 function ns.Results(typed, limit, options)
 	if not ns.Ready() then
 		return {}
@@ -1144,6 +1178,31 @@ function ns.Results(typed, limit, options)
 			row.quality, row.available = item and item.quality, item and item.available
 		end
 	end
+	-- A list of dungeons, raids or battlegrounds asked for by filters alone
+	-- (is:dungeon): by their level, lowest first, as one picks the next one.
+	local instancesOnly = text == "" and #out > 0
+	for _, row in ipairs(out) do
+		local z = row.kind == "zone" and FD.Zone(row.id)
+		instancesOnly = instancesOnly and z and z.instance ~= nil
+	end
+	if instancesOnly then
+		local low, high = {}, {}
+		for _, row in ipairs(out) do
+			low[row], high[row] = ns.ZoneLevels(row.id)
+		end
+		table.sort(out, function(a, b)
+			if (low[a] ~= nil) ~= (low[b] ~= nil) then
+				return low[a] ~= nil
+			end
+			if low[a] and low[a] ~= low[b] then
+				return low[a] < low[b]
+			end
+			if high[a] and high[a] ~= high[b] then
+				return high[a] < high[b]
+			end
+			return a.name < b.name
+		end)
+	end
 	if filters.grouped then
 		out = GroupFinds(out)
 	end
@@ -1205,6 +1264,14 @@ function ns.Subtitle(row)
 		local z = FD.Zone(row.id)
 		if z and z.parent then
 			parts[#parts + 1] = "in " .. ns.NameOf("zone", z.parent)
+		end
+		-- A dungeon, raid or battleground: the level of what you fight there.
+		local low, high = nil, nil
+		if z and z.instance then
+			low, high = ns.ZoneLevels(row.id)
+		end
+		if low then
+			parts[#parts + 1] = "level " .. RangeText(low, high)
 		end
 	end
 	if #row.ids > 1 then
@@ -1745,20 +1812,10 @@ local function ZoneLines(id, lines)
 	end)
 	table.sort(people, function(a, b) return a.name < b.name end)
 
-	-- The level of what you fight there: its middle 80%, so a dragon or a
-	-- rare does not stretch it.
-	local levels = {}
-	for _, row in ipairs(fought) do
-		local n = FD.Npc(row.id)
-		if n.maxLevel then
-			levels[#levels + 1] = n.maxLevel
-		end
-	end
-	if #levels >= 3 then
-		table.sort(levels)
-		local low = levels[math.max(1, math.floor(#levels * 0.1 + 0.5))]
-		local high = levels[math.min(#levels, math.ceil(#levels * 0.9))]
-		local range = low == high and tostring(low) or ("%d-%d"):format(low, high)
+	-- The level of what you fight there (ns.ZoneLevels).
+	local low, high = ns.ZoneLevels(id)
+	if low then
+		local range = RangeText(low, high)
 		lines[#lines + 1] = ns.FindLink("npc: " .. Zone(id) .. " lvl:" .. range,
 			(low == high and "creatures level %s" or "creatures mostly level %s"):format(range))
 	end
