@@ -652,6 +652,35 @@ check("waypoint: without TomTom the game's pin", ns.SetWaypoint("npc", 3165, 14,
 check("waypoint: none for a zone without a map", not ns.SetWaypoint("npc", 3165, 999999, 50, 50))
 UiMapPoint = nil
 
+-- The question behind the item: the lead line and what comes first, as a
+-- level-12 Horde player at Razor Hill.
+UnitLevel = function() return 12 end
+UnitFactionGroup = function() return "Horde" end
+local function lead(item)
+	for _, l in ipairs(ns.Details("item", item)) do
+		local t = ns.Unlink(lineText(l))
+		if t:find("^Buy:") or t:find("^For:") or t:find("^Farm:") or t:find("^Get it:") then return t end
+	end
+end
+local function before(item, a, b)
+	local ia, ib
+	for i, l in ipairs(ns.Details("item", item)) do
+		local t = ns.Unlink(lineText(l))
+		if not ia and t:find(a, 1, true) then ia = i end
+		if not ib and t:find(b, 1, true) then ib = i end
+	end
+	return ia ~= nil and (ib == nil or ia < ib)
+end
+check("ammo: buy it from the nearest vendor", (lead(2512) or ""):find("^Buy: Ghrawt: 10c · Durotar"), lead(2512))
+check("ammo: vendors before drops", before(2512, "Sold by (", "Drops from ("))
+check("cloth: farm the nearest common creature", (lead(2589) or ""):find("^Farm: .- · Durotar"), lead(2589))
+check("ore: farm the nearest vein, veins listed first", (lead(2770) or ""):find("^Farm: Copper Vein .- · Durotar") and before(2770, "Found in (", "Drops from ("), lead(2770))
+check("quest item: the quest it is for", lead(5203) == "For: The Hunter's Way", lead(5203))
+check("quest item: the quest before where it drops", before(5203, "Needed for quests (", "Drops from ("))
+check("gear sold: buy it", (lead(2488) or ""):find("^Buy: Uhgar: 5s 36c"), lead(2488))
+check("gear rewarded: the quest", lead(4928) == "Get it: reward from From The Wreckage....", lead(4928))
+UnitLevel, UnitFactionGroup = nil, nil
+
 check("sold by: no distance without a position", (function()
 	C_Map.GetPlayerMapPosition = function() return nil end
 	local lines = vendorLines(2512)

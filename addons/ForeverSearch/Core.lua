@@ -1303,7 +1303,7 @@ local function Grouped(lines, rows, headings, label, more, opts)
 		byMethod[row.method] = byMethod[row.method] or {}
 		table.insert(byMethod[row.method], row)
 	end
-	for _, method in ipairs(METHODS) do
+	for _, method in ipairs(opts and opts.methods or METHODS) do
 		local list = byMethod[method]
 		if list then
 			table.sort(list, opts and opts.order or ByChance)
@@ -1386,6 +1386,29 @@ local function TooltipLines(id)
 	return out
 end
 
+-- Purpose is what an item is most likely searched for, by its class and
+-- what it is part of: "buy" (consumables, reagents, ammo, quivers: you
+-- want more, from a vendor), "quest" (a quest item or one a quest asks
+-- for), "material" (trade goods: farmed or bought), "gear" (weapons and
+-- armor: how to get it), else nil (the page as it was).
+local PURPOSE_BY_CLASS = { [0] = "buy", [5] = "buy", [6] = "buy", [11] = "buy", [7] = "material", [12] = "quest", [2] = "gear", [4] = "gear" }
+local function Purpose(id)
+	local item = FD.Item(id)
+	local purpose = item and PURPOSE_BY_CLASS[item.class]
+	if purpose ~= "quest" then
+		for _, row in ipairs(FD.QuestsOf("item", id)) do
+			if row.role == "objective" and not Theirs("quest", row.quest) and (purpose == nil or purpose == "material") then
+				-- A thing a quest asks for that is not otherwise of use.
+				if purpose == nil then
+					purpose = "quest"
+				end
+			end
+		end
+	end
+	return purpose
+end
+
+local QuestLines, ByLevel -- below
 local function ItemLines(id, lines)
 	local item = FD.Item(id)
 	if item and not item.available then
@@ -1422,60 +1445,100 @@ local function ItemLines(id, lines)
 		lines[#lines + 1] = GOLD .. "You own:|r " .. total .. " (" .. table.concat(who, ", ") .. ")"
 	end
 
-	-- Where it comes from, a heading a way of getting it, so a rare drop
-	-- is not hidden behind a likely skinning.
+	-- The question behind the item: what it is for decides what the page
+	-- leads with ("Buy:", "For:", "Farm:", "Get it:") and the order of the
+	-- ways of getting it after.
+	local purpose = Purpose(id)
+	local continent, at = PlayerWorld()
+	local level = UnitLevel and tonumber(UnitLevel("player"))
+
+	-- Where it comes from. Creatures the player can fight first: none more
+	-- than 3 levels above them (a level-60 elite drops Linen Cloth too, and
+	-- is no place to get it at 12); then likeliest, then nearest. Each with
+	-- its nearest spot.
 	local sources = {}
 	for _, d in ipairs(FD.Drops(id)) do
 		if not Theirs(d.kind, d.id) then
 			sources[#sources + 1] = d
 		end
 	end
-	-- Creatures the player can fight first: none more than 3 levels above
-	-- them (a level-60 elite drops Linen Cloth too, and is no place to get
-	-- it at 12); then likeliest, then nearest. Each with its nearest spot.
-	local continent, at = PlayerWorld()
-	local level = UnitLevel and tonumber(UnitLevel("player"))
-	local near = {}
+	-- Where each source stands: its nearest spot and how many spots it has,
+	-- over every creature or object of its name (Copper Vein is several).
+	local near, byName = {}, {}
 	for _, d in ipairs(sources) do
 		if d.kind == "npc" or d.kind == "object" then
-			local spot, yards = Nearest(d.kind, d.id, continent, at)
-			near[d] = { spot = spot, yards = yards }
+			local key = d.kind .. ":" .. ns.NameOf(d.kind, d.id)
+			byName[key] = byName[key] or { kind = d.kind, ids = {}, seen = {} }
+			if not byName[key].seen[d.id] then
+				byName[key].seen[d.id] = true
+				table.insert(byName[key].ids, d.id)
+			end
+			near[d] = byName[key]
+		end
+	end
+	for _, group in pairs(byName) do
+		group.spawns = 0
+		for _, other in ipairs(group.ids) do
+			group.spawns = group.spawns + #FD.Spawns(group.kind, other)
+			local spot, yards = Nearest(group.kind, other, continent, at)
+			if spot and (not group.spot or (yards and (not group.yards or yards < group.yards))) then
+				group.spot, group.yards, group.id = spot, yards, other
+			end
 		end
 	end
 	local function Reachable(d)
 		local n = level and d.kind == "npc" and FD.Npc(d.id)
 		return not (n and n.minLevel and n.minLevel > level + 3)
 	end
-	Grouped(lines, sources, FROM_HEADING, function(d)
-		return ns.Link(d.kind, d.id)
-	end, nil, {
-		order = function(a, b)
-			local ra, rb = Reachable(a), Reachable(b)
-			if ra ~= rb then
-				return ra
-			end
-			if (a.chance or -1) ~= (b.chance or -1) then
-				return ByChance(a, b)
-			end
-			local ya, yb = near[a] and near[a].yards, near[b] and near[b].yards
-			if (ya ~= nil) ~= (yb ~= nil) then
-				return ya ~= nil
-			end
-			if ya and ya ~= yb then
-				return ya < yb
-			end
+	local function SourceOrder(a, b)
+		local ra, rb = Reachable(a), Reachable(b)
+		if ra ~= rb then
+			return ra
+		end
+		if (a.chance or -1) ~= (b.chance or -1) then
 			return ByChance(a, b)
-		end,
-		suffix = function(d)
-			local n = near[d]
-			return n and Where(d.kind, d.id, n.spot, n.yards) or ""
-		end,
-	})
+		end
+		local ya, yb = near[a] and near[a].yards, near[b] and near[b].yards
+		if (ya ~= nil) ~= (yb ~= nil) then
+			return ya ~= nil
+		end
+		if ya and ya ~= yb then
+			return ya < yb
+		end
+		return ByChance(a, b)
+	end
+	local function SourceWhere(d)
+		local n = near[d]
+		return n and Where(d.kind, n.id or d.id, n.spot, n.yards) or ""
+	end
+	-- Where to farm: creatures one can fight on one's own continent first,
+	-- then the most likely catch for the time spent: chance by how many of it
+	-- stand about (up to 20; one named creature is no farm), then nearest.
+	local function FarmOrder(a, b)
+		local ra, rb = Reachable(a), Reachable(b)
+		if ra ~= rb then
+			return ra
+		end
+		local ya, yb = near[a] and near[a].yards, near[b] and near[b].yards
+		if (ya ~= nil) ~= (yb ~= nil) then
+			return ya ~= nil
+		end
+		local sa = (a.chance or 0) * math.min(near[a] and near[a].spawns or 0, 20)
+		local sb = (b.chance or 0) * math.min(near[b] and near[b].spawns or 0, 20)
+		if sa ~= sb then
+			return sa > sb
+		end
+		if ya and ya ~= yb then
+			return ya < yb
+		end
+		return ByChance(a, b)
+	end
+	local farming = purpose == "material" or purpose == "quest"
+	local sourceOrder = farming and FarmOrder or SourceOrder
 
 	-- Vendors nearest first: who sells it is a question of where to go.
 	-- Those on the player's continent by distance, then the rest as listed.
 	local vendors = {}
-	local continent, at = PlayerWorld()
 	for i, v in ipairs(FD.Vendors(id)) do
 		if not Theirs("npc", v.npc) then
 			local spot, yards = Nearest("npc", v.npc, continent, at)
@@ -1491,26 +1554,110 @@ local function ItemLines(id, lines)
 		end
 		return a.order < b.order
 	end)
-	if #vendors > 0 then
+	local function VendorLine(near)
+		local v = near.v
+		local extra = {}
+		if v.stock then
+			extra[#extra + 1] = v.stock .. " in stock"
+		end
+		if v.standing then
+			extra[#extra + 1] = STANDING_LABEL[v.standing] or ("standing " .. v.standing)
+		end
+		return ("%s: %s%s%s"):format(ns.Link("npc", v.npc), Price(v),
+			#extra > 0 and (GREY .. " (" .. table.concat(extra, ", ") .. ")|r") or "", Where("npc", v.npc, near.spot, near.yards))
+	end
+
+	-- The quests it is part of, by role.
+	local quests = {}
+	for _, row in ipairs(FD.QuestsOf("item", id)) do
+		if not Theirs("quest", row.quest) then
+			quests[row.role] = quests[row.role] or {}
+			table.insert(quests[row.role], row.quest)
+		end
+	end
+	for _, list in pairs(quests) do
+		table.sort(list, ByLevel)
+	end
+
+	-- The lead.
+	local best
+	for _, d in ipairs(sources) do
+		if d.method ~= "disenchanting" and (not best or sourceOrder(d, best)) then
+			best = d
+		end
+	end
+	local function BestSource()
+		return ns.Link(best.kind, best.id) .. " " .. Chance(best) .. SourceWhere(best)
+	end
+	local lead = {}
+	if purpose == "quest" and quests.objective then
+		lead[#lead + 1] = GOLD .. "For:|r " .. ns.Link("quest", quests.objective[1])
+		if best then
+			lead[#lead + 1] = GOLD .. "From:|r " .. BestSource()
+		end
+	elseif (purpose == "buy" or purpose == "material" or purpose == "gear") and vendors[1]
+		and not (purpose == "gear" and quests.reward) then
+		lead[#lead + 1] = GOLD .. "Buy:|r " .. VendorLine(vendors[1])
+	elseif purpose == "gear" and quests.reward then
+		lead[#lead + 1] = GOLD .. "Get it:|r reward from " .. ns.Link("quest", quests.reward[1])
+	elseif (purpose == "material" or purpose == "gear" or purpose == "buy" or purpose == "quest") and best then
+		local item = FD.Item(id)
+		local label = purpose == "material" and "Farm:" or "Get it:"
+		if purpose == "gear" and item and item.widespread then
+			lead[#lead + 1] = GOLD .. label .. "|r world drop; likeliest " .. BestSource()
+		else
+			lead[#lead + 1] = GOLD .. label .. "|r " .. BestSource()
+		end
+	end
+	if #lead > 0 then
+		lines[#lines + 1] = ""
+		for _, l in ipairs(lead) do
+			lines[#lines + 1] = l
+		end
+	end
+
+	-- The way of getting it the lead names comes first (Copper Ore: the
+	-- veins it is found in before the creatures that carry some).
+	local methods = METHODS
+	if best then
+		methods = { best.method }
+		for _, m in ipairs(METHODS) do
+			if m ~= best.method then
+				methods[#methods + 1] = m
+			end
+		end
+	end
+
+	-- The ways of getting it, in the purpose's order.
+	local function Drops()
+		Grouped(lines, sources, FROM_HEADING, function(d)
+			return ns.Link(d.kind, d.id)
+		end, nil, { order = sourceOrder, suffix = SourceWhere, methods = methods })
+	end
+	local function Sold()
+		if #vendors == 0 then
+			return
+		end
 		lines[#lines + 1] = ""
 		lines[#lines + 1] = GOLD .. ("Sold by (%d):|r"):format(#vendors)
 		for i = 1, math.min(#vendors, PER_METHOD) do
-			local near = vendors[i]
-			local v = near.v
-			local price = Price(v)
-			local extra = {}
-			if v.stock then
-				extra[#extra + 1] = v.stock .. " in stock"
-			end
-			if v.standing then
-				extra[#extra + 1] = STANDING_LABEL[v.standing] or ("standing " .. v.standing)
-			end
-			lines[#lines + 1] = ("  %s: %s%s%s"):format(ns.Link("npc", v.npc), price,
-				#extra > 0 and (GREY .. " (" .. table.concat(extra, ", ") .. ")|r") or "", Where("npc", v.npc, near.spot, near.yards))
+			lines[#lines + 1] = "  " .. VendorLine(vendors[i])
 		end
 		if #vendors > PER_METHOD then
 			lines[#lines + 1] = GREY .. ("  and %d more%s|r"):format(#vendors - PER_METHOD, continent and ", further off" or "")
 		end
+	end
+	local function Quests()
+		QuestLines(lines, "item", id)
+	end
+	local order = {
+		buy = { Sold, Drops, Quests },
+		quest = { Quests, Drops, Sold },
+		material = { Drops, Sold, Quests },
+		gear = { Quests, Drops, Sold },
+	}
+	for _, section in ipairs(order[purpose] or { Drops, Sold, Quests }) do
+		section()
 	end
 end
 
@@ -1528,7 +1675,7 @@ local function QuestLevel(id)
 end
 
 -- Lower level first, then by name.
-local function ByLevel(a, b)
+function ByLevel(a, b)
 	local la, lb = QuestLevel(a), QuestLevel(b)
 	if la ~= lb then
 		return la < lb
@@ -1567,7 +1714,7 @@ local QUEST_HEADING = {
 	item = { start = "Starts a quest", objective = "Needed for quests", reward = "Reward from quests" },
 }
 local QUESTS_SHOWN = 10
-local function QuestLines(lines, kind, id)
+function QuestLines(lines, kind, id)
 	local byRole = {}
 	for _, row in ipairs(FD.QuestsOf(kind, id)) do
 		if not Theirs("quest", row.quest) then
@@ -1912,7 +2059,6 @@ function ns.Details(kind, id, typed)
 	local lines = {}
 	if kind == "item" then
 		ItemLines(id, lines)
-		QuestLines(lines, "item", id)
 	elseif kind == "npc" then
 		local n = FD.Npc(id)
 		if n then
