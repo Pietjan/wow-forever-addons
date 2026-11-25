@@ -417,6 +417,20 @@ pageDriver:SetScript("OnUpdate", function(self)
 end)
 
 function Render(lines, keepScroll)
+	-- A tooltip of something on the page (an item link under the mouse)
+	-- goes when another page comes: the mouse never leaves a link whose
+	-- text is swapped under it, so nothing else would close it. Not on a
+	-- redraw of the same page (keepScroll: the item's tooltip data came in),
+	-- where the link stays under the mouse.
+	local owner = not keepScroll and GameTooltip:GetOwner()
+	-- The owner is a link's text, inside a block, on the page: anything
+	-- the page holds, at any depth.
+	while owner and owner ~= preview.content and owner.GetParent do
+		owner = owner:GetParent()
+	end
+	if owner == preview.content then
+		GameTooltip:Hide()
+	end
 	local used, y, run = 0, 0, {}
 	local function Put(text, right)
 		used = used + 1

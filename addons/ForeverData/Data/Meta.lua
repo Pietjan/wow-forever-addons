@@ -2,12 +2,13 @@
 -- Data from ForeverDB.net (https://foreverdb.net), CMaNGOS classic-db (GPL-3.0), wowhead,
 -- QuestieDB and the WoW Forever client; see NOTICE.txt.
 local _, ns = ...
-ns.meta = {contract = 1, made = "2026-11-25T13:21:07Z", sources = {
-	["auctionator"] = "20261125T131143Z (12 snapshots)",
+ns.meta = {contract = 1, made = "2026-11-25T15:04:02Z", sources = {
+	["auctionator"] = "20261125T145149Z (13 snapshots)",
 	["cache"] = "build 71091, 2 snapshots",
 	["client"] = "1.60.1.71091",
 	["cmangos"] = "classic-db 13e9337 2026-11-21T07:01:46+01:00; dump ClassicDB_1_12_1_z2815.sql.gz; updates 437",
 	["foreverdb"] = "2026-11-23.1e10cbe3",
 	["questie"] = "1.1.5",
-	["wowhead"] = "34 item lists, pages: 406 item, 5002 npc, 662 object, 104 zone",
+	["recorder"] = "1.60.1.71091 2026-11-25T14:51:49Z",
+	["wowhead"] = "34 item lists, pages: 406 item, 5207 npc, 662 object, 104 zone",
 }}
