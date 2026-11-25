@@ -146,6 +146,7 @@ local page, history = nil, {}
 -- their own, the name left and its number (a chance, a level, a price)
 -- right-aligned beside it.
 local RIGHT_WIDTH = 76 -- wide enough for a price, "12g 34s 56c"
+local RIGHT_GAP = 8 -- between an entry's name and its number
 local blocks = {}
 local Block -- made in MakeBar's part, as it needs the link handlers
 
@@ -496,6 +497,37 @@ local function FillTile(t, r)
 	t.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 end
 
+-- TextWidth is how wide a line of the page is, unwrapped.
+local measure
+local function TextWidth(text)
+	if not measure then
+		measure = preview.content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+		measure:SetWordWrap(false)
+		measure:Hide()
+	end
+	measure:SetText(text)
+	return measure:GetStringWidth()
+end
+
+-- Fit is a list entry's text as much of it as fits on one line, "..." where
+-- it is cut off.
+local function Fit(text, width)
+	if TextWidth(text) <= width then
+		return text
+	end
+	local _, all = ns.CutText(text, math.huge)
+	local low, high = 0, all -- the most characters that fit, by halves
+	while low < high do
+		local middle = math.ceil((low + high) / 2)
+		if TextWidth((ns.CutText(text, middle))) <= width then
+			low = middle
+		else
+			high = middle - 1
+		end
+	end
+	return (ns.CutText(text, low))
+end
+
 function Render(lines, keepScroll)
 	-- A tooltip of something on the page (an item link under the mouse)
 	-- goes when another page comes: the mouse never leaves a link whose
@@ -519,7 +551,13 @@ function Render(lines, keepScroll)
 		block:SetPoint("TOPLEFT", preview.content, "TOPLEFT", 0, -y)
 		-- The first block (the page's name) keeps clear of the crest.
 		local crest = used == 1 and headRoom or 0
-		block.html:SetWidth(PREVIEW_WIDTH - 44 - (right and RIGHT_WIDTH or 0) - crest)
+		local width = PREVIEW_WIDTH - 44 - crest
+		-- A list entry is one line: what its number leaves of the width.
+		if right then
+			width = width - (right ~= "" and math.min(RIGHT_WIDTH, TextWidth(right)) + RIGHT_GAP or 0)
+			text = Fit(text, width - 2)
+		end
+		block.html:SetWidth(width)
 		block.html:SetText(text)
 		local height = math.max(1, block.html:GetContentHeight())
 		block.html:SetHeight(height)

@@ -171,6 +171,34 @@ local function Zone(id)
 	return ns.InWord(ns.NameOf("zone", id))
 end
 
+-- CutText is the first n characters of a line as one sees it and "...": its
+-- links, colours and icons kept whole, an icon after the cut left out.
+function ns.CutText(text, n)
+	local out, seen, i = {}, 0, 1
+	local cut = false
+	while i <= #text do
+		local code = string.match(text, "^|c%x%x%x%x%x%x%x%x", i) or string.match(text, "^|r", i)
+			or string.match(text, "^|H.-|h", i) or string.match(text, "^|h", i)
+		local icon = not code and (string.match(text, "^|A.-|a", i) or string.match(text, "^|T.-|t", i))
+		-- One character: UTF-8's following bytes go with the first.
+		local piece = code or icon or string.match(text, "^||", i) or string.match(text, "^[^\128-\191][\128-\191]*", i)
+			or string.sub(text, i, i)
+		if code then
+			out[#out + 1] = piece
+		elseif not cut then
+			if seen < n then
+				out[#out + 1] = piece
+				seen = seen + 1
+			else
+				out[#out + 1] = "..."
+				cut = true
+			end
+		end
+		i = i + #piece
+	end
+	return table.concat(out), seen
+end
+
 -- Unlink takes the links, colours and icons out of a line, leaving plain text.
 function ns.Unlink(line)
 	line = string.gsub(string.gsub(line, "%s?|A.-|a", ""), "%s?|T.-|t", "")

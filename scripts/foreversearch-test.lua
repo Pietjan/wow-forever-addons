@@ -641,6 +641,16 @@ end)())
 check("not grouped without asking", not ns.Results("in:sm", 30)[1].header)
 check("boss: Herod is, a Scarlet Monk is not", ForeverData.Npc(3975).boss == true and ForeverData.Npc(4540).boss ~= true)
 
+-- Cutting a line off: by what one sees, its codes whole.
+do
+	local line = "|cff66bbff|Hfsearch:npc:1|hDún Morogh|h|r |A:crest:18:18|a · x||y"
+	for n, want in pairs({ [0] = "|cff66bbff|Hfsearch:npc:1|h...|h|r", [2] = "|cff66bbff|Hfsearch:npc:1|hDú...|h|r",
+		[12] = "|cff66bbff|Hfsearch:npc:1|hDún Morogh|h|r |A:crest:18:18|a...", [99] = line }) do
+		check("cut: " .. n, ns.CutText(line, n) == want, (ns.CutText(line, n)))
+	end
+	check("cut: how many there are", select(2, ns.CutText(line, 99)) == 18, select(2, ns.CutText(line, 99)))
+end
+
 check("money", ns.Money(1234567) == "123g 45s 67c" and ns.Money(150) == "1s 50c" and ns.Money(7) == "7c")
 
 -- Sold by, nearest first. A stand-in for the game's map calls: each map is

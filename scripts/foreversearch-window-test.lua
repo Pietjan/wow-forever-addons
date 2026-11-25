@@ -88,11 +88,20 @@ function Widget:GetWidth() return self.width end
 function Widget:GetHeight() return self.height end
 function Widget:SetPoint(...) self.points[#self.points + 1] = { ... } end
 function Widget:ClearAllPoints() self.points = {} end
-function Widget:GetStringWidth() return #(self.text or "") * 6 end
+-- Text is 6 wide a character, as one sees it: codes and links nothing, an
+-- icon one character.
+local function Visible(text)
+	text = text:gsub("|A.-|a", "#"):gsub("|T.-|t", "#"):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h", ""):gsub("|h", "")
+	return (text:gsub("[\128-\191]", ""))
+end
+function Widget:GetStringWidth() return #Visible(self.text or "") * 6 end
 function Widget:GetStringHeight() return 12 end
 function Widget:GetContentHeight()
-	local _, lines = string.gsub(self.text or "", "\n", "")
-	return (lines + 1) * 12
+	local lines = 0
+	for line in string.gmatch((self.text or "") .. "\n", "(.-)\n") do
+		lines = lines + math.max(1, self.width > 0 and math.ceil(#Visible(line) * 6 / self.width) or 1)
+	end
+	return lines * 12
 end
 function Widget:CreateTexture() return NewWidget("Texture", self) end
 function Widget:CreateFontString() return NewWidget("FontString", self) end
@@ -483,6 +492,34 @@ if rep then
 	local before = box:GetText()
 	rep:Run("OnMouseUp", "LeftButton")
 	check("clicking it searches nothing", box:GetText() == before, box:GetText())
+end
+-- A list entry is one line: beside a short number it has the width but for
+-- the number's, and what does not fit is cut off with "...", its links whole.
+do
+	local function entry(name, place) return "  |Hfsearch:npc:15206|h|cff66bbff" .. name .. "|r|h|cff9d9d9d · |Hfsearch:way:npc:15206:400:1:1|h" .. place .. "|h|r" end
+	local fits, long = entry("Lesser Anubisath Warbringer", "Thousand Needle"), entry("Lesser Anubisath Warbringer", "Excavation Site: Wetlands and more")
+	local real = ns.Details
+	ns.Details = function()
+		return { "Drops from (3):", { fits, "25%" }, { long, "25%" }, { fits, "12g 34s 56c and more" }, { fits, "" } }
+	end
+	Type("npc: herod")
+	ns.Details = real
+	local rows = {}
+	for _, w in ipairs(widgets) do
+		if w.kind == "SimpleHTML" and w:IsVisible() and Within(w, content) and (w.text or ""):find("Anubisath", 1, true) then rows[#rows + 1] = w end
+	end
+	check("list entries: the four", #rows == 4, #rows)
+	if #rows == 4 then
+		local heights = {}
+		for _, w in ipairs(rows) do heights[#heights + 1] = w.height end
+		check("list entries: one line each", table.concat(heights, " ") == "12 12 12 12", table.concat(heights, " "))
+		check("list entries: what fits beside its number is whole", rows[1].text == fits, rows[1].text)
+		check("list entries: what does not is cut off", rows[2].text:find("· |Hfsearch:way:npc:15206:400:1:1|hExca[^|]*%.%.%.|h|r$") ~= nil, rows[2].text)
+		check("list entries: no more than needed", (#Visible(rows[2].text) + 1) * 6 > rows[2].width - 2, #Visible(rows[2].text) .. " in " .. rows[2].width)
+		check("list entries: the name's link is whole", rows[2].text:find("|Hfsearch:npc:15206|h|cff66bbffLesser Anubisath Warbringer|r|h", 1, true) ~= nil, rows[2].text)
+		check("list entries: a wide number keeps its column", rows[3].width == 380 - 44 - 76 - 8 and rows[3].text:find("...", 1, true) ~= nil, rows[3].width)
+		check("list entries: no number, the whole width", rows[4].width == 380 - 44 and rows[4].text == fits, rows[4].width)
+	end
 end
 -- A slow page shows its heading at once and fills in over frames; no frame
 -- longer than the budget allows.
