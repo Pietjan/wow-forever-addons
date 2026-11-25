@@ -1123,4 +1123,9 @@ ns.zones = {
 [796002]="Scarlet Monastery - Library|796|d|",
 [796003]="Scarlet Monastery - Armory|796|d|",
 [796004]="Scarlet Monastery - Cathedral|796|d|",
+[1583001]="Lower Blackrock Spire|1583|d|",
+[1583002]="Upper Blackrock Spire|1583|d|",
+[2557001]="Dire Maul - East|2557|d|",
+[2557002]="Dire Maul - West|2557|d|",
+[2557003]="Dire Maul - North|2557|d|",
 }

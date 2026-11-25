@@ -548,7 +548,7 @@ local ABBREVIATIONS = {
 	sm = { "Scarlet Monastery" }, rfd = { "Razorfen Downs" }, ulda = { "Uldaman" }, uld = { "Uldaman" },
 	zf = { "Zul'Farrak" }, mara = { "Maraudon" }, st = { "The Temple of Atal'Hakkar" },
 	["sunken-temple"] = { "The Temple of Atal'Hakkar" }, brd = { "Blackrock Depths" },
-	brs = { "Blackrock Spire" }, lbrs = { "Blackrock Spire" }, ubrs = { "Blackrock Spire" },
+	brs = { "Blackrock Spire" }, lbrs = { "Lower Blackrock Spire" }, ubrs = { "Upper Blackrock Spire" },
 	strat = { "Stratholme" }, scholo = { "Scholomance" },
 	mc = { "Molten Core" }, ony = { "Onyxia's Lair" }, bwl = { "Blackwing Lair" }, zg = { "Zul'Gurub" },
 	aq20 = { "Ruins of Ahn'Qiraj" }, aq40 = { "Ahn'Qiraj" }, naxx = { "Naxxramas" },

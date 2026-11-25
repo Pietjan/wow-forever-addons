@@ -960,13 +960,14 @@ local function withWings(zones)
 	return out
 end
 
--- wingQuests is the quests that take one to the wings among the zones:
--- those are filed under the whole instance.
-local function wingQuests(zones)
+-- instanceQuests is the quests of the instances and wings among the zones,
+-- wherever filed: those that take one to a wing are filed under the whole,
+-- some of a dungeon's under the area outside its entrance.
+local function instanceQuests(zones)
 	local out = {}
 	for _, id in ipairs(zones) do
 		local z = zone(id)
-		if z and z.instance and z.parent then
+		if z and z.instance then
 			for _, row in ipairs(questsOf("a" .. id) or EMPTY) do
 				out[row.quest] = true
 			end
@@ -1076,10 +1077,10 @@ local function accepter(options)
 	if type(zones) == "number" then
 		zones = { zones }
 	end
-	local wing
+	local inside
 	if zones then
 		zones = withWings(zones)
-		wing = wingQuests(zones)
+		inside = instanceQuests(zones)
 	end
 	local lo, hi = level and level[1] or 0, level and (level[2] or level[1]) or math.huge
 	return function(kind, id)
@@ -1114,7 +1115,7 @@ local function accepter(options)
 					return false
 				end
 			elseif kind == "quest" then
-				if not wing[id] and not questIn(id, zones) then
+				if not inside[id] and not questIn(id, zones) then
 					return false
 				end
 			elseif not standsIn(kind == "npc" and "n" or "o", id, zones) then

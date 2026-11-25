@@ -357,6 +357,8 @@ local wingRow = {}
 for _, r in ipairs(dungeons) do wingRow[r.name] = r end
 check("wings: the four are listed, the whole is not", wingRow["Scarlet Monastery - Graveyard"] and wingRow["Scarlet Monastery - Library"]
 	and wingRow["Scarlet Monastery - Armory"] and wingRow["Scarlet Monastery - Cathedral"] and not wingRow["Scarlet Monastery"])
+check("wings: Dire Maul's and the Spire's are, the wholes are not", wingRow["Dire Maul - East"] and wingRow["Dire Maul - West"] and wingRow["Dire Maul - North"]
+	and wingRow["Lower Blackrock Spire"] and wingRow["Upper Blackrock Spire"] and not wingRow["Dire Maul"] and not wingRow["Blackrock Spire"])
 check("wings: a wing's subtitle", wingRow["Scarlet Monastery - Library"]
 	and ns.Subtitle(wingRow["Scarlet Monastery - Library"]):find("^Dungeon · level %d+%-%d+$"), ns.Subtitle(wingRow["Scarlet Monastery - Library"]))
 check("wings: the whole is found by name, first", ns.Results("scarlet monastery", 10)[1].id == 796, ns.Results("scarlet monastery", 10)[1].name)
@@ -367,7 +369,9 @@ end
 for typed, want in pairs({
 	["in:sm"] = "796", ["in:scarlet-monastery"] = "796", ["in:scarlet"] = "796", ["in:library"] = "796002",
 	["in:armory"] = "796003", ["in:cathedral"] = "796004", ["in:graveyard"] = "796001",
-	[ns.InWord("Scarlet Monastery - Armory")] = "796003", ["in:goldshire"] = "12", ["in:dun-morogh"] = "1",
+	[ns.InWord("Scarlet Monastery - Armory")] = "796003", ["in:lbrs"] = "1583001", ["in:ubrs"] = "1583002", ["in:brs"] = "1583",
+	["in:spire"] = "1583", ["in:upper-blackrock"] = "1583002", ["in:dire-maul"] = "2557", [ns.InWord("Dire Maul - North")] = "2557003",
+	[ns.InWord("Blackrock Spire")] = "1583", [ns.InWord("Dire Maul")] = "2557", ["in:goldshire"] = "12", ["in:dun-morogh"] = "1",
 }) do
 	check("wings: " .. typed, zonesOf(typed) == want, zonesOf(typed))
 end
@@ -387,6 +391,8 @@ check("wings: a wing's page has its own boss", armoryPage:find("Bosses (1)", 1, 
 check("wings: and is in the whole, with no wings", armoryPage:find("In |", 1, true) == 1 and armoryPage:find("Hfsearch:zone:796|", 1, true)
 	and not armoryPage:find("Wings (", 1, true), armoryPage)
 check("wings: and lists its quests", armoryPage:find("Hfsearch:quest:1048|", 1, true) ~= nil, armoryPage)
+check("outside: Razorfen Kraul's page lists its quests", wingPage(491):find("Quests here (6)", 1, true) and wingPage(491):find("Hfsearch:quest:1101|", 1, true) ~= nil,
+	wingPage(491))
 check("wings: a creature's page says its wing", wingPage and (function()
 	for _, line in ipairs(ns.Details("npc", 3975)) do
 		if type(line) == "string" and line:find("Where:", 1, true) then

@@ -222,6 +222,28 @@ do
 	}) do
 		check("wings: " .. b[2], stands(b[1]) == tostring(b[3]), stands(b[1]))
 	end
+	-- Dire Maul's three and the Spire's two.
+	local EAST, WEST, NORTH, LOWER, UPPER = 2557001, 2557002, 2557003, 1583001, 1583002
+	check("wings: Dire Maul's, the Spire's", list(real.Wings(2557)) == "2557001 2557002 2557003" and list(real.Wings(1583)) == "1583001 1583002",
+		list(real.Wings(2557)) .. " / " .. list(real.Wings(1583)))
+	local bosses = { [EAST] = { 11490, 13280, 14327, 11492, 14354, 16097 }, [WEST] = { 11488, 11487, 11496, 11489, 11486, 14506 },
+		[NORTH] = { 14326, 14322, 14321, 14323, 14325, 14324, 11501 }, [LOWER] = { 9196, 9236, 9237, 10596, 10584, 9736, 10268, 10220, 9568 },
+		[UPPER] = { 9816, 10429, 10430, 10363, 16042 } }
+	local placed, named = 0, {}
+	for wing, ids in pairs(bosses) do
+		for _, id in ipairs(ids) do
+			local n = real.Npc(id)
+			placed, named[id] = placed + 1, true
+			check("wings: " .. tostring(n and n.name) .. ", a boss, in its wing", n and stands(id) == tostring(wing), stands(id))
+		end
+	end
+	-- Every boss of the two is in the list above, so none is left in the whole.
+	for _, whole in ipairs({ 2557, 1583 }) do
+		for _, r in ipairs(real.Search("", 1000, { "npc" }, { zone = whole, filter = function(_, id) return real.Npc(id).boss == true end })) do
+			check("wings: " .. r.name .. " (" .. r.id .. ") is in a wing", not (" " .. stands(r.id) .. " "):find(" " .. whole .. " ", 1, true), stands(r.id))
+		end
+	end
+	check("wings: a Rookery Egg above", real.Spawns("object", 175124)[1].zone == UPPER and #real.Spawns("object", 175124) == 1)
 	check("wings: one of two wings in both", stands(4295) == "796003 796004", stands(4295))
 	check("wings: a boss drop in its wing only", inZone("Ravager", ARMORY) and not inZone("Ravager", LIBRARY))
 	check("wings: a world drop not a wing's", not inZone("Fiery War Axe", ARMORY))
@@ -237,6 +259,12 @@ do
 	check("wings: no Armory quest in a wing it has nothing in", not questsIn(GRAVEYARD):find("1048"), questsIn(GRAVEYARD))
 	check("wings: Mythology of the Titans in the Library", questsIn(LIBRARY):find("1050") and not questsIn(ARMORY):find("1050"), questsIn(LIBRARY))
 	check("wings: Vorrel's Revenge in the Graveyard", questsIn(GRAVEYARD):find("1051") ~= nil, questsIn(GRAVEYARD))
+	-- Quests filed under the area outside, of the dungeon's or its map's name.
+	check("outside: Razorfen Kraul has its six", questsIn(491) == "1101 1102 1109 1142 1144 1221", questsIn(491))
+	check("outside: The Barrens keep them", (" " .. questsIn(1717) .. " "):find(" 1101 ") ~= nil, questsIn(1717))
+	check("outside: the Sunken Temple's, by its map's name", questsIn(1477) == "1445 1446 1475 3373 3380 3446 3447 3528 8733", questsIn(1477))
+	check("outside: with those filed inside", (" " .. questsIn(721) .. " "):find(" 2904 ") and (" " .. questsIn(721) .. " "):find(" 80324 "), questsIn(721))
+	check("outside: one filed there is still of its zone", real.Quest(1101).zone == 1717)
 	local every, some = {}, 0
 	for _, r in ipairs(real.Search("", 1000, { "npc" }, { zone = 796 })) do every[r.id] = true end
 	local all = true
