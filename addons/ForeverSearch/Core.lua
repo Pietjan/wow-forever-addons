@@ -133,27 +133,180 @@ local function ByChance(a, b)
 	return (a.sample or 0) > (b.sample or 0)
 end
 
--- Places a creature or object stands: "The Hinterlands (92), ..."; a zone
--- it stands in once or twice gets the spots' coordinates instead.
+-- Distances ---------------------------------------------------------------------
+--
+-- A spawn's x and y are of its zone's game map (FD.Zone(id).map); the
+-- game's map calls turn that, and where the player stands, into a
+-- continent and a world position, so a distance is the game's own yards.
+-- Anything the game does not give (a secret, an instance, no map) is no
+-- distance, never a guess.
+
+-- PlayerWorld is the player's continent and world position, nil unknown.
+local function PlayerWorld()
+	if not (C_Map and C_Map.GetBestMapForUnit and C_Map.GetPlayerMapPosition and C_Map.GetWorldPosFromMapPos) then
+		return nil
+	end
+	local ok, continent, world = pcall(function()
+		local map = C_Map.GetBestMapForUnit("player")
+		local pos = map and C_Map.GetPlayerMapPosition(map, "player")
+		if not pos then
+			return nil
+		end
+		local c, w = C_Map.GetWorldPosFromMapPos(map, pos)
+		return c, w and { x = w.x + 0, y = w.y + 0 } -- + 0 fails on a secret
+	end)
+	if ok and continent and world then
+		return continent, world
+	end
+	return nil
+end
+
+-- SpotWorld is a spawn's continent and world position, nil unknown.
+local function SpotWorld(spot)
+	local z = spot.x and FD.Zone(spot.zone)
+	if not (z and z.map and C_Map and C_Map.GetWorldPosFromMapPos and CreateVector2D) then
+		return nil
+	end
+	local ok, continent, world = pcall(C_Map.GetWorldPosFromMapPos, z.map, CreateVector2D(spot.x / 100, spot.y / 100))
+	if ok and continent and world then
+		return continent, world
+	end
+	return nil
+end
+
+-- Nearest is the spawn of a creature or object nearest the player and how
+-- many yards off it is; yards nil when none is on the player's continent or
+-- where either stands is unknown (the spot is then its first).
+local function Nearest(kind, id, continent, at)
+	local best, yards, first
+	for _, spot in ipairs(FD.Spawns(kind, id)) do
+		first = first or spot
+		if continent then
+			local c, w = SpotWorld(spot)
+			if c == continent then
+				local d = math.sqrt((w.x - at.x) ^ 2 + (w.y - at.y) ^ 2)
+				if not yards or d < yards then
+					best, yards = spot, d
+				end
+			end
+		end
+	end
+	return best or first, yards
+end
+
+-- A place link sets a waypoint there: |Hfsearch:way:<kind>:<id>:<zone>:<x>:<y>|h,
+-- x and y in hundredths of a percent of the zone's map.
+local function PlaceLink(kind, id, spot, text)
+	if not (spot and spot.x and FD.Zone(spot.zone) and FD.Zone(spot.zone).map) then
+		return text
+	end
+	return ("|Hfsearch:way:%s:%d:%d:%d:%d|h%s|h"):format(kind, id, spot.zone,
+		math.floor(spot.x * 100 + 0.5), math.floor(spot.y * 100 + 0.5), text)
+end
+
+-- Yards says a distance: "240 yd".
+local function Yards(yards)
+	return ("%d yd"):format(math.floor(yards + 0.5))
+end
+
+-- Where says in grey where a creature's or object's spot is and how far,
+-- a click setting a waypoint there: " · Durotar 52.2, 41.0, 240 yd".
+local function Where(kind, id, spot, yards)
+	if not spot then
+		return ""
+	end
+	local text = ns.NameOf("zone", spot.zone)
+	if spot.x then
+		text = text .. (" %.1f, %.1f"):format(spot.x, spot.y)
+	end
+	if yards then
+		text = text .. ", " .. Yards(yards)
+	end
+	return GREY .. " · " .. PlaceLink(kind, id, spot, text) .. "|r"
+end
+
+-- SetWaypoint points an arrow at a creature's or object's spot: TomTom's
+-- (or ForeverGuide's stand-in for it), else the game's own map pin. The
+-- last waypoint set from here is taken down first. False when it could
+-- not be set.
+local lastWaypoint
+function ns.SetWaypoint(kind, id, zoneID, x, y)
+	local z = FD and FD.Zone(zoneID)
+	if not (z and z.map) then
+		return false
+	end
+	local title = ns.NameOf(kind, id)
+	if TomTom and TomTom.AddWaypoint then
+		if lastWaypoint and TomTom.RemoveWaypoint then
+			pcall(TomTom.RemoveWaypoint, TomTom, lastWaypoint)
+		end
+		local ok, handle = pcall(TomTom.AddWaypoint, TomTom, z.map, x / 100, y / 100, { title = title, from = "ForeverSearch" })
+		if ok and handle then
+			lastWaypoint = handle
+			return true
+		end
+	end
+	if C_Map and C_Map.SetUserWaypoint and UiMapPoint and UiMapPoint.CreateFromCoordinates then
+		local ok = pcall(function()
+			C_Map.SetUserWaypoint(UiMapPoint.CreateFromCoordinates(z.map, x / 100, y / 100))
+			if C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then
+				C_SuperTrack.SetSuperTrackedUserWaypoint(true)
+			end
+		end)
+		return ok
+	end
+	return false
+end
+
+-- Places a creature or object stands: "Durotar (92, nearest 52.1, 40.2,
+-- 120 yd), Orgrimmar (3)", the zone with the nearest spot first; a zone it
+-- stands in once or twice gets the spots' coordinates instead. Every
+-- coordinate is a click to set a waypoint.
 local function Places(kind, id)
-	local byZone, order = {}, {}
+	local continent, at = PlayerWorld()
+	local byZone, order, near = {}, {}, {}
 	for _, spot in ipairs(FD.Spawns(kind, id)) do
 		if not byZone[spot.zone] then
 			byZone[spot.zone] = {}
 			order[#order + 1] = spot.zone
 		end
 		table.insert(byZone[spot.zone], spot)
+		if continent then
+			local c, w = SpotWorld(spot)
+			if c == continent then
+				local d = math.sqrt((w.x - at.x) ^ 2 + (w.y - at.y) ^ 2)
+				if not near[spot.zone] or d < near[spot.zone].yards then
+					near[spot.zone] = { spot = spot, yards = d }
+				end
+			end
+		end
 	end
-	table.sort(order, function(a, b) return #byZone[a] > #byZone[b] end)
+	table.sort(order, function(a, b)
+		if (near[a] ~= nil) ~= (near[b] ~= nil) then
+			return near[a] ~= nil
+		end
+		if near[a] and near[a].yards ~= near[b].yards then
+			return near[a].yards < near[b].yards
+		end
+		return #byZone[a] > #byZone[b]
+	end)
 	local parts = {}
 	for _, zone in ipairs(order) do
 		local spots = byZone[zone]
 		if #spots <= 2 and spots[1].x then
 			local xy = {}
 			for _, spot in ipairs(spots) do
-				xy[#xy + 1] = ("%.1f, %.1f"):format(spot.x, spot.y)
+				local text = ("%.1f, %.1f"):format(spot.x, spot.y)
+				if near[zone] and near[zone].spot == spot then
+					text = text .. ", " .. Yards(near[zone].yards)
+				end
+				xy[#xy + 1] = PlaceLink(kind, id, spot, text)
 			end
 			parts[#parts + 1] = ns.Link("zone", zone) .. " " .. GREY .. table.concat(xy, "; ") .. "|r"
+		elseif near[zone] then
+			local n = near[zone]
+			parts[#parts + 1] = ("%s (%d, %s)"):format(ns.Link("zone", zone), #spots, GREY .. PlaceLink(kind, id, n.spot,
+				("nearest %.1f, %.1f, %s"):format(n.spot.x, n.spot.y, Yards(n.yards))) .. "|r")
 		else
 			parts[#parts + 1] = ("%s (%d)"):format(ns.Link("zone", zone), #spots)
 		end
@@ -162,28 +315,34 @@ local function Places(kind, id)
 end
 
 -- Spot says in a few grey words where to find a quest's giver or target:
--- " · Ashenvale 73.2, 61.5" for one spot, " · Ashenvale" for many.
+-- its nearest spot and how far when that is known (" · Durotar 52.2, 41.0,
+-- 240 yd"), else " · Ashenvale 73.2, 61.5" for one spot, " · Ashenvale" for
+-- many. A spot is a click to set a waypoint.
 local function Spot(kind, id)
+	local continent, at = PlayerWorld()
+	local spot, yards = Nearest(kind, id, continent, at)
+	if yards then
+		return Where(kind, id, spot, yards)
+	end
 	local counts, best = {}, nil
 	local spawns = FD.Spawns(kind, id)
-	for _, spot in ipairs(spawns) do
-		counts[spot.zone] = (counts[spot.zone] or 0) + 1
-		if not best or counts[spot.zone] > counts[best] then
-			best = spot.zone
+	for _, s in ipairs(spawns) do
+		counts[s.zone] = (counts[s.zone] or 0) + 1
+		if not best or counts[s.zone] > counts[best] then
+			best = s.zone
 		end
 	end
 	if not best then
 		return ""
 	end
-	local where = ns.NameOf("zone", best)
 	if counts[best] == 1 then
-		for _, spot in ipairs(spawns) do
-			if spot.zone == best and spot.x then
-				where = where .. (" %.1f, %.1f"):format(spot.x, spot.y)
+		for _, s in ipairs(spawns) do
+			if s.zone == best and s.x then
+				return Where(kind, id, s)
 			end
 		end
 	end
-	return GREY .. " · " .. where .. "|r"
+	return GREY .. " · " .. ns.NameOf("zone", best) .. "|r"
 end
 
 -- Auctionator's price, when it is there and has one.
@@ -1068,9 +1227,10 @@ local GIVES_HEADING = {
 }
 local PER_METHOD = 8
 
--- Grouped writes rows by way of getting, likeliest first, at most
--- PER_METHOD each; label names a row's other side.
-local function Grouped(lines, rows, headings, label, more)
+-- Grouped writes rows by way of getting, likeliest first (or by opts.order),
+-- at most PER_METHOD each; label names a row's other side, opts.suffix adds
+-- to it after (where it is).
+local function Grouped(lines, rows, headings, label, more, opts)
 	local byMethod = {}
 	for _, row in ipairs(rows) do
 		byMethod[row.method] = byMethod[row.method] or {}
@@ -1079,7 +1239,7 @@ local function Grouped(lines, rows, headings, label, more)
 	for _, method in ipairs(METHODS) do
 		local list = byMethod[method]
 		if list then
-			table.sort(list, ByChance)
+			table.sort(list, opts and opts.order or ByChance)
 			-- Things of one name (two Defias Mercenary creatures) are one
 			-- entry: the likeliest, as the list is sorted.
 			local seen, kept = {}, {}
@@ -1094,7 +1254,7 @@ local function Grouped(lines, rows, headings, label, more)
 			lines[#lines + 1] = ""
 			lines[#lines + 1] = GOLD .. ("%s (%d):|r"):format(headings[method], #list)
 			for i = 1, math.min(#list, PER_METHOD) do
-				lines[#lines + 1] = { "  " .. label(list[i]), Chance(list[i]) }
+				lines[#lines + 1] = { "  " .. label(list[i]) .. (opts and opts.suffix and opts.suffix(list[i]) or ""), Chance(list[i]) }
 			end
 			if #list > PER_METHOD then
 				lines[#lines + 1] = more and More(#list - PER_METHOD, more)
@@ -1203,21 +1363,73 @@ local function ItemLines(id, lines)
 			sources[#sources + 1] = d
 		end
 	end
-	Grouped(lines, sources, FROM_HEADING, function(d)
-		return ns.Link(d.kind, d.id)
-	end)
-
-	local vendors = {}
-	for _, v in ipairs(FD.Vendors(id)) do
-		if not Theirs("npc", v.npc) then
-			vendors[#vendors + 1] = v
+	-- Creatures the player can fight first: none more than 3 levels above
+	-- them (a level-60 elite drops Linen Cloth too, and is no place to get
+	-- it at 12); then likeliest, then nearest. Each with its nearest spot.
+	local continent, at = PlayerWorld()
+	local level = UnitLevel and tonumber(UnitLevel("player"))
+	local near = {}
+	for _, d in ipairs(sources) do
+		if d.kind == "npc" or d.kind == "object" then
+			local spot, yards = Nearest(d.kind, d.id, continent, at)
+			near[d] = { spot = spot, yards = yards }
 		end
 	end
+	local function Reachable(d)
+		local n = level and d.kind == "npc" and FD.Npc(d.id)
+		return not (n and n.minLevel and n.minLevel > level + 3)
+	end
+	Grouped(lines, sources, FROM_HEADING, function(d)
+		return ns.Link(d.kind, d.id)
+	end, nil, {
+		order = function(a, b)
+			local ra, rb = Reachable(a), Reachable(b)
+			if ra ~= rb then
+				return ra
+			end
+			if (a.chance or -1) ~= (b.chance or -1) then
+				return ByChance(a, b)
+			end
+			local ya, yb = near[a] and near[a].yards, near[b] and near[b].yards
+			if (ya ~= nil) ~= (yb ~= nil) then
+				return ya ~= nil
+			end
+			if ya and ya ~= yb then
+				return ya < yb
+			end
+			return ByChance(a, b)
+		end,
+		suffix = function(d)
+			local n = near[d]
+			return n and Where(d.kind, d.id, n.spot, n.yards) or ""
+		end,
+	})
+
+	-- Vendors nearest first: who sells it is a question of where to go.
+	-- Those on the player's continent by distance, then the rest as listed.
+	local vendors = {}
+	local continent, at = PlayerWorld()
+	for i, v in ipairs(FD.Vendors(id)) do
+		if not Theirs("npc", v.npc) then
+			local spot, yards = Nearest("npc", v.npc, continent, at)
+			vendors[#vendors + 1] = { v = v, spot = spot, yards = yards, order = i }
+		end
+	end
+	table.sort(vendors, function(a, b)
+		if (a.yards ~= nil) ~= (b.yards ~= nil) then
+			return a.yards ~= nil
+		end
+		if a.yards and a.yards ~= b.yards then
+			return a.yards < b.yards
+		end
+		return a.order < b.order
+	end)
 	if #vendors > 0 then
 		lines[#lines + 1] = ""
 		lines[#lines + 1] = GOLD .. ("Sold by (%d):|r"):format(#vendors)
 		for i = 1, math.min(#vendors, PER_METHOD) do
-			local v = vendors[i]
+			local near = vendors[i]
+			local v = near.v
 			local price = Price(v)
 			local extra = {}
 			if v.stock then
@@ -1226,8 +1438,11 @@ local function ItemLines(id, lines)
 			if v.standing then
 				extra[#extra + 1] = STANDING_LABEL[v.standing] or ("standing " .. v.standing)
 			end
-			lines[#lines + 1] = ("  %s: %s%s"):format(ns.Link("npc", v.npc), price,
-				#extra > 0 and (GREY .. " (" .. table.concat(extra, ", ") .. ")|r") or "")
+			lines[#lines + 1] = ("  %s: %s%s%s"):format(ns.Link("npc", v.npc), price,
+				#extra > 0 and (GREY .. " (" .. table.concat(extra, ", ") .. ")|r") or "", Where("npc", v.npc, near.spot, near.yards))
+		end
+		if #vendors > PER_METHOD then
+			lines[#lines + 1] = GREY .. ("  and %d more%s|r"):format(#vendors - PER_METHOD, continent and ", further off" or "")
 		end
 	end
 end

@@ -181,7 +181,7 @@ local zone = cached(function(id)
 		return nil
 	end
 	local f = split(s, "|")
-	return { id = id, name = f[1], parent = number(f[2]), instance = INSTANCE[f[3] or ""] }
+	return { id = id, name = f[1], parent = number(f[2]), instance = INSTANCE[f[3] or ""], map = number(f[4]) }
 end)
 
 -- lootOf decodes what one thing gives: "item,method,chance,sample,basis;...".
@@ -362,9 +362,10 @@ function FD.Subzones(id)
 	return out
 end
 
--- {id, name, parent, instance}: an area; parent nil for a zone or an
+-- {id, name, parent, instance, map}: an area; parent nil for a zone or an
 -- instance; instance "dungeon", "raid" or "battleground" for an instance's
--- own area, else nil.
+-- own area, else nil; map the game map (UiMap) the x and y of spawns in it
+-- are of, nil when unknown.
 function FD.Zone(id) return zone(id) end
 
 -- What a thing gives: kind "npc", "object", "item" (a container) or

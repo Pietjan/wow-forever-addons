@@ -68,7 +68,7 @@ check("results", #found > 0 and found[1].kind == "item" and found[1].id == 8167 
 
 local lines = ns.Details("item", 8167)
 check("item: drops have their own heading", has(lines, "Drops from (") and has(lines, "Skinned from ("), joined(lines))
-check("item: a drop, the chance on its own", has(lines, "Stolid Snapjaw | 15%"), joined(lines))
+check("item: a drop, the chance on its own", has(lines, "Stolid Snapjaw · Maraudon | 15%"), joined(lines))
 local entry
 for _, line in ipairs(lines) do
 	if type(line) == "table" and ns.Unlink(line[1]):find("Stolid Snapjaw", 1, true) then entry = line break end
@@ -543,6 +543,96 @@ check("not grouped without asking", not ns.Results("in:sm", 30)[1].header)
 check("boss: Herod is, a Scarlet Monk is not", ForeverData.Npc(3975).boss == true and ForeverData.Npc(4540).boss ~= true)
 
 check("money", ns.Money(1234567) == "123g 45s 67c" and ns.Money(150) == "1s 50c" and ns.Money(7) == "7c")
+
+-- Sold by, nearest first. A stand-in for the game's map calls: each map is
+-- its own continent, 1000 yards across. The player stands in Durotar (1411)
+-- at Razor Hill, 53.0, 42.0: Ghrawt (52.98, 41.03) is 10 yards off, Jark
+-- (54.39, 42.18) 14; Orgrimmar's vendors are on another map, so no distance.
+C_Map = {
+	GetBestMapForUnit = function() return 1411 end,
+	GetPlayerMapPosition = function() return { x = 0.53, y = 0.42 } end,
+	GetWorldPosFromMapPos = function(map, v) return map, { x = v.x * 1000, y = v.y * 1000 } end,
+}
+function CreateVector2D(x, y) return { x = x, y = y } end
+local function vendorLines(item)
+	local out, on = {}, false
+	for _, line in ipairs(ns.Details("item", item)) do
+		local text = ns.Unlink(lineText(line))
+		if text:find("^Sold by") then
+			on = true
+		elseif on and text:find("^  ") then
+			out[#out + 1] = text
+		elseif on then
+			break
+		end
+	end
+	return out
+end
+local sold = vendorLines(2512)
+check("sold by: the nearest vendor first, where and how far", sold[1] and sold[1]:find("^  Ghrawt: ") and sold[1]:find("Durotar 53.0, 41.0, 10 yd", 1, true), table.concat(sold, "\n"))
+check("sold by: then the next nearest", sold[2] and sold[2]:find("^  Jark: ") and sold[2]:find("14 yd", 1, true), sold[2])
+local function rawLines(lines)
+	local out = {}
+	for _, line in ipairs(lines) do out[#out + 1] = lineText(line) end
+	return out
+end
+local function firstWith(lines, needle)
+	for _, l in ipairs(rawLines(lines)) do
+		if ns.Unlink(l):find(needle, 1, true) then return l end
+	end
+end
+
+-- Places: a click sets a waypoint; the nearest zone first, with its nearest spot.
+local boar = firstWith(ns.Details("npc", 3098), "Where:")
+check("where: the nearest spot of a many-spot zone, how far", boar and ns.Unlink(boar):find("^Where: Durotar %(%d+, nearest [%d.]+, [%d.]+, %d+ yd%)"), boar and ns.Unlink(boar))
+check("where: a spot is a waypoint link", boar and boar:find("|Hfsearch:way:npc:3098:14:%d+:%d+|h"), boar)
+-- A quest's giver: Gar'Thok in Razor Hill, 52.0, 43.5 as shipped: 18 yards.
+local garthok = firstWith(ns.Details("quest", 825), "Gar'Thok · ")
+check("quest giver: nearest spot and how far, clickable", garthok and ns.Unlink(garthok):find("Durotar 52.0, 43.5, 18 yd", 1, true)
+	and garthok:find("|Hfsearch:way:npc:3139:14:5200:4350|h", 1, true), garthok)
+-- Drop sources: at level 1, creatures of level 4 or less come first.
+UnitLevel = function() return 1 end
+local firstDrop
+local inDrops = false
+for _, l in ipairs(rawLines(ns.Details("item", 2589))) do
+	if ns.Unlink(l):find("^Drops from") then
+		inDrops = true
+	elseif inDrops then
+		firstDrop = tonumber(l:match("|Hfsearch:npc:(%d+)|h"))
+		break
+	end
+end
+UnitLevel = nil
+check("drops from: a creature the player can fight first", firstDrop and ForeverData.Npc(firstDrop).minLevel <= 4,
+	firstDrop and (ForeverData.Npc(firstDrop).name .. " " .. ForeverData.Npc(firstDrop).minLevel))
+
+-- Waypoints: through TomTom (or ForeverGuide's stand-in), the last one taken
+-- down first; without it the game's own map pin.
+local added, removed = {}, 0
+TomTom = {
+	AddWaypoint = function(_, map, x, y, opts) added[#added + 1] = { map, x, y, opts.title }; return #added end,
+	RemoveWaypoint = function() removed = removed + 1 end,
+}
+local set = ns.SetWaypoint("npc", 3165, 14, 52.98, 41.03)
+ns.SetWaypoint("npc", 3164, 14, 54.39, 42.18)
+check("waypoint: TomTom's arrow, on the zone's map, titled", set and added[1] and added[1][1] == 1411 and math.abs(added[1][2] - 0.5298) < 1e-9
+	and added[1][4] == "Ghrawt", added[1] and table.concat({ tostring(added[1][1]), tostring(added[1][2]), tostring(added[1][4]) }, " "))
+check("waypoint: the last one taken down first", removed == 1 and #added == 2, removed)
+TomTom = nil
+local pinned
+C_Map.SetUserWaypoint = function(point) pinned = point end
+UiMapPoint = { CreateFromCoordinates = function(map, x, y) return { map = map, x = x, y = y } end }
+check("waypoint: without TomTom the game's pin", ns.SetWaypoint("npc", 3165, 14, 52.98, 41.03) and pinned and pinned.map == 1411)
+check("waypoint: none for a zone without a map", not ns.SetWaypoint("npc", 3165, 999999, 50, 50))
+UiMapPoint = nil
+
+check("sold by: no distance without a position", (function()
+	C_Map.GetPlayerMapPosition = function() return nil end
+	local lines = vendorLines(2512)
+	C_Map = nil
+	for _, l in ipairs(lines) do if l:find(" yd") then return false end end
+	return #lines > 0
+end)())
 
 if failures > 0 then
 	print(failures .. " failed")

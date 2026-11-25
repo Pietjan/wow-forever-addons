@@ -557,8 +557,16 @@ end
 local function OnLinkClick(_, link)
 	local kind, id = string.match(link, "^fsearch:(%a+):(%d+)$")
 	local query = string.match(link, "^fsearch:find:(.+)$")
+	local wayKind, wayID, wayZone, wayX, wayY = string.match(link, "^fsearch:way:(%a+):(%d+):(%d+):(%d+):(%d+)$")
 	if link == "fsearch:back" then
 		Back()
+	elseif wayKind then
+		local x, y = tonumber(wayX) / 100, tonumber(wayY) / 100
+		if ns.SetWaypoint(wayKind, tonumber(wayID), tonumber(wayZone), x, y) then
+			print(("ForeverSearch: waypoint to %s, %s %.1f, %.1f"):format(ns.NameOf(wayKind, tonumber(wayID)), ns.NameOf("zone", tonumber(wayZone)), x, y))
+		else
+			print("ForeverSearch: no waypoint can be set there")
+		end
 	elseif query then
 		SearchFor((string.gsub(query, ",", " ")))
 	elseif kind then
