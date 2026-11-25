@@ -249,7 +249,7 @@ local function raw(lines, needle)
 end
 -- Pages: a quest's, a vendor's, quests on a creature's and an item's, a zone's.
 lines = ns.Details("quest", 7)
-check("quest page: facts, the side not in words (the crest says it)", has(lines, "level 2, from level 1") and not has(lines, "Alliance only"), joined(lines))
+check("quest page: facts, the side not in words (the crest says it)", has(lines, "Level 2 requires level 1") and not has(lines, "Alliance only"), joined(lines))
 check("quest page: starts at, with where", has(lines, "Marshal McBride · Elwynn Forest 48.9, 41.6"), joined(lines))
 check("quest page: objective", has(lines, "Kobold Vermin · Elwynn Forest"), joined(lines))
 check("quest page: reputation", has(lines, "+100 Stormwind"), joined(lines))
@@ -881,6 +881,32 @@ check("rewards: a single choice is given, not to choose", singles > 0 and #wrong
 check("rewards: a single choice is still shown", #lost == 0, table.concat(lost, ","))
 check("rewards: Making Repairs", rewardText(91316):find("^Rewards / You will receive: / %[tile: Salvaged Wooden Tower Shield") ~= nil, rewardText(91316))
 check("rewards: several stay a choice", rewardText(855):find("choose one of these", 1, true) ~= nil)
+
+-- The level line, whole: "Level 27 requires level 22", one level when they
+-- are the same, and what is known when only one is.
+local function factsLine(q)
+	return ns.Unlink(lineText(ns.Details("quest", q)[1] or ""))
+end
+check("levels: level and required", factsLine(6571) == "Level 27 requires level 22", factsLine(6571))
+check("levels: the same, once", factsLine(16) == "Level 1, repeatable", factsLine(16))
+check("levels: only its own", factsLine(84319):find("^Level 58") ~= nil and not factsLine(84319):find("requires"), factsLine(84319))
+check("levels: only the required one", factsLine(8856):find("^Requires level 60") ~= nil, factsLine(8856))
+check("levels: none of its own (-1) is not said", factsLine(1472):find("^Requires level 20") ~= nil and not factsLine(1472):find("%-1"), factsLine(1472))
+check("levels: neither, no level line", not factsLine(8152):lower():find("level"), factsLine(8152))
+check("levels: then the rest", factsLine(98910) == "Level 39 requires level 30, up to level 39", factsLine(98910))
+
+-- The result list: a quest's level, none for one without its own (-1).
+local function questRow(id) return ns.Subtitle({ kind = "quest", id = id, ids = { id } }) end
+check("result list: a quest's level", questRow(6571) == "Quest · level 27", questRow(6571))
+local noLevel, shown = 0, {}
+for id in pairs(data.quests) do
+	local level = ForeverData.Quest(id).level
+	if level and level <= 0 then
+		noLevel = noLevel + 1
+		if questRow(id):find("level", 1, true) then shown[#shown + 1] = id .. " " .. questRow(id) end
+	end
+end
+check("result list: no level -1", noLevel > 0 and #shown == 0, noLevel .. " quests, shown: " .. table.concat(shown, "; "))
 
 if failures > 0 then
 	print(failures .. " failed")

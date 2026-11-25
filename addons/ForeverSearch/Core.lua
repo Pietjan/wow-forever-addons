@@ -1437,7 +1437,7 @@ function ns.Subtitle(row)
 		parts[#parts + 1] = MainZone("object", row.id)
 	elseif row.kind == "quest" then
 		local q = FD.Quest(row.id)
-		if q and q.level then
+		if q and q.level and q.level > 0 then -- -1: it has the player's
 			parts[#parts + 1] = "level " .. q.level
 		end
 		if q and q.new then
@@ -2288,11 +2288,15 @@ local function QuestPage(id, lines)
 		return
 	end
 	local facts = {}
-	if q.level then
-		facts[#facts + 1] = "level " .. q.level
-	end
-	if q.requiredLevel then
-		facts[#facts + 1] = "from level " .. q.requiredLevel
+	-- "Level 27 requires level 22"; one level when they are the same. A
+	-- quest of no level of its own (-1: it has the player's) only requires.
+	local level = q.level and q.level > 0 and q.level or nil
+	if level and q.requiredLevel and q.requiredLevel ~= level then
+		facts[#facts + 1] = ("Level %d requires level %d"):format(level, q.requiredLevel)
+	elseif level then
+		facts[#facts + 1] = "Level " .. level
+	elseif q.requiredLevel then
+		facts[#facts + 1] = "Requires level " .. q.requiredLevel
 	end
 	if q.maxLevel then
 		facts[#facts + 1] = "up to level " .. q.maxLevel
