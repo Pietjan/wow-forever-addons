@@ -250,7 +250,7 @@ end
 -- Pages: a quest's, a vendor's, quests on a creature's and an item's, a zone's.
 lines = ns.Details("quest", 7)
 check("quest page: facts, the side not in words (the crest says it)", has(lines, "Level 2 requires level 1") and not has(lines, "Alliance only"), joined(lines))
-check("quest page: starts at, with where", has(lines, "Marshal McBride · Elwynn Forest 48.9, 41.6"), joined(lines))
+check("quest page: starts at, with where", (ns.Unlink(joined(lines)) .. "\n"):find("Marshal McBride · Elwynn Forest\n", 1, true), joined(lines))
 check("quest page: objective", has(lines, "Kobold Vermin · Elwynn Forest"), joined(lines))
 check("quest page: reputation", has(lines, "+100 Stormwind"), joined(lines))
 check("quest page: chain", has(lines, "Requires one of:") and has(lines, "Leads to:") and has(lines, "Investigate Echo Ridge"), joined(lines))
@@ -668,8 +668,8 @@ local function vendorLines(item)
 	return out
 end
 local sold = vendorLines(2512)
-check("sold by: the nearest vendor first, where and how far", sold[1] and sold[1]:find("^  Ghrawt: ") and sold[1]:find("Durotar 53.0, 41.0, 10 yd", 1, true), table.concat(sold, "\n"))
-check("sold by: then the next nearest", sold[2] and sold[2]:find("^  Jark: ") and sold[2]:find("14 yd", 1, true), sold[2])
+check("sold by: the nearest vendor first, its zone and nothing more", sold[1] and sold[1]:find("^  Ghrawt · Durotar$"), table.concat(sold, "\n"))
+check("sold by: then the next nearest", sold[2] and sold[2]:find("^  Jark · Durotar$"), sold[2])
 local function rawLines(lines)
 	local out = {}
 	for _, line in ipairs(lines) do out[#out + 1] = lineText(line) end
@@ -685,9 +685,56 @@ end
 local boar = firstWith(ns.Details("npc", 3098), "Where:")
 check("where: the nearest spot of a many-spot zone, how far", boar and ns.Unlink(boar):find("^Where: Durotar %(%d+, nearest [%d.]+, [%d.]+, %d+ yd%)"), boar and ns.Unlink(boar))
 check("where: a spot is a waypoint link", boar and boar:find("|Hfsearch:way:npc:3098:14:%d+:%d+|h"), boar)
--- A quest's giver: Gar'Thok in Razor Hill, 52.0, 43.5 as shipped: 18 yards.
+local ghrawt = firstWith(ns.Details("item", 2512), "  Ghrawt")
+check("sold by: the zone is a waypoint to the vendor", ghrawt and ghrawt:find("|Hfsearch:way:npc:%d+:14:5300:4100|hDurotar|h"), ghrawt)
+-- The price once, at the top, never per vendor.
+local function count(item, text)
+	local n = 0
+	for _, l in ipairs(ns.Details("item", item)) do
+		if ns.Unlink(lineText(l)):find(text, 1, true) then n = n + 1 end
+	end
+	return n
+end
+check("vendor price: once, at the top", firstWith(ns.Details("item", 2512), "Vendor:") and ns.Unlink(firstWith(ns.Details("item", 2512), "Vendor:")) == "Vendor: 10c"
+	and count(2512, "10c") == 1, joined(ns.Details("item", 2512)))
+local shipped = ForeverData.Vendors
+ForeverData.Vendors = function(id)
+	local rows = shipped(id)
+	if id ~= 2512 then return rows end
+	local out = {}
+	for i, r in ipairs(rows) do out[i] = { npc = r.npc, price = i > 1 and r.price or nil, stock = r.npc == 3165 and 3 or nil } end
+	return out
+end
+check("vendor price: the known one, where the first vendor's is not", ns.Unlink(firstWith(ns.Details("item", 2512), "Vendor:") or "none") == "Vendor: 10c"
+	and count(2512, "10c") == 1, joined(ns.Details("item", 2512)))
+check("vendor price: not on the vendors' lines, stock still is", vendorLines(2512)[1] == "  Ghrawt (3 in stock) · Durotar"
+	and vendorLines(2512)[2] == "  Jark · Durotar" and count(2512, "unknown") == 0, table.concat(vendorLines(2512), "\n"))
+ForeverData.Vendors = function(id)
+	local out = {}
+	for i, r in ipairs(shipped(id)) do out[i] = { npc = r.npc } end
+	return out
+end
+check("vendor price: unknown where no vendor's is known", ns.Unlink(firstWith(ns.Details("item", 2512), "Vendor:") or "none") == "Vendor: unknown"
+	and count(2512, "unknown") == 1)
+ForeverData.Vendors = shipped
+UnitFactionGroup = function() return "Horde" end
+local theirs = {}
+ForeverData.Vendors = function(id)
+	local out = {}
+	for i, r in ipairs(shipped(id)) do
+		local n = ForeverData.Npc(r.npc)
+		out[i] = { npc = r.npc, price = n and n.horde == "hostile" and 99 or r.price }
+		if n and n.horde == "hostile" then theirs[#theirs + 1] = r.npc end
+	end
+	return out
+end
+local ours = ns.Unlink(firstWith(ns.Details("item", 2512), "Vendor:") or "none")
+check("vendor price: the other side's does not count", #theirs > 0 and ours == "Vendor: 10c", #theirs .. " " .. ours)
+ForeverData.Vendors, UnitFactionGroup = shipped, nil
+check("vendor price: none where no one sells it", not firstWith(ns.Details("item", 2589), "Vendor:"))
+-- A quest's giver: Gar'Thok in Razor Hill, 52.0, 43.5 as shipped.
 local garthok = firstWith(ns.Details("quest", 825), "Gar'Thok · ")
-check("quest giver: nearest spot and how far, clickable", garthok and ns.Unlink(garthok):find("Durotar 52.0, 43.5, 18 yd", 1, true)
+check("quest giver: its zone, a click to its nearest spot", garthok and ns.Unlink(garthok):find("Gar'Thok · Durotar$")
 	and garthok:find("|Hfsearch:way:npc:3139:14:5200:4350|h", 1, true), garthok)
 -- Drop sources: at level 1, creatures of level 4 or less come first.
 UnitLevel = function() return 1 end
@@ -744,22 +791,22 @@ local function before(item, a, b)
 	end
 	return ia ~= nil and (ib == nil or ia < ib)
 end
-check("ammo: buy it from the nearest vendor", (lead(2512) or ""):find("^Buy: Ghrawt: 10c · Durotar"), lead(2512))
+check("ammo: buy it from the nearest vendor", (lead(2512) or ""):find("^Buy: Ghrawt · Durotar$"), lead(2512))
 check("ammo: vendors before drops", before(2512, "Sold by (", "Drops from ("))
-check("cloth: farm the nearest common creature", (lead(2589) or ""):find("^Farm: .- · Durotar"), lead(2589))
-check("ore: farm the nearest vein, veins listed first", (lead(2770) or ""):find("^Farm: Copper Vein .- · Durotar") and before(2770, "Found in (", "Drops from ("), lead(2770))
+check("cloth: farm the nearest common creature", (lead(2589) or ""):find("^Farm: .- · Durotar$"), lead(2589))
+check("ore: farm the nearest vein, veins listed first", (lead(2770) or ""):find("^Farm: Copper Vein .- · Durotar$") and before(2770, "Found in (", "Drops from ("), lead(2770))
 check("quest item: the quest it is for", lead(5203) == "For: The Hunter's Way", lead(5203))
 check("quest item: the quest before where it drops", before(5203, "Needed for quests (", "Drops from ("))
-check("gear sold: buy it", (lead(2488) or ""):find("^Buy: Uhgar: 5s 36c"), lead(2488))
+check("gear sold: buy it", (lead(2488) or ""):find("^Buy: Uhgar · "), lead(2488))
 check("gear rewarded: the quest", lead(4928) == "Get it: reward from From The Wreckage....", lead(4928))
 UnitLevel, UnitFactionGroup = nil, nil
 
-check("sold by: no distance without a position", (function()
+check("sold by: no nearest without a position", (function()
 	C_Map.GetPlayerMapPosition = function() return nil end
 	local lines = vendorLines(2512)
 	C_Map = nil
-	for _, l in ipairs(lines) do if l:find(" yd") then return false end end
-	return #lines > 0
+	for _, l in ipairs(lines) do if l:find("further off") then return false end end
+	return #lines > 0 and lines[1]:find(" · [%a' ]+$") ~= nil
 end)())
 
 -- The crest at the top of a page: a quest only one side may take, a

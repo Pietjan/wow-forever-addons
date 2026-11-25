@@ -294,20 +294,13 @@ local function Yards(yards)
 	return ("%d yd"):format(math.floor(yards + 0.5))
 end
 
--- Where says in grey where a creature's or object's spot is and how far,
--- a click setting a waypoint there: " · Durotar 52.2, 41.0, 240 yd".
-local function Where(kind, id, spot, yards)
+-- Where says in grey the zone a creature's or object's spot is in, a click
+-- setting a waypoint at the spot: " · Durotar".
+local function Where(kind, id, spot)
 	if not spot then
 		return ""
 	end
-	local text = ns.NameOf("zone", spot.zone)
-	if spot.x then
-		text = text .. (" %.1f, %.1f"):format(spot.x, spot.y)
-	end
-	if yards then
-		text = text .. ", " .. Yards(yards)
-	end
-	return GREY .. " · " .. PlaceLink(kind, id, spot, text) .. "|r"
+	return GREY .. " · " .. PlaceLink(kind, id, spot, ns.NameOf("zone", spot.zone)) .. "|r"
 end
 
 -- SetWaypoint points an arrow at a creature's or object's spot: TomTom's
@@ -402,15 +395,14 @@ local function Places(kind, id)
 	return table.concat(parts, ", ")
 end
 
--- Spot says in a few grey words where to find a quest's giver or target:
--- its nearest spot and how far when that is known (" · Durotar 52.2, 41.0,
--- 240 yd"), else " · Ashenvale 73.2, 61.5" for one spot, " · Ashenvale" for
--- many. A spot is a click to set a waypoint.
+-- Spot says in grey the zone to find a quest's giver or target in: its
+-- nearest spot's when that is known, else the one it stands in most. The
+-- nearest spot, or the one spot, is a click to set a waypoint.
 local function Spot(kind, id)
 	local continent, at = PlayerWorld()
 	local spot, yards = Nearest(kind, id, continent, at)
 	if yards then
-		return Where(kind, id, spot, yards)
+		return Where(kind, id, spot)
 	end
 	local counts, best = {}, nil
 	local spawns = FD.Spawns(kind, id)
@@ -1558,6 +1550,22 @@ local function Price(v)
 	return ns.Money(v.price)
 end
 
+-- VendorPrice is what vendors ask for an item, said once at the top of its
+-- page: the first price known (one vendor's may be unknown; the data has no
+-- item with two). nil when no vendor has it.
+local function VendorPrice(id)
+	local first
+	for _, v in ipairs(FD.Vendors(id)) do
+		if not Theirs("npc", v.npc) then
+			first = first or v
+			if v.price then
+				return Price(v)
+			end
+		end
+	end
+	return first and Price(first)
+end
+
 -- The game's own tooltip of an item, as page lines: what kind of item it
 -- is, its stats and effects, coloured as in the tooltip. The first line
 -- (the name, the page's heading) and the sell price are left out. nil
@@ -1650,6 +1658,10 @@ local function ItemLines(id, lines)
 	local price = ns.AuctionPrice(id)
 	if price then
 		lines[#lines + 1] = GOLD .. "Auction:|r " .. ns.Money(price)
+	end
+	local vendor = VendorPrice(id)
+	if vendor then
+		lines[#lines + 1] = GOLD .. "Vendor:|r " .. vendor
 	end
 	local total, byWho = ns.Owned(id)
 	if total and total > 0 then
@@ -1766,7 +1778,7 @@ function WaysLines(id, lines)
 	end
 	local function SourceWhere(d)
 		local n = near[d]
-		return n and Where(d.kind, n.id or d.id, n.spot, n.yards) or ""
+		return n and Where(d.kind, n.id or d.id, n.spot) or ""
 	end
 	-- Where to farm: creatures one can fight on one's own continent first,
 	-- then the most likely catch for the time spent: chance by how many of it
@@ -1818,8 +1830,7 @@ function WaysLines(id, lines)
 		if v.standing then
 			extra[#extra + 1] = STANDING_LABEL[v.standing] or ("standing " .. v.standing)
 		end
-		return ("%s: %s%s%s"):format(ns.Link("npc", v.npc), Price(v),
-			#extra > 0 and (GREY .. " (" .. table.concat(extra, ", ") .. ")|r") or "", Where("npc", v.npc, near.spot, near.yards))
+		return ("%s%s%s"):format(ns.Link("npc", v.npc), #extra > 0 and (GREY .. " (" .. table.concat(extra, ", ") .. ")|r") or "", Where("npc", v.npc, near.spot))
 	end
 
 	-- The quests it is part of, by role.
