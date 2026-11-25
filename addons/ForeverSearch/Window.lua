@@ -78,7 +78,9 @@ driver:Hide()
 local function Panel(name, parent)
 	local f = CreateFrame("Frame", name, parent, "BackdropTemplate")
 	f:SetBackdrop(BACKDROP)
-	f:SetBackdropColor(0.04, 0.04, 0.06, 0.94)
+	-- Forever's own panel black (its dropdown fill, common-dropdown-c-bg-c60):
+	-- warm, near-black, not the blue-grey of Classic's tooltips.
+	f:SetBackdropColor(0.008, 0.006, 0.003, 0.8)
 	f:SetBackdropBorderColor(0.55, 0.55, 0.6, 0.9)
 	return f
 end
@@ -209,8 +211,137 @@ local function StepPage(job)
 	return true
 end
 
+-- SetCrest shows the faction crest of a page's quest or creature at the
+-- top right of the page (ns.PageSide): one side's, both side by side
+-- (Alliance, Horde) for both, or none.
+-- The crest, and the class and race icons beside it centred on it. The
+-- crest at its art's shape (24 by 27); the art leaves about 2 px clear on
+-- each side, so crests touch box to box and the icons sit 2 px off, which
+-- shows as the same 4 px between all of them.
+local CREST_W, CREST_H = 27, 30
+local GAP = 4 -- between icons
+local CREST_MARGIN = 2 -- clear art at each side of a crest
+local crestsShown, headRoom = 0, 0
+local function Crest(texture, side)
+	if side and pcall(texture.SetAtlas, texture, ns.CREST[side]) then
+		texture:Show()
+		return 1
+	end
+	texture:Hide()
+	return 0
+end
+-- Class and race icons go left of the crests, for a quest only some
+-- classes or races may take: the game's square class art and race
+-- portraits, dressed as the result rows' icons are (the Cooldown Manager's
+-- rounded mask and border ring), made as needed.
+local BADGE = 24
+local BADGE_STEP = BADGE + GAP
+local badges = {}
+local function Badge(i)
+	local b = badges[i]
+	if b then
+		return b
+	end
+	b = CreateFrame("Frame", nil, preview.content)
+	b:SetSize(BADGE, BADGE)
+	b.icon = b:CreateTexture(nil, "ARTWORK")
+	b.icon:SetAllPoints()
+	if HasAtlas("UI-HUD-CoolDownManager-Mask") and HasAtlas("UI-HUD-CoolDownManager-IconOverlay") then
+		local mask = b:CreateMaskTexture()
+		mask:SetAtlas("UI-HUD-CoolDownManager-Mask")
+		mask:SetAllPoints(b.icon)
+		b.icon:AddMaskTexture(mask)
+		local ring = b:CreateTexture(nil, "OVERLAY")
+		ring:SetAtlas("UI-HUD-CoolDownManager-IconOverlay")
+		local rx, ry = BADGE * 0.2, BADGE * 0.2 - 1
+		ring:SetPoint("TOPLEFT", b.icon, "TOPLEFT", -rx, ry)
+		ring:SetPoint("BOTTOMRIGHT", b.icon, "BOTTOMRIGHT", rx, -ry)
+	else
+		local edge = b:CreateTexture(nil, "BORDER")
+		edge:SetColorTexture(0, 0, 0, 1)
+		edge:SetPoint("TOPLEFT", b.icon, "TOPLEFT", -1, 1)
+		edge:SetPoint("BOTTOMRIGHT", b.icon, "BOTTOMRIGHT", 1, -1)
+	end
+	badges[i] = b
+	return b
+end
+
+-- SetArt puts an atlas on a texture as its file and its region of it,
+-- crop of it (a share of each side) cut away. Not through SetAtlas: the
+-- class art set that way showed square in game, the rounded mask not on
+-- it, where the race portraits set this way were masked.
+local RACE_CROP = 5 / 64
+local function SetArt(texture, name, crop)
+	local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name)
+	local file = info and (info.file or info.filename)
+	if not file then
+		texture:SetAtlas(name)
+		return
+	end
+	local l, r, t, b = info.leftTexCoord, info.rightTexCoord, info.topTexCoord, info.bottomTexCoord
+	local dx, dy = (r - l) * crop, (b - t) * crop
+	texture:SetTexture(file)
+	texture:SetTexCoord(l + dx, r - dx, t + dy, b - dy)
+end
+
+-- Art is Forever's own (its -c60 name) where it has one, else the plain.
+local function ArtName(atlas)
+	if HasAtlas(atlas .. "-c60") then
+		return atlas .. "-c60"
+	end
+	return HasAtlas(atlas) and atlas or nil
+end
+
+local function SetCrest(kind, id)
+	local side = ns.PageSide(kind, id)
+	if side == "Both" then
+		crestsShown = Crest(preview.crest, "Horde") + Crest(preview.crest2, "Alliance")
+	else
+		crestsShown = Crest(preview.crest, side) + Crest(preview.crest2, nil)
+	end
+	-- Classes nearest the crests, races left of them. A race portrait has
+	-- a frame of its own (4 px of its 64): cropped off, so it is framed as
+	-- the class art is.
+	local art = {}
+	for list, crop in pairs({ [ns.PageClasses(kind, id)] = 0, [ns.PageRaces(kind, id)] = RACE_CROP }) do
+		art[crop] = art[crop] or {}
+		for _, atlas in ipairs(list) do
+			local name = ArtName(atlas)
+			if name then
+				table.insert(art[crop], name)
+			end
+		end
+	end
+	local ordered = {}
+	for _, crop in ipairs({ 0, RACE_CROP }) do
+		for _, name in ipairs(art[crop] or {}) do
+			ordered[#ordered + 1] = { name = name, crop = crop }
+		end
+	end
+	art = ordered
+	local right = -(crestsShown * CREST_W + (crestsShown > 0 and GAP - CREST_MARGIN or 0))
+	for i, a in ipairs(art) do
+		local b = Badge(i)
+		SetArt(b.icon, a.name, a.crop)
+		b:ClearAllPoints()
+		b:SetPoint("TOPRIGHT", preview.content, "TOPRIGHT", right - (i - 1) * BADGE_STEP, -(CREST_H - BADGE) / 2)
+		b:Show()
+	end
+	for i = #art + 1, #badges do
+		badges[i]:Hide()
+	end
+	local shown = #art
+	-- Room the page's first block leaves for them.
+	if shown > 0 then
+		headRoom = -right + shown * BADGE_STEP
+	else
+		headRoom = crestsShown * CREST_W
+	end
+end
+
 local function ShowPage(kind, id, keepScroll)
 	page = { kind = kind, id = id }
+	SetCrest(kind, id)
 	local head = PageHead(kind, id)
 	local typed = box:GetText()
 	local job = {
@@ -250,7 +381,9 @@ function Render(lines, keepScroll)
 		local block = Block(used)
 		block:ClearAllPoints()
 		block:SetPoint("TOPLEFT", preview.content, "TOPLEFT", 0, -y)
-		block.html:SetWidth(PREVIEW_WIDTH - 44 - (right and RIGHT_WIDTH or 0))
+		-- The first block (the page's name) keeps clear of the crest.
+		local crest = used == 1 and headRoom or 0
+		block.html:SetWidth(PREVIEW_WIDTH - 44 - (right and RIGHT_WIDTH or 0) - crest)
 		block.html:SetText(text)
 		local height = math.max(1, block.html:GetContentHeight())
 		block.html:SetHeight(height)
@@ -839,6 +972,14 @@ local function MakeBar()
 	preview.content = CreateFrame("Frame", nil, preview.scroll)
 	preview.content:SetSize(PREVIEW_WIDTH - 44, 1)
 	preview.scroll:SetScrollChild(preview.content)
+	preview.crest = preview.content:CreateTexture(nil, "OVERLAY")
+	preview.crest:SetSize(CREST_W, CREST_H)
+	preview.crest:SetPoint("TOPRIGHT", preview.content, "TOPRIGHT", 0, 0)
+	preview.crest:Hide()
+	preview.crest2 = preview.content:CreateTexture(nil, "OVERLAY")
+	preview.crest2:SetSize(CREST_W, CREST_H)
+	preview.crest2:SetPoint("TOPRIGHT", preview.crest, "TOPLEFT", 0, 0)
+	preview.crest2:Hide()
 	preview:SetScript("OnMouseUp", function(_, button)
 		if button == "Button4" then
 			Back()

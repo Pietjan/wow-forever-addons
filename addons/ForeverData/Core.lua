@@ -156,7 +156,7 @@ local quest = cached(function(id)
 		side = SIDE[f[5]], classes = number(f[6]), zone = number(f[7]), skillLine = number(f[8]), skill = number(f[9]),
 		repeatable = f[10] == "1", starts = refs(f[11]), ends = refs(f[12]), objectives = refs(f[13]),
 		rewards = ids(f[14]), reputation = reputation, requiresAll = ids(f[16]), requiresOne = ids(f[17]),
-		next = number(f[18]), text = text(f[19]),
+		next = number(f[18]), text = text(f[19]), races = ids(f[20]),
 	}
 end)
 
@@ -309,6 +309,29 @@ function FD.QuestsOf(kind, id)
 		return EMPTY
 	end
 	return questsOf(code .. id) or EMPTY
+end
+
+-- A race of Forever's, by ID: {id, name, side "alliance" or "horde"}; a
+-- quest's races (quest.races) are these, listed only for a quest some
+-- races of Forever may not take.
+local RACE_SIDE = { a = "alliance", h = "horde" }
+function FD.Race(id)
+	local s = ns.races and ns.races[id]
+	if not s then
+		return nil
+	end
+	local name, side = string.match(s, "^([^|]*)|(%a*)$")
+	return { id = id, name = name, side = RACE_SIDE[side] }
+end
+
+-- Forever's races, by ID.
+function FD.Races()
+	local out = {}
+	for id in pairs(ns.races or EMPTY) do
+		out[#out + 1] = id
+	end
+	table.sort(out)
+	return out
 end
 
 -- A faction's name, for a quest's reputation.

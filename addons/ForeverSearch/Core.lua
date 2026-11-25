@@ -1827,6 +1827,115 @@ local CREST = { Alliance = "UI-HUD-UnitFrame-SmallCircle-Alliance", Horde = "UI-
 local function Crest(side)
 	return "|A:" .. CREST[side] .. ":18:18:0:-3|a"
 end
+-- PageSide is whose a page's thing is, for the crests at the top of its
+-- page: "Alliance" or "Horde" for a quest only that side may take or a
+-- creature friendly to that side alone; "Both" for a quest either may take
+-- or a creature friendly to both (Booty Bay); nil for anything else (a
+-- creature friendly to neither, a quest whose side nothing says; items,
+-- objects, zones: the data gives them no side).
+function ns.PageSide(kind, id)
+	if kind == "quest" then
+		local q = FD.Quest(id)
+		if not q then
+			return nil
+		end
+		if q.side then
+			return SIDE_SHORT[q.side]
+		end
+		-- No race asked for does not make it both sides' (Jitters' Growling
+		-- Gut is Duskwood's, given by Alliance people): the side is its
+		-- givers'. One side's if each giver is that side's alone, both if
+		-- one is both sides', none for an item or object to start it.
+		local found
+		for _, ref in ipairs(q.starts or {}) do
+			local side = ref.kind == "npc" and ns.PageSide("npc", ref.id) or nil
+			if not side then
+				return nil
+			end
+			if found and found ~= side then
+				return "Both"
+			end
+			found = side
+		end
+		return found
+	elseif kind == "npc" then
+		local n = FD.Npc(id)
+		local a, h = n and n.alliance == "friendly", n and n.horde == "friendly"
+		if a and h then
+			return "Both"
+		elseif a then
+			return "Alliance"
+		elseif h then
+			return "Horde"
+		end
+	end
+	return nil
+end
+ns.CREST = CREST
+
+-- PageClasses is the classes a quest is for, as the game's square class
+-- art (classicon-<class>), for the top of its page: {atlas,
+-- ...}, empty for a quest any class may take and for anything else. More
+-- than MAX_CLASS_ICONS (Vile Familiars: all but Warlock) is no icons: the
+-- page's text says which.
+local MAX_CLASS_ICONS = 5
+function ns.PageClasses(kind, id)
+	local q = kind == "quest" and FD.Quest(id)
+	local out = {}
+	if q and q.classes then
+		for class = 1, 12 do
+			if math.floor(q.classes / 2 ^ (class - 1)) % 2 == 1 then
+				local name = FD.ClassName(class)
+				if name then
+					out[#out + 1] = "classicon-" .. string.lower(name)
+				end
+			end
+		end
+	end
+	if #out > MAX_CLASS_ICONS then
+		return {}
+	end
+	return out
+end
+
+-- PageRaces is the races a quest is for, as the game's race portraits
+-- (raceicon-<race>-<male or female>, the player's own), for the top of its
+-- page: {atlas name without its -c60, ...}. Only for a quest part of a
+-- side may take (Undead only, Skyborne only): a quest for every Classic
+-- race of its side is the side's, which its crest says. Quests from
+-- Classic's data leave the Skyborne out of such a list; that is not taken
+-- to mean they cannot.
+local CLASSIC_RACES = { alliance = { 1, 3, 4, 7 }, horde = { 2, 5, 6, 8 } }
+function ns.PageRaces(kind, id)
+	local q = kind == "quest" and FD.Quest(id)
+	local out = {}
+	if not (q and q.races and #q.races > 0 and FD.Race) then
+		return out
+	end
+	local has = {}
+	for _, r in ipairs(q.races) do
+		has[r] = true
+	end
+	for _, list in pairs(CLASSIC_RACES) do
+		local all = true
+		for _, r in ipairs(list) do
+			all = all and has[r] == true
+		end
+		if all then
+			return out
+		end
+	end
+	local female = UnitSex and UnitSex("player") == 3
+	for _, r in ipairs(q.races) do
+		local race = FD.Race(r)
+		if race then
+			local key = string.find(race.name, "Skyborne$") and "skyborne" or string.lower((string.gsub(race.name, "[%s']", "")))
+			out[#out + 1] = "raceicon-" .. key .. (female and "-female" or "-male")
+		end
+	end
+	return out
+end
+
 local function QuestEntry(id)
 	local q = FD.Quest(id)
 	local mine = UnitFactionGroup and UnitFactionGroup("player")

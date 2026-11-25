@@ -689,6 +689,34 @@ check("sold by: no distance without a position", (function()
 	return #lines > 0
 end)())
 
+-- The crest at the top of a page: a quest only one side may take, a
+-- creature friendly to one side alone; none for both, monsters or items.
+check("crest: a Horde quest", ns.PageSide("quest", 825) == "Horde", ns.PageSide("quest", 825))
+check("crest: a Horde creature", ns.PageSide("npc", 3139) == "Horde", ns.PageSide("npc", 3139))
+check("crest: none for a monster", ns.PageSide("npc", 3098) == nil)
+check("crest: none for an item", ns.PageSide("item", 2589) == nil)
+check("crest: both for a creature friendly to both", ns.PageSide("npc", 2483) == "Both", ns.PageSide("npc", 2483))
+check("crest: a quest with no race side takes its giver's", ns.PageSide("quest", 5) == "Alliance", ns.PageSide("quest", 5))
+check("crest: both for a quest either side's people give", ns.PageSide("quest", 8948) == "Both", ns.PageSide("quest", 8948))
+
+-- Class icons at the top of a class quest's page.
+local function icons(q) return table.concat(ns.PageClasses("quest", q), " ") end
+check("class icons: one class", icons(26) == "classicon-druid", icons(26))
+check("class icons: two", icons(5301) == "classicon-warrior classicon-paladin", icons(5301))
+check("class icons: none for any class", icons(2) == "")
+check("class icons: none past five (all but Warlock)", icons(792) == "", icons(792))
+
+-- Race portraits at the top of a quest for part of its side.
+local function races(q) return table.concat(ns.PageRaces("quest", q), " ") end
+check("race icons: one race", races(5627) == "raceicon-nightelf-male", races(5627))
+check("race icons: two races", races(6365) == "raceicon-orc-male raceicon-troll-male", races(6365))
+check("race icons: Forever's Skyborne", races(92551) == "raceicon-skyborne-male", races(92551))
+check("race icons: none for a quest for a whole side", races(825) == "", races(825))
+UnitSex = function() return 3 end
+check("race icons: the player's gender", races(5627) == "raceicon-nightelf-female", races(5627))
+UnitSex = nil
+check("a Skyborne quest is its side's", ns.PageSide("quest", 92551) == "Alliance", ns.PageSide("quest", 92551))
+
 if failures > 0 then
 	print(failures .. " failed")
 	os.exit(1)
