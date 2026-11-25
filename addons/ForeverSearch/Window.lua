@@ -171,6 +171,7 @@ local pageJob
 local pageDriver = CreateFrame("Frame")
 pageDriver:Hide()
 local Render
+local Follow -- below: goes to a linked thing, keeping the page left for Back
 
 local function PageHead(kind, id)
 	local quality = kind == "item" and ForeverData.Item(id) and ForeverData.Item(id).quality
@@ -251,7 +252,12 @@ local function Clickable(f)
 		if self.label then
 			GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
 			GameTooltip:SetText(self.label)
-			GameTooltip:AddLine("Click to find them", 0.6, 0.6, 0.6)
+			for _, line in ipairs(self.more or {}) do
+				GameTooltip:AddLine(line, 1, 1, 1)
+			end
+			if self.query then
+				GameTooltip:AddLine("Click to find them", 0.6, 0.6, 0.6)
+			end
 			GameTooltip:Show()
 		end
 	end)
@@ -292,7 +298,6 @@ end
 -- crop of it (a share of each side) cut away. Not through SetAtlas: the
 -- class art set that way showed square in game, the rounded mask not on
 -- it, where the race portraits set this way were masked.
-local RACE_CROP = 5 / 64
 local function SetArt(texture, name, crop)
 	local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name)
 	local file = info and (info.file or info.filename)
@@ -332,39 +337,26 @@ local function SetCrest(kind, id)
 			hit.label = s .. (what == "npc" and " people" or " quests")
 		end
 	end
-	-- Classes nearest the crests, races left of them. A race portrait has
-	-- a frame of its own (4 px of its 64): cropped off, so it is framed as
-	-- the class art is.
+	-- The icons beside the crests (ns.PageBadges): classes, races, the
+	-- profession, the reputation needed. Atlas art by its own name or
+	-- Forever's -c60 one; an icon file as it is.
 	local art = {}
-	for list, crop in pairs({ [ns.PageClasses(kind, id)] = 0, [ns.PageRaces(kind, id)] = RACE_CROP }) do
-		art[crop] = art[crop] or {}
-		for _, atlas in ipairs(list) do
-			local name = ArtName(atlas)
-			if name then
-				table.insert(art[crop], { name = name, atlas = atlas })
-			end
+	for _, b in ipairs(ns.PageBadges(kind, id)) do
+		local name = b.atlas and ArtName(b.atlas)
+		if name or b.file then
+			art[#art + 1] = { name = name, file = b.file, crop = b.crop, query = b.query, label = b.label, more = b.more }
 		end
 	end
-	local ordered = {}
-	for _, crop in ipairs({ 0, RACE_CROP }) do
-		for _, a in ipairs(art[crop] or {}) do
-			local word = crop == 0 and string.match(a.atlas, "^classicon%-(.+)$")
-				or string.match(a.atlas, "^raceicon%-(.-)%-[fe]*male$")
-			local key = crop == 0 and "class" or "race"
-			local named = word and (word:gsub("^%l", string.upper)):gsub("elf$", " Elf")
-			ordered[#ordered + 1] = {
-				name = a.name, crop = crop,
-				query = word and ("quest: " .. key .. ":" .. word) or nil,
-				label = named and (named .. " quests") or nil,
-			}
-		end
-	end
-	art = ordered
 	local right = -(crestsShown * CREST_W + (crestsShown > 0 and GAP - CREST_MARGIN or 0))
 	for i, a in ipairs(art) do
 		local b = Badge(i)
-		SetArt(b.icon, a.name, a.crop)
-		b.query, b.label = a.query, a.label
+		if a.file then
+			b.icon:SetTexture(a.file)
+			b.icon:SetTexCoord(a.crop, 1 - a.crop, a.crop, 1 - a.crop)
+		else
+			SetArt(b.icon, a.name, a.crop)
+		end
+		b.query, b.label, b.more = a.query, a.label, a.more
 		b:ClearAllPoints()
 		b:SetPoint("TOPRIGHT", preview.content, "TOPRIGHT", right - (i - 1) * BADGE_STEP, -(CREST_H - BADGE) / 2)
 		b:Show()
@@ -416,6 +408,94 @@ pageDriver:SetScript("OnUpdate", function(self)
 	end
 end)
 
+-- Reward tiles, as the quest log draws them: an icon in the result rows'
+-- rounded mask and ring, a count on it, the name beside it in its quality
+-- colour; two to a row. An item's tile shows its tooltip and opens its page.
+local TILE_ICON, TILE_HEIGHT, TILE_GAP = 26, 30, 4
+local TILE_INDENT = 8 -- under their heading, as far in as a list's entries
+local tiles = {}
+local function Tile(i)
+	local t = tiles[i]
+	if t then
+		return t
+	end
+	t = CreateFrame("Frame", nil, preview.content)
+	t:SetHeight(TILE_HEIGHT)
+	t.icon = t:CreateTexture(nil, "ARTWORK")
+	t.icon:SetSize(TILE_ICON, TILE_ICON)
+	t.icon:SetPoint("LEFT", 2, 0)
+	if HasAtlas("UI-HUD-CoolDownManager-Mask") and HasAtlas("UI-HUD-CoolDownManager-IconOverlay") then
+		local mask = t:CreateMaskTexture()
+		mask:SetAtlas("UI-HUD-CoolDownManager-Mask")
+		mask:SetAllPoints(t.icon)
+		t.icon:AddMaskTexture(mask)
+		local ring = t:CreateTexture(nil, "OVERLAY")
+		ring:SetAtlas("UI-HUD-CoolDownManager-IconOverlay")
+		local rx, ry = TILE_ICON * 0.2, TILE_ICON * 0.2 - 1
+		ring:SetPoint("TOPLEFT", t.icon, "TOPLEFT", -rx, ry)
+		ring:SetPoint("BOTTOMRIGHT", t.icon, "BOTTOMRIGHT", rx, -ry)
+	end
+	t.count = t:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+	t.count:SetPoint("BOTTOMRIGHT", t.icon, "BOTTOMRIGHT", 1, -1)
+	t.name = t:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	t.name:SetPoint("LEFT", t.icon, "RIGHT", 6, 0)
+	t.name:SetPoint("RIGHT", -2, 0)
+	t.name:SetJustifyH("LEFT")
+	t:EnableMouse(true)
+	t:SetScript("OnEnter", function(self)
+		if self.item then
+			GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+			GameTooltip:SetItemByID(self.item)
+			GameTooltip:Show()
+		end
+	end)
+	t:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	t:SetScript("OnMouseUp", function(self, button)
+		if button == "LeftButton" and self.item then
+			if IsShiftKeyDown() then
+				LinkInChat({ kind = "item", id = self.item })
+			else
+				Follow("item", self.item)
+			end
+		end
+	end)
+	tiles[i] = t
+	return t
+end
+
+-- FillTile shows one reward on a tile: an item, experience or money.
+local function FillTile(t, r)
+	t.item = r.item
+	if r.item then
+		local quality = ForeverData.Item(r.item) and ForeverData.Item(r.item).quality
+		local cr, cg, cb = QualityColour(quality)
+		t.icon:SetTexture(C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(r.item) or KIND_ICON.item)
+		t.name:SetText(ns.NameOf("item", r.item))
+		t.name:SetTextColor(cr, cg, cb)
+		t.count:SetText(r.n and r.n > 1 and tostring(r.n) or "")
+	elseif r.xp then
+		t.icon:SetTexture(ns.XP_ICON)
+		t.name:SetText(BreakUpLargeNumbers and BreakUpLargeNumbers(r.xp) or tostring(r.xp))
+		t.name:SetTextColor(1, 1, 1)
+		t.count:SetText("")
+	elseif r.money then
+		t.icon:SetTexture(ns.MONEY_ICON)
+		t.name:SetText(ns.Money(r.money))
+		t.name:SetTextColor(1, 1, 1)
+		t.count:SetText("")
+	elseif r.faction then
+		t.icon:SetTexture(ns.REPUTATION_ICON)
+		t.name:SetText(ns.ReputationText(r))
+		if r.value >= 0 then
+			t.name:SetTextColor(0.25, 1, 0.25)
+		else
+			t.name:SetTextColor(1, 0.38, 0.25)
+		end
+		t.count:SetText("")
+	end
+	t.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+end
+
 function Render(lines, keepScroll)
 	-- A tooltip of something on the page (an item link under the mouse)
 	-- goes when another page comes: the mouse never leaves a link whose
@@ -459,8 +539,29 @@ function Render(lines, keepScroll)
 			run = {}
 		end
 	end
+	local usedTiles = 0
+	local function PutTiles(list)
+		local width = (PREVIEW_WIDTH - 44 - TILE_INDENT - TILE_GAP) / 2
+		for i, r in ipairs(list) do
+			usedTiles = usedTiles + 1
+			local t = Tile(usedTiles)
+			local column = (i - 1) % 2
+			t:ClearAllPoints()
+			t:SetPoint("TOPLEFT", preview.content, "TOPLEFT", TILE_INDENT + column * (width + TILE_GAP), -y)
+			t:SetWidth(width)
+			FillTile(t, r)
+			t:Show()
+			if column == 1 or i == #list then
+				y = y + TILE_HEIGHT + 2
+			end
+		end
+		y = y + 2
+	end
 	for _, line in ipairs(lines) do
-		if type(line) == "table" then
+		if type(line) == "table" and line.tiles then
+			Flush()
+			PutTiles(line.tiles)
+		elseif type(line) == "table" then
 			Flush()
 			Put(line[1], line[2])
 		else
@@ -470,6 +571,9 @@ function Render(lines, keepScroll)
 	Flush()
 	for i = used + 1, #blocks do
 		blocks[i]:Hide()
+	end
+	for i = usedTiles + 1, #tiles do
+		tiles[i]:Hide()
 	end
 	preview.content:SetHeight(math.max(1, y + 8))
 	if not keepScroll then
@@ -490,7 +594,7 @@ local function ShowPreview()
 end
 
 -- Follow goes to a linked thing, keeping the page left for Back.
-local function Follow(kind, id)
+function Follow(kind, id)
 	if page then
 		history[#history + 1] = page
 	end

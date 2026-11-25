@@ -140,6 +140,33 @@ end
 
 local SIDE = { a = "alliance", h = "horde" }
 
+-- repPair reads "faction:value": {faction, value}, nil for "".
+local function repPair(s)
+	local faction, value = string.match(s or "", "^(%d+):(-?%d+)$")
+	return faction and { faction = tonumber(faction), value = tonumber(value) } or nil
+end
+
+-- itemCounts reads "item" or "item:n", comma-separated: {{item, n}, ...}.
+local function itemCounts(s)
+	local out = {}
+	for part in string.gmatch(s or "", "[^,]+") do
+		local item, n = string.match(part, "^(%d+):?(%d*)$")
+		if item then
+			out[#out + 1] = { item = tonumber(item), n = tonumber(n) or 1 }
+		end
+	end
+	return out
+end
+
+-- rankList reads "skill line:value,...": {{line, value}, ...}.
+local function rankList(s)
+	local out = {}
+	for line, value in string.gmatch(s or "", "(%d+):(-?%d+)") do
+		out[#out + 1] = { line = tonumber(line), value = tonumber(value) }
+	end
+	return out
+end
+
 local quest = cached(function(id)
 	local s = ns.quests and ns.quests[id]
 	if not s then
@@ -157,6 +184,13 @@ local quest = cached(function(id)
 		repeatable = f[10] == "1", starts = refs(f[11]), ends = refs(f[12]), objectives = refs(f[13]),
 		rewards = ids(f[14]), reputation = reputation, requiresAll = ids(f[16]), requiresOne = ids(f[17]),
 		next = number(f[18]), text = text(f[19]), races = ids(f[20]),
+		-- What else it asks before it is offered.
+		maxLevel = number(f[21]), minRep = repPair(f[22]), maxRep = repPair(f[23]), needsItems = ids(f[24]),
+		spell = number(f[25]), specialization = number(f[26]), untilQuest = number(f[27]), fromQuest = number(f[28]),
+		disabledBy = number(f[29]), ranks = rankList(f[30]),
+		-- The rewards as the quest log shows them: items to choose one of,
+		-- items given, {item, n} each; experience at its own level, money.
+		choices = itemCounts(f[31]), given = itemCounts(f[32]), xp = number(f[33]), money = number(f[34]),
 	}
 end)
 
@@ -346,7 +380,20 @@ end
 
 -- A profession's name by skill line (164 Blacksmithing), for a quest's skillLine.
 function FD.SkillName(line)
-	return ns.skills and ns.skills[line]
+	local s = ns.skills and ns.skills[line]
+	return s and (string.match(s, "^([^|]*)")) or nil
+end
+
+-- A profession's icon (a file ID), nil when the data has none.
+function FD.SkillIcon(line)
+	local s = ns.skills and ns.skills[line]
+	return s and tonumber(string.match(s, "|(%d+)$") or "") or nil
+end
+
+-- A spell's name, for a quest that asks it known (or not) or a
+-- specialisation.
+function FD.SpellName(id)
+	return ns.spells and ns.spells[id]
 end
 
 -- The skill line of a profession by name, any case ("fishing" 356); nil
@@ -354,7 +401,7 @@ end
 function FD.SkillLine(name)
 	local lower = type(name) == "string" and string.lower(name)
 	for line, n in pairs(ns.skills or EMPTY) do
-		if string.lower(n) == lower then
+		if string.lower((string.match(n, "^([^|]*)"))) == lower then
 			return line
 		end
 	end

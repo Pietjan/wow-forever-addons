@@ -5,13 +5,16 @@
 
 local _, ns = ...
 
+-- Rewards as lists, in the order the game gives them: {item, n} each.
+-- (Until 0.3 these were maps of item = n, which kept no order; entries
+-- saved then have rewards and choices instead of given and choose.)
 local function Rewards(kind, count)
 	local out = {}
 	for i = 1, count or 0 do
 		local item = ns.ItemID(ns.Read("quest reward", GetQuestItemLink, kind, i))
 		if item then
 			local ok, _, _, n = pcall(GetQuestItemInfo, kind, i)
-			out[item] = ok and tonumber(ns.Plain(n)) or 1
+			out[#out + 1] = { item = item, n = ok and tonumber(ns.Plain(n)) or 1 }
 		end
 	end
 	return out
@@ -32,11 +35,11 @@ function ns.ReadQuest(role)
 	end
 	local rewards = Rewards("reward", ns.Read("quest rewards", GetNumQuestRewards))
 	local choices = Rewards("choice", ns.Read("quest choices", GetNumQuestChoices))
-	if next(rewards) then
-		q.rewards = rewards
+	if #rewards > 0 then
+		q.given, q.rewards = rewards, nil
 	end
-	if next(choices) then
-		q.choices = choices
+	if #choices > 0 then
+		q.choose, q.choices = choices, nil
 	end
 	local money = ns.Read("quest money", GetRewardMoney)
 	if money and money > 0 then

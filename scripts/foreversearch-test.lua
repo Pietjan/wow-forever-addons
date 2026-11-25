@@ -43,7 +43,24 @@ assert(loadfile("addons/ForeverSearch/Core.lua"))("ForeverSearch", ns)
 check("ready", ns.Ready())
 
 -- A list entry is {left, right}; as text it reads "left | right".
+-- A line as text: a list entry "left | right"; reward tiles "[tile: Name
+-- x5] [tile: 1250 xp] [tile: money 2500]".
 local function lineText(line)
+	if type(line) == "table" and line.tiles then
+		local out = {}
+		for _, t in ipairs(line.tiles) do
+			if t.item then
+				out[#out + 1] = "[tile: " .. ns.NameOf("item", t.item) .. (t.n and t.n > 1 and (" x" .. t.n) or "") .. " |Hfsearch:item:" .. t.item .. "|h]"
+			elseif t.xp then
+				out[#out + 1] = "[tile: " .. t.xp .. " xp]"
+			elseif t.faction then
+				out[#out + 1] = "[tile: " .. ns.ReputationText(t) .. "]"
+			else
+				out[#out + 1] = "[tile: money " .. t.money .. "]"
+			end
+		end
+		return table.concat(out, " ")
+	end
 	return type(line) == "table" and (line[1] .. " | " .. line[2]) or line
 end
 local function joined(lines)
@@ -276,8 +293,8 @@ local function searchLink(lines, label)
 	end
 end
 check("zone page: a link searching the zone", searchLink(lines, "Search in The Hinterlands") == "in:the-hinterlands", joined(lines))
-check("zone page: and N more searches for the rest", has(lines, "and 42 more: quest: in:the-hinterlands")
-	and searchLink(lines, "and 42 more") == "quest: in:the-hinterlands", joined(lines))
+check("zone page: and N more searches for the rest", ns.Unlink(joined(lines)):find("and %d+ more: quest: in:the%-hinterlands") ~= nil
+	and searchLink(lines, (ns.Unlink(joined(lines)):match("and %d+ more"))) == "quest: in:the-hinterlands", joined(lines))
 check("zone search link: its words find things in the zone", #ns.Results("in:the-hinterlands", 30) > 0)
 do
 	-- Clicking a zone in the results searches it: in: and the find's name.
@@ -734,6 +751,136 @@ check("race:tauren finds the Tauren quests, only those", ok, n)
 ok, n = questsWith("quest: race:skyborne side:both", "raceicon-skyborne")
 check("race:skyborne finds both Skyborne's quests", ok and n >= 24, n)
 check("race: no such race finds nothing", #ns.Results("quest: race:murloc", 30) == 0)
+
+-- Money and currencies: in letters out of the game; with the game's icons
+-- where it gives them (its coin string, a currency's icon).
+check("money in letters", ns.Money(150) == "1s 50c", ns.Money(150))
+check("a currency by name", ns.Currency(45, 3402) == "45 Merchant's Favor", ns.Currency(45, 3402))
+GetCoinTextureString = function(c) return "<coins " .. c .. ">" end
+C_CurrencyInfo = { GetCurrencyInfo = function(id) return id == 3402 and { name = "Merchant's Favor", iconFileID = 4696085 } or nil end }
+check("money with the game's coin icons", ns.Money(150) == "<coins 150>", ns.Money(150))
+check("a currency with its icon", ns.Currency(45, 3402) == "45 |T4696085:0|t", ns.Currency(45, 3402))
+check("a vendor's price in a currency on the page", raw(ns.Details("item", 249476), "45 |T4696085:0|t"), joined(ns.Details("item", 249476)))
+check("a currency the game does not know, by our name", ns.Currency(3, 1) == "3 currency 1", ns.Currency(3, 1))
+GetCoinTextureString, C_CurrencyInfo = nil, nil
+
+-- What else a quest asks before it is offered (QuestieDB's fields 19-21,
+-- 30-36), on its page and as icons.
+check("standing: a step", ns.Standing(9000) == "Honored" and ns.Standing(0) == "Neutral" and ns.Standing(-3000) == "Unfriendly",
+	ns.Standing(9000) .. " " .. ns.Standing(0) .. " " .. ns.Standing(-3000))
+check("standing: between steps, the points", ns.Standing(5500) == "Friendly 5500", ns.Standing(5500))
+local function needs(q) return table.concat(ns.QuestNeeds(ForeverData.Quest(q)), " / ") end
+local function plain(q) return ns.Unlink(needs(q)) end
+check("needs: a minimum reputation", plain(8584):find("^Neutral with %a"), plain(8584))
+check("needs: a maximum reputation", plain(7898):find("at most Friendly 5500 with %a"), plain(7898))
+check("needs: items to have, linked", needs(8240):find("have |Hfsearch:item:", 1, true), needs(8240))
+check("needs: a spell not to know", plain(97899):find("^not know "), plain(97899))
+check("needs: a specialisation, by name", plain(5307) == "Weaponsmith", plain(5307))
+check("needs: the Gnomish Engineer specialisation", plain(3645):find("Gnomish Engineer", 1, true), plain(3645))
+-- 202 in the specialisation field is Engineering's skill line, not spell
+-- 202 (Two-Handed Swords); Goblin Engineering asks Engineering 200 already.
+check("needs: a profession it already asks for is not said again", plain(3526) == "", plain(3526))
+check("no Two-Handed Swords on Goblin Engineering's page", not has(ns.Details("quest", 3526), "Two-Handed Swords"), joined(ns.Details("quest", 3526)))
+check("needs: offered until a quest is done", needs(2300):find("offered until |Hfsearch:quest:2281|h", 1, true), needs(2300))
+check("needs: offered from a quest on", needs(1918):find("offered from |Hfsearch:quest:25|h", 1, true), needs(1918))
+check("needs: no longer offered after a quest", needs(9422):find("no longer offered once |Hfsearch:quest:9416|h", 1, true), needs(9422))
+-- Ranks: only Omarion's Handbook (9233) asks them, a Naxxramas quest not
+-- shipped while raids are closed: a quest as its data reads.
+local ranks = ns.Unlink(table.concat(ns.QuestNeeds({ ranks = { { line = 197, value = -4 }, { line = 164, value = -4 }, { line = 165, value = -4 } } }), " / "))
+check("needs: ranks", ranks == "ranks of Tailoring, Blacksmithing, Leatherworking", ranks)
+check("needs: on the page", has(ns.Details("quest", 2300), "Needs (1):") or has(ns.Details("quest", 2300), "Needs:"), joined(ns.Details("quest", 2300)))
+check("max level among the facts", has(ns.Details("quest", 98910), "up to level 39"), joined(ns.Details("quest", 98910)))
+check("no max level from a spell (the old field 30)", not has(ns.Details("quest", 97899), "up to level"), joined(ns.Details("quest", 97899)))
+local function badge(q, test)
+	for _, b in ipairs(ns.PageBadges("quest", q)) do
+		if test(b) then return b end
+	end
+end
+local eng = badge(3526, function(b) return b.file == 136243 end)
+check("a profession's icon, a search for its quests", eng and eng.query == "quest: skill:engineering" and eng.label == "Engineering 200",
+	eng and (tostring(eng.query) .. " " .. tostring(eng.label)))
+local rep = badge(8584, function(b) return b.file == 236681 end)
+check("the reputation icon, naming what is needed", rep and rep.query == nil and rep.more and rep.more[1]:find("^Neutral with"),
+	rep and rep.more and rep.more[1])
+check("no reputation icon where none is needed", badge(26, function(b) return b.file == 236681 end) == nil)
+
+-- One section for a quest given and taken in by the same: Melding of
+-- Influences (4642), Chemist Fuely. Two where they differ: Meats to
+-- Orgrimmar (6365), Zargh to Devrak.
+local melding = ns.Details("quest", 4642)
+check("starts and ends at the same: one section", has(melding, "Starts and ends at (") or has(melding, "Starts and ends at:"),
+	joined(melding))
+check("starts and ends at the same: not twice", not has(melding, "Starts at") and not has(melding, "Ends at"), joined(melding))
+local meats = ns.Details("quest", 6365)
+check("starts and ends apart: both", has(meats, "Starts at") and has(meats, "Ends at") and not has(meats, "Starts and ends at"),
+	joined(meats))
+
+-- Season of Discovery's Emerald Wardens missions say they are gone ("This
+-- quest is no longer available within the game."): not shipped, not found.
+check("a quest no longer in the game is not shipped", ForeverData.Quest(81855) == nil and ForeverData.Quest(81786) == nil)
+check("nor found", #ns.Results("quest: feralas mission", 30) == 0 and #ns.Results("quest: hinterlands mission", 30) == 0,
+	#ns.Results("quest: feralas mission", 30))
+
+-- (Reputation is among the rewards: no section of its own.)
+-- Rewards as the quest log shows them (ForeverDB's guide, seen in Forever):
+-- Centaur Bracers (855) lets choose one of three weapons and gives 1,250
+-- experience; Raptor Horns (865) gives five Raptor Punch and a cloak.
+local function rewardText(q)
+	local out, on = {}, false
+	for _, line in ipairs(ns.Details("quest", q)) do
+		local t = ns.Unlink(lineText(line))
+		if t == "Rewards" then on = true elseif on and t == "" then break end
+		if on then out[#out + 1] = t end
+	end
+	return table.concat(out, " / ")
+end
+local bracers = rewardText(855)
+check("rewards: a heading, the choice, then what else", bracers:find("^Rewards / You will be able to choose one of these rewards: / %[tile: Orcish Battle Bow") ~= nil
+	and bracers:find("You will also receive: / [tile: 1250 xp]", 1, true) ~= nil, bracers)
+check("rewards: three to choose from", select(2, bracers:gsub("%[tile: [^%]]-Orcish Battle Bow", "")) + select(2, bracers:gsub("Pointed Axe", "")) + select(2, bracers:gsub("Stonewood Hammer", "")) == 3, bracers)
+local horns = rewardText(865)
+check("rewards: given, with how many, under You will receive", horns:find("You will receive: / [tile: Raptor Punch x5", 1, true) ~= nil
+	and horns:find("Barkeeper's Cloak", 1, true) ~= nil and not horns:find("choose", 1, true), horns)
+
+-- Reputation among what a quest gives: Melding of Influences (4642) +150
+-- Undercity, after its items; no Reputation section.
+local melding = rewardText(4642)
+-- No source says whether its two items are given or to choose: as given.
+check("rewards: items of no known kind are given", melding:find("^Rewards / You will receive: / %[tile: Chemist's ") ~= nil
+	and not melding:find("sources", 1, true), melding)
+check("rewards: reputation among what one receives", melding:find("[tile: +150 Undercity]", 1, true) ~= nil, melding)
+check("rewards: no reputation section of its own", not has(ns.Details("quest", 4642), "Reputation:"), joined(ns.Details("quest", 4642)))
+-- A quest that gives only reputation still has a Rewards section, and one
+-- that takes some away shows it as a loss.
+local only, loss
+for id in pairs(data.quests) do
+	local q = ForeverData.Quest(id)
+	local nothingElse = #q.rewards == 0 and #q.choices == 0 and #q.given == 0 and not q.xp and not q.money
+	for _, r in ipairs(q.reputation) do
+		if r.value < 0 and (not loss or id < loss) then loss = id end
+		if nothingElse and r.value > 0 and (not only or id < only) then only = id end
+	end
+end
+check("rewards: a quest with only reputation to give", only and rewardText(only):find("You will receive: / [tile: +", 1, true) ~= nil,
+	only and (only .. " " .. rewardText(only)) or "no such quest")
+check("rewards: a loss reads as a minus", loss and rewardText(loss):find("%[tile: %-%d+ ") ~= nil, loss and (loss .. " " .. rewardText(loss)) or "no such quest")
+
+-- One item to choose is no choice: every quest with a single one has it as
+-- given (Making Repairs, 91316); with two or more it stays a choice.
+local singles, wrong, lost = 0, {}, {}
+for id in pairs(data.quests) do
+	local q = ForeverData.Quest(id)
+	if #q.choices == 1 then
+		singles = singles + 1
+		local text = rewardText(id)
+		if text:find("choose", 1, true) then wrong[#wrong + 1] = id end
+		if not text:find(ForeverData.Item(q.choices[1].item).name, 1, true) then lost[#lost + 1] = id end
+	end
+end
+check("rewards: a single choice is given, not to choose", singles > 0 and #wrong == 0, singles .. " singles, wrong " .. table.concat(wrong, ","))
+check("rewards: a single choice is still shown", #lost == 0, table.concat(lost, ","))
+check("rewards: Making Repairs", rewardText(91316):find("^Rewards / You will receive: / %[tile: Salvaged Wooden Tower Shield") ~= nil, rewardText(91316))
+check("rewards: several stay a choice", rewardText(855):find("choose one of these", 1, true) ~= nil)
 
 if failures > 0 then
 	print(failures .. " failed")

@@ -106,6 +106,7 @@ function Widget:AddMaskTexture(m)
 	self.masks[#self.masks + 1] = m
 end
 function Widget:EnableMouse(on) self.mouse = on end
+function Widget:SetTextColor(r, g, b) self.colour = { r, g, b } end
 function Widget:IsMouseOver() return self.mouseOver == true end
 function Widget:RegisterEvent(e) self.events[e] = true end
 function Widget:UnregisterEvent(e) self.events[e] = nil end
@@ -185,6 +186,14 @@ function IsShiftKeyDown() return false end
 function IsInInstance() return false, "none" end
 function GetRealZoneText() return "Durotar" end
 function SetPortraitTextureFromCreatureDisplayID() end
+function BreakUpLargeNumbers(n)
+	local s = tostring(n)
+	while true do
+		local k
+		s, k = s:gsub("^(%d+)(%d%d%d)", "%1,%2")
+		if k == 0 then return s end
+	end
+end
 function CreateVector2D(x, y) return { x = x, y = y } end
 -- Standing in Razor Hill, Durotar 53.0, 42.0; each game map its own
 -- continent, 1000 yards across.
@@ -217,6 +226,11 @@ C_TooltipInfo = {
 		return { dataInstanceID = 7000 + id, lines = { { leftText = "item " .. id, type = 22 }, { leftText = "Trade Goods", type = 0 } } }
 	end,
 }
+
+-- The game writes money with its coin icons.
+function GetCoinTextureString(copper)
+	return copper .. "|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t"
+end
 
 -- The addons ---------------------------------------------------------------------
 
@@ -295,12 +309,14 @@ check("search: the page of the first find", PageHas("Linen Cloth"), PageText():s
 -- when the same page is drawn again (its tooltip data came in).
 Type("quest: from the wreckage")
 check("quest page shown", PageHas("From The Wreckage"), PageText():sub(1, 200))
-local reward = LinkBlock("fsearch:item:4928")
-check("the quest's reward is a link on its page", reward ~= nil)
+-- The reward is a tile now (the quest log's look): hovering shows its
+-- tooltip, clicking opens its page.
+local reward = Find(function(w) return w.item == 4928 and w:IsVisible() and Within(w, content) end)
+check("the quest's reward is a tile on its page", reward ~= nil)
 if reward then
-	reward:Run("OnHyperlinkEnter", "fsearch:item:4928")
+	reward:Run("OnEnter")
 	check("hovering the reward shows its tooltip", GameTooltip.shown and GameTooltip.item == 4928 and GameTooltip.owner == reward)
-	reward:Run("OnHyperlinkClick", "fsearch:item:4928")
+	reward:Run("OnMouseUp", "LeftButton")
 	Frames(30)
 	check("the reward's page", PageHas("Sandrunner Wristguards"), PageText():sub(1, 200))
 	check("going to the reward's page closes its tooltip", not GameTooltip.shown, GameTooltip.item)
@@ -322,6 +338,80 @@ if trunk then
 	Frames(5)
 	check("the page was drawn again", ns.timings.page and ns.timings.page.what == "Bolt of Linen Cloth")
 	check("a redraw of the same page keeps the tooltip", GameTooltip.shown and GameTooltip.item == 20708)
+end
+
+-- Prices on a page with the game's coin icons: Rough Arrow's vendors.
+Type("rough arrow")
+check("a vendor's price with coin icons", PageHas("10|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t"), PageText():sub(1, 300))
+
+-- Reward tiles: Raptor Horns gives five Raptor Punch and a cloak, two to a
+-- row; Centaur Bracers lets choose one of three, and gives experience.
+local function Tiles()
+	local out = {}
+	for _, w in ipairs(widgets) do
+		if w.kind == "Frame" and w.count and w:IsVisible() and Within(w, content) then out[#out + 1] = w end
+	end
+	return out
+end
+Type("quest: raptor horns")
+local tiles = Tiles()
+local punch, cloak
+for _, t in ipairs(tiles) do
+	if t.item == 5342 then punch = t elseif t.item == 5343 then cloak = t end
+end
+check("rewards: a tile per item", punch ~= nil and cloak ~= nil, #tiles)
+if punch and cloak then
+	check("a tile: the item's icon, masked, its count", punch.icon.file == 134400 and punch.icon.masks and #punch.icon.masks == 1
+		and punch.count.text == "5" and cloak.count.text == "", punch.count.text)
+	check("a tile: the item's name", punch.name.text == "Raptor Punch", punch.name.text)
+	local px, cx = punch.points[#punch.points][4], cloak.points[#cloak.points][4]
+	local py, cy = punch.points[#punch.points][5], cloak.points[#cloak.points][5]
+	check("two to a row", py == cy and px ~= cx, tostring(px) .. "," .. tostring(py) .. " " .. tostring(cx) .. "," .. tostring(cy))
+	check("tiles set in from the left, under their heading", px == 8, px)
+	check("the second column inside the page, clear of the first", cx >= px + punch.width and cx + cloak.width <= content.width,
+		cx .. " + " .. cloak.width .. " in " .. content.width)
+end
+Type("quest: centaur bracers")
+local xp
+local choices = 0
+for _, t in ipairs(Tiles()) do
+	if t.icon.file == 894556 then xp = t elseif t.item then choices = choices + 1 end
+end
+check("three tiles to choose from", choices == 3, choices)
+check("an experience tile, the amount at the quest's level", xp and xp.name.text == "1,250", xp and xp.name.text)
+
+-- Reputation as a reward tile: the reputation icon, green for a gain, red
+-- for a loss; hovering it shows no item's tooltip, clicking goes nowhere.
+local function RepTile()
+	for _, t in ipairs(Tiles()) do
+		if t.icon.file == 236681 then return t end
+	end
+end
+Type("quest: melding of influences")
+local gain = RepTile()
+check("a reputation tile", gain ~= nil and gain.name.text == "+150 Undercity", gain and gain.name.text)
+if gain then
+	check("a gain is green", gain.name.colour and gain.name.colour[2] == 1 and gain.name.colour[1] < 0.5)
+	GameTooltip:Hide()
+	gain:Run("OnEnter")
+	check("a reputation tile has no item tooltip", not GameTooltip.shown)
+	gain:Run("OnMouseUp", "LeftButton")
+	Frames(5)
+	check("clicking it stays on the page", PageHas("Melding of Influences"))
+end
+local loss
+for id in pairs(data.quests) do
+	for _, r in ipairs(ForeverData.Quest(id).reputation) do
+		if r.value < 0 and (not loss or id < loss) then loss = id end
+	end
+end
+if loss then
+	Type("quest: " .. string.lower(ForeverData.Quest(loss).name))
+	local red
+	for _, t in ipairs(Tiles()) do
+		if t.icon.file == 236681 and t.name.text:find("^%-") then red = t end
+	end
+	check("a loss is red", red and red.name.colour[1] == 1 and red.name.colour[2] < 0.5, ForeverData.Quest(loss).name)
 end
 
 -- Hovering a find shows its page only once the mouse rests.
@@ -369,6 +459,31 @@ if druid then
 	check("clicking it searches", box:GetText() == "quest: class:druid", box:GetText())
 end
 
+-- A profession quest: the profession's icon (a file, its border cropped,
+-- masked), a search for its quests; the reputation icon names what it
+-- needs and searches nothing.
+Type("quest: goblin engineering")
+local eng = Find(function(w) return w.kind == "Frame" and w.query == "quest: skill:engineering" and w:IsVisible() end)
+check("the Engineering icon on Goblin Engineering's page", eng ~= nil)
+if eng then
+	check("its art is the profession's icon file, masked", eng.icon.file == 136243 and eng.icon.masks and #eng.icon.masks == 1
+		and eng.icon.coords and eng.icon.coords[1] > 0, eng.icon.file)
+	eng:Run("OnMouseUp", "LeftButton")
+	check("clicking it searches the profession's quests", box:GetText() == "quest: skill:engineering", box:GetText())
+end
+Type("quest: " .. string.lower(ForeverData.Quest(8584).name))
+local rep = Find(function(w) return w.kind == "Frame" and w.label == "Reputation needed" and w:IsVisible() end)
+check("the reputation icon on a page that needs a standing", rep ~= nil, PageText():sub(1, 120))
+if rep then
+	check("its art is the reputation icon", rep.icon.file == 236681, rep.icon.file)
+	rep:Run("OnEnter")
+	check("hovering it names the standing needed, no click to search", GameTooltip.shown and GameTooltip.lines[2]
+		and GameTooltip.lines[2]:find("^Neutral with") and GameTooltip.lines[3] == nil, table.concat(GameTooltip.lines or {}, " / "))
+	rep:Run("OnLeave")
+	local before = box:GetText()
+	rep:Run("OnMouseUp", "LeftButton")
+	check("clicking it searches nothing", box:GetText() == before, box:GetText())
+end
 -- A slow page shows its heading at once and fills in over frames; no frame
 -- longer than the budget allows.
 Type("zone: durotar")

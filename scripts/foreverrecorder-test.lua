@@ -258,13 +258,16 @@ check("nothing read in combat", not db.vendors[3000].items[2287])
 
 -- Quests: offered by one, taken by another; rewards and choices.
 units.npc = { guid = creature(718) }
-quest = { id = 192, rewards = { { 4108, 1 } }, choices = { { 4109, 1 }, { 4110, 1 } }, money = 2500 }
+quest = { id = 192, rewards = { { 4108, 1 } }, choices = { { 4110, 1 }, { 4109, 1 } }, money = 2500 }
 fire("QUEST_DETAIL")
 units.npc = { guid = object(1557) }
 fire("QUEST_COMPLETE")
 local q = db.quests[192]
 check("who offers and who takes it", q and q.starts.n718 and q.ends.o1557)
-check("rewards, choices, money", q and q.rewards[4108] == 1 and q.choices[4110] == 1 and q.money == 2500)
+check("rewards, choices, money, in the game's order", q and q.given and q.given[1].item == 4108 and q.given[1].n == 1
+	and q.choose and q.choose[1].item == 4110 and q.choose[2].item == 4109 and q.money == 2500,
+	q and (tostring(q.given) .. " " .. tostring(q.choose)))
+check("no unordered maps written", q and q.rewards == nil and q.choices == nil)
 
 -- Creatures.
 units.target = { guid = creature(2505), name = "Saltwater Snapjaw", level = 49, class = "normal", type = "Beast", family = "Turtle", reaction = 4 }

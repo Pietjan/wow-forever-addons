@@ -23,7 +23,9 @@
 --            price copper per purchase as shown, after discounts (0 when it costs only items or currency),
 --            available -1 unlimited, costs "i<item>:<n>,c<currency>:<n>" or nil
 --   quests[quest] = { starts = { [key] = true }, ends = { [key] = true },
---            rewards = { [item] = n }, choices = { [item] = n }, money = copper }
+--            given = { { item, n }, ... }, choose = { { item, n }, ... } (as the
+--            game lists them), money = copper }; up to 0.2 rewards and choices
+--            were { [item] = n } instead, with no order
 --            key "n<creature>" or "o<object>"
 --   creatures[creature] = { name, min, max (levels), class (classification), type, family,
 --            a, h (reaction to Alliance, Horde: hostile/neutral/friendly) }

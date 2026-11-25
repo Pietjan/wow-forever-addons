@@ -55,8 +55,34 @@ function ns.Ready()
 	return false
 end
 
+-- Currency is so many of a currency (3402 Merchant's Favor) with the
+-- game's icon for it, else its name.
+function ns.Currency(amount, id)
+	local get = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo
+	local ok, info = false, nil
+	if get then
+		ok, info = pcall(get, id)
+	end
+	local icon = ok and type(info) == "table" and info.iconFileID
+	if icon then
+		return ("%d |T%s:0|t"):format(amount, tostring(icon))
+	end
+	local name = ok and type(info) == "table" and info.name or CURRENCY_LABEL[id] or ("currency " .. id)
+	return ("%d %s"):format(amount, name)
+end
+
+-- Money is an amount of copper as the game writes it: with its gold,
+-- silver and copper coin icons (GetCoinTextureString), else in letters,
+-- "12g 34s 56c".
 function ns.Money(copper)
 	copper = math.floor(math.abs(copper) + 0.5)
+	local coins = GetCoinTextureString or (C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString)
+	if coins then
+		local ok, text = pcall(coins, copper)
+		if ok and type(text) == "string" and text ~= "" then
+			return text
+		end
+	end
 	local g, s, c = math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100
 	if g > 0 then
 		return ("%dg %02ds %02dc"):format(g, s, c)
@@ -1497,7 +1523,7 @@ local function Price(v)
 		return GREY .. "unknown|r"
 	end
 	if v.currency then
-		return ("%d %s"):format(v.price, CURRENCY_LABEL[v.currency] or ("currency " .. v.currency))
+		return ns.Currency(v.price, v.currency)
 	end
 	return ns.Money(v.price)
 end
@@ -1568,7 +1594,7 @@ local function Purpose(id)
 	return purpose
 end
 
-local QuestLines, ByLevel, ItemWays, WaysLines -- below
+local QuestLines, ByLevel, ItemWays, WaysLines, RewardLines -- below
 local function ItemLines(id, lines)
 	local item = FD.Item(id)
 	if item and not item.available then
@@ -1986,6 +2012,114 @@ function ns.PageRaces(kind, id)
 	return out
 end
 
+-- Standing is a reputation as the game names its steps: points from
+-- neutral (3000 friendly, 9000 honored, 21000 revered, 42000 exalted), the
+-- points shown too when between steps ("Friendly 5500").
+local STANDINGS = {
+	{ -42000, "Hated" }, { -6000, "Hostile" }, { -3000, "Unfriendly" }, { 0, "Neutral" },
+	{ 3000, "Friendly" }, { 9000, "Honored" }, { 21000, "Revered" }, { 42000, "Exalted" },
+}
+function ns.Standing(value)
+	local name, at = "Hated", -42000
+	for _, s in ipairs(STANDINGS) do
+		if value >= s[1] then
+			name, at = s[2], s[1]
+		end
+	end
+	return value == at and name or ("%s %d"):format(name, value)
+end
+
+-- QuestNeeds is what else a quest asks before it is offered, as lines:
+-- reputation, items to have, a spell known or not, a specialisation, the
+-- quests that open or close it, ranks.
+function ns.QuestNeeds(q)
+	local out = {}
+	local function faction(id) return FD.Faction(id) or ("faction " .. id) end
+	if q.minRep then
+		out[#out + 1] = ("%s with %s"):format(ns.Standing(q.minRep.value), faction(q.minRep.faction))
+	end
+	if q.maxRep then
+		out[#out + 1] = ("at most %s with %s"):format(ns.Standing(q.maxRep.value), faction(q.maxRep.faction))
+	end
+	for _, item in ipairs(q.needsItems or {}) do
+		out[#out + 1] = "have " .. ns.Link("item", item)
+	end
+	if q.spell then
+		local name = FD.SpellName(math.abs(q.spell)) or ("spell " .. math.abs(q.spell))
+		out[#out + 1] = (q.spell > 0 and "know " or "not know ") .. name
+	end
+	-- A specialisation's spell (Weaponsmith), or a profession's skill line
+	-- (202 Engineering): a profession the quest already asks for (the
+	-- facts say "Engineering 200") is not said again.
+	local spec = q.specialization
+	if spec and FD.SkillName(spec) then
+		if spec ~= q.skillLine then
+			out[#out + 1] = FD.SkillName(spec)
+		end
+	elseif spec then
+		out[#out + 1] = FD.SpellName(spec) or ("specialisation " .. spec)
+	end
+	if q.fromQuest then
+		out[#out + 1] = "offered from " .. ns.Link("quest", q.fromQuest) .. " on"
+	end
+	if q.untilQuest then
+		out[#out + 1] = "offered until " .. ns.Link("quest", q.untilQuest) .. " is done"
+	end
+	if q.disabledBy then
+		out[#out + 1] = "no longer offered once " .. ns.Link("quest", q.disabledBy) .. " is done"
+	end
+	if q.ranks and #q.ranks > 0 then
+		local names = {}
+		for _, r in ipairs(q.ranks) do
+			names[#names + 1] = FD.SkillName(r.line) or ("skill " .. r.line)
+		end
+		out[#out + 1] = "ranks of " .. table.concat(names, ", ")
+	end
+	return out
+end
+
+-- The reputation icon (Achievement_Reputation_01: the handshake).
+local REPUTATION_ICON = 236681
+
+-- PageBadges is the icons beside a quest page's crest, nearest it first:
+-- its classes, its races, its profession, the reputation it needs. Each
+-- {atlas or file, crop (a share of each side cut away), query (what a
+-- click searches) or nil, label (what hovering names), more (lines under
+-- it)}.
+function ns.PageBadges(kind, id)
+	local out = {}
+	for _, atlas in ipairs(ns.PageClasses(kind, id)) do
+		local word = string.match(atlas, "^classicon%-(.+)$")
+		out[#out + 1] = { atlas = atlas, crop = 0, query = "quest: class:" .. word,
+			label = (word:gsub("^%l", string.upper)) .. " quests" }
+	end
+	for _, atlas in ipairs(ns.PageRaces(kind, id)) do
+		local word = string.match(atlas, "^raceicon%-(.-)%-[fe]*male$")
+		local named = (word:gsub("^%l", string.upper)):gsub("elf$", " Elf")
+		out[#out + 1] = { atlas = atlas, crop = 5 / 64, query = "quest: race:" .. word, label = named .. " quests" }
+	end
+	local q = kind == "quest" and FD.Quest(id)
+	if q and q.skillLine then
+		local name = FD.SkillName(q.skillLine)
+		local icon = FD.SkillIcon(q.skillLine)
+		if name and icon then
+			out[#out + 1] = { file = icon, crop = 0.08, query = "quest: skill:" .. string.lower(name),
+				label = name .. (q.skill and (" " .. q.skill) or "") }
+		end
+	end
+	if q and (q.minRep or q.maxRep) then
+		local more = {}
+		if q.minRep then
+			more[#more + 1] = ("%s with %s"):format(ns.Standing(q.minRep.value), FD.Faction(q.minRep.faction) or ("faction " .. q.minRep.faction))
+		end
+		if q.maxRep then
+			more[#more + 1] = ("at most %s with %s"):format(ns.Standing(q.maxRep.value), FD.Faction(q.maxRep.faction) or ("faction " .. q.maxRep.faction))
+		end
+		out[#out + 1] = { file = REPUTATION_ICON, crop = 0.08, label = "Reputation needed", more = more }
+	end
+	return out
+end
+
 local function QuestEntry(id)
 	local q = FD.Quest(id)
 	local mine = UnitFactionGroup and UnitFactionGroup("player")
@@ -2071,6 +2205,83 @@ function Wanted(itemID)
 end
 
 
+-- SameParties tells whether two lists of who starts and ends a quest name
+-- the same creatures, objects and items, in any order.
+local function SameParties(a, b)
+	if not a or not b or #a == 0 or #a ~= #b then
+		return false
+	end
+	local in_ = {}
+	for _, r in ipairs(a) do
+		in_[r.kind .. ":" .. r.id] = true
+	end
+	for _, r in ipairs(b) do
+		if not in_[r.kind .. ":" .. r.id] then
+			return false
+		end
+	end
+	return true
+end
+
+-- RewardLines writes a quest's rewards as the quest log has them: a
+-- "Rewards" heading, the items to choose one of, then what it gives
+-- besides (items, experience, money, reputation), each a list of tiles the
+-- window draws two to a row: {tiles = {{item, n} or {xp} or {money} or
+-- {faction, value}, ...}}. A
+-- quest whose sources do not say which items are given and which to choose
+-- has them all as given, and so is an only item to choose.
+local XP_ICON, MONEY_ICON = 894556, 133784
+ns.XP_ICON, ns.MONEY_ICON, ns.REPUTATION_ICON = XP_ICON, MONEY_ICON, REPUTATION_ICON
+
+-- ReputationText is a reputation reward: "+150 Undercity".
+function ns.ReputationText(r)
+	return ("%+d %s"):format(r.value, FD.Faction(r.faction) or ("faction " .. r.faction))
+end
+function RewardLines(lines, q)
+	local choices, given = q.choices or {}, q.given or {}
+	local known = #choices > 0 or #given > 0
+	local rest = {}
+	for _, r in ipairs(given) do
+		rest[#rest + 1] = { item = r.item, n = r.n }
+	end
+	-- One item "to choose" is no choice: it is given.
+	if #choices == 1 then
+		rest[#rest + 1] = { item = choices[1].item, n = choices[1].n }
+		choices = {}
+	end
+	if not known then
+		for _, item in ipairs(q.rewards or {}) do
+			rest[#rest + 1] = { item = item, n = 1 }
+		end
+	end
+	if q.xp then
+		rest[#rest + 1] = { xp = q.xp }
+	end
+	if q.money then
+		rest[#rest + 1] = { money = q.money }
+	end
+	for _, r in ipairs(q.reputation or {}) do
+		rest[#rest + 1] = { faction = r.faction, value = r.value }
+	end
+	if #choices == 0 and #rest == 0 then
+		return
+	end
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = GOLD .. "Rewards|r"
+	if #choices > 0 then
+		local tiles = {}
+		for _, r in ipairs(choices) do
+			tiles[#tiles + 1] = { item = r.item, n = r.n }
+		end
+		lines[#lines + 1] = GREY .. "You will be able to choose one of these rewards:|r"
+		lines[#lines + 1] = { tiles = tiles }
+	end
+	if #rest > 0 then
+		lines[#lines + 1] = GREY .. (#choices > 0 and "You will also receive:" or "You will receive:") .. "|r"
+		lines[#lines + 1] = { tiles = rest }
+	end
+end
+
 local function QuestPage(id, lines)
 	local q = FD.Quest(id)
 	if not q then
@@ -2082,6 +2293,9 @@ local function QuestPage(id, lines)
 	end
 	if q.requiredLevel then
 		facts[#facts + 1] = "from level " .. q.requiredLevel
+	end
+	if q.maxLevel then
+		facts[#facts + 1] = "up to level " .. q.maxLevel
 	end
 	-- The side, the classes and the races are the crest and icons at the
 	-- top of the page. Classes only in words when there are more than its
@@ -2128,8 +2342,14 @@ local function QuestPage(id, lines)
 			lines[#lines + 1] = "  " .. line(v)
 		end
 	end
-	Section("Starts at", q.starts, Party)
-	Section("Ends at", q.ends, Party)
+	-- Who gives it and who takes it in: one section when they are the same
+	-- (Chemist Fuely gives and takes Melding of Influences).
+	if SameParties(q.starts, q.ends) then
+		Section("Starts and ends at", q.starts, Party)
+	else
+		Section("Starts at", q.starts, Party)
+		Section("Ends at", q.ends, Party)
+	end
 	Section("Objectives", q.objectives, function(ref)
 		if ref.kind == "item" then
 			return Wanted(ref.id)
@@ -2139,10 +2359,8 @@ local function QuestPage(id, lines)
 		end
 		return Party(ref)
 	end)
-	Section("Rewards", q.rewards, function(item) return ns.Link("item", item) end)
-	Section("Reputation", q.reputation, function(r)
-		return ("%s%+d|r %s"):format(r.value >= 0 and "|cff40ff40" or RED, r.value, FD.Faction(r.faction) or ("faction " .. r.faction))
-	end)
+	RewardLines(lines, q)
+	Section("Needs", ns.QuestNeeds(q), function(line) return line end)
 	Section("Requires", q.requiresAll, function(quest) return ns.Link("quest", quest) end)
 	Section("Requires one of", q.requiresOne, function(quest) return ns.Link("quest", quest) end)
 	if q.next then
