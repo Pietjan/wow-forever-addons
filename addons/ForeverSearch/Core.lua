@@ -55,6 +55,18 @@ function ns.Ready()
 	return false
 end
 
+-- QuestLevel is a quest's own level, nil when it has none to say: -1, or
+-- the 1 of a repeatable turn-in that asks a higher level (Rocknot's Ale,
+-- the mount exchanges). A level below the required one is kept otherwise
+-- (Garments of the Moon is level 4 and requires 5).
+function ns.QuestLevel(q)
+	local level = q and q.level
+	if not level or level <= 0 or (level == 1 and q.repeatable and (q.requiredLevel or 0) > 1) then
+		return nil
+	end
+	return level
+end
+
 -- Currency is so many of a currency (3402 Merchant's Favor) with the
 -- game's icon for it, else its name.
 function ns.Currency(amount, id)
@@ -1437,8 +1449,8 @@ function ns.Subtitle(row)
 		parts[#parts + 1] = MainZone("object", row.id)
 	elseif row.kind == "quest" then
 		local q = FD.Quest(row.id)
-		if q and q.level and q.level > 0 then -- -1: it has the player's
-			parts[#parts + 1] = "level " .. q.level
+		if ns.QuestLevel(q) then
+			parts[#parts + 1] = "level " .. ns.QuestLevel(q)
 		end
 		if q and q.new then
 			parts[#parts + 1] = "new in Forever"
@@ -2126,7 +2138,7 @@ local function QuestEntry(id)
 	local side = q and q.side and SIDE_SHORT[q.side] ~= mine and SIDE_SHORT[q.side]
 	local crest = side and (" " .. Crest(side)) or ""
 	local note = q and q.repeatable and (GREY .. " · repeatable|r") or ""
-	return { "  " .. ns.Link("quest", id) .. crest .. note, q and q.level and tostring(q.level) or "" }
+	return { "  " .. ns.Link("quest", id) .. crest .. note, tostring(ns.QuestLevel(q) or "") }
 end
 
 -- The quests a thing is part of, a heading a part: on a creature's page
@@ -2289,8 +2301,8 @@ local function QuestPage(id, lines)
 	end
 	local facts = {}
 	-- "Level 27 requires level 22"; one level when they are the same. A
-	-- quest of no level of its own (-1: it has the player's) only requires.
-	local level = q.level and q.level > 0 and q.level or nil
+	-- quest with no level of its own to say only requires.
+	local level = ns.QuestLevel(q)
 	if level and q.requiredLevel and q.requiredLevel ~= level then
 		facts[#facts + 1] = ("Level %d requires level %d"):format(level, q.requiredLevel)
 	elseif level then

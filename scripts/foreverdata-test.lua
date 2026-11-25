@@ -243,6 +243,26 @@ check("letters in order when nothing else: trtl", #ForeverData.Search("trtl", 5)
 local low, high, shipped = ForeverData.ZoneLevels(1581)
 check("zone levels shipped", shipped == true and low == 18 and high == 20, tostring(low) .. "-" .. tostring(high))
 
+-- A word's 's aside, and a word not typed out yet: one typo off either.
+local function quests(q)
+	local out = {}
+	for i, r in ipairs(ForeverData.Search(q, 30, { "quest" })) do out[i] = r.name end
+	return out
+end
+local function list(q) return table.concat(quests(q), "; ") end
+check("typo: rocknut is Rocknot's, only", list("rocknut") == "Rocknot's Ale", list("rocknut"))
+check("typo: rocknu, half typed, is Rocknot's, only", list("rocknu") == "Rocknot's Ale", list("rocknu"))
+check("typo: both words of a name, one half typed", list("rocknut al") == "Rocknot's Ale" and list("rocknu ale") == "Rocknot's Ale", list("rocknut al") .. " / " .. list("rocknu ale"))
+local function items(q)
+	local out = {}
+	for i, r in ipairs(ForeverData.Search(q, 30, { "item" })) do out[i] = r.name end
+	return out
+end
+check("typo: a short word's 's aside (adext, Adept's Cloak)", has(items("adext"), "Adept's Cloak"), table.concat(items("adext"), "; "))
+check("typo: half typed under 6 letters is letters in order (ancbo)", has(items("ancbo"), "Ancestral Boots"), table.concat(items("ancbo"), "; "))
+check("typo: a word after the same letters inside another (scaxp, Bloodscalp Scalp)", has(items("scaxp"), "Bloodscalp Scalp"), table.concat(items("scaxp"), "; "))
+check("typo: a whole word one typo off comes before one that starts so", has(names("leathr"), "Thick Leather") and not has(names("leathr"), "Leatherworking"))
+
 if failures > 0 then
 	print(failures .. " failed")
 	os.exit(1)

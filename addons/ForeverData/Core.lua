@@ -632,11 +632,13 @@ end
 --    60  it is inside the name            "urtl"
 --   -15  only a creature's title has it   "banker" (title <Banker>)
 --    45  a word of the name is one typo away (4 letters or more) "tutrle"
+--    42  a word of the name starts one typo away (6 letters or more) "rocknu"
 --  30-40 its letters are in the name in order (3 letters or more) "trtl",
 --        the closer together the better
 -- Within a score, shorter names first. The search is staged: first only
--- the plain tiers (100, 85, 60); typos only when that finds nothing, and
--- letters in order only when typos find nothing too, so a near miss never
+-- the plain tiers (100, 85, 60); typos only when that finds nothing, starts
+-- of words only when typos find nothing, and letters in order only when
+-- neither does, so a near miss never
 -- pads a list of better matches. Typos are found against the distinct words
 -- of all names, not every name.
 
@@ -648,6 +650,23 @@ end
 local wordsByFirst, namesByWord
 local function buildWords(pause)
 	local byWord, out, n = {}, {}, 0
+	local function add(word, kind, entry)
+		if #word < 3 then
+			return
+		end
+		local list = byWord[word]
+		if not list then
+			list = {}
+			byWord[word] = list
+			local first = string.sub(word, 1, 1)
+			out[first] = out[first] or {}
+			table.insert(out[first], word)
+		end
+		if list[#list] ~= entry then -- "Linen Linen" once
+			list[#list + 1] = kind
+			list[#list + 1] = entry
+		end
+	end
 	for _, kind in ipairs(SEARCHED) do
 		for _, entry in ipairs(names(kind)) do
 			n = n + 1
@@ -655,19 +674,11 @@ local function buildWords(pause)
 				pause()
 			end
 			for word in string.gmatch(entry[2], "[%w']+") do
-				if #word >= 3 then
-					local list = byWord[word]
-					if not list then
-						list = {}
-						byWord[word] = list
-						local first = string.sub(word, 1, 1)
-						out[first] = out[first] or {}
-						table.insert(out[first], word)
-					end
-					if list[#list] ~= entry then -- "Linen Linen" once
-						list[#list + 1] = kind
-						list[#list + 1] = entry
-					end
+				add(word, kind, entry)
+				-- "rocknot's" is Rocknot's too: "rocknut" is a typo of it.
+				local stem = string.match(word, "^(.+)'s$")
+				if stem then
+					add(stem, kind, entry)
 				end
 			end
 		end
@@ -796,6 +807,37 @@ local function fuzzy(t)
 	end
 end
 
+-- starts adds the words a half-typed word with a typo may be the start of:
+-- one whose first letters, as many as were typed or one more or less, are
+-- one edit off ("rocknu", on the way to rocknot). For 6 letters or more:
+-- shorter, it took too much from letters in order ("mudsh", Mudsnout Shaman).
+local startCache = {}
+local function starts(t)
+	if t.starts then
+		return
+	end
+	local token = t.text
+	t.starts = startCache[token]
+	if t.starts then
+		return
+	end
+	t.starts = {}
+	if #token >= 6 then
+		local first, second = string.sub(token, 1, 1), string.sub(token, 2, 2)
+		for _, letter in ipairs(first == second and { first } or { first, second }) do
+			for _, word in ipairs(wordsBy(letter)) do
+				for n = #token - 1, math.min(#token + 1, #word - 1) do
+					if oneEdit(string.sub(word, 1, n), token) then
+						t.starts[#t.starts + 1] = word
+						break
+					end
+				end
+			end
+		end
+	end
+	startCache[token] = t.starts
+end
+
 -- common is how many things give an item: creatures and objects that drop
 -- it, vendors that sell it. Linen Cloth (some 400) is what "linen" means
 -- more than Linen Boots (none). Search weighs it only for materials (see
@@ -822,6 +864,23 @@ local MATERIAL = { [5] = true, [7] = true }
 
 local WHOLE = 15 -- bonus for a typed word that is a whole word of the name
 
+-- wholeWord tells whether a word is a whole word of a name, its 's aside:
+-- "rocknot" of "rocknot's ale".
+local function wholeWord(name, word)
+	local w = string.find(name, word, 1, true)
+	while w do
+		local rest = string.sub(name, w + #word, w + #word + 2)
+		if string.sub(rest, 1, 2) == "'s" then
+			rest = string.sub(rest, 3)
+		end
+		if not string.find(string.sub(name, w - 1, w - 1), "[%w']") and not string.find(rest, "^[%w']") then
+			return true
+		end
+		w = string.find(name, word, w + 1, true)
+	end
+	return false
+end
+
 local function scoreTerm(name, t, allowFuzzy)
 	local at = string.find(name, t.text, 1, true)
 	if at then
@@ -843,16 +902,19 @@ local function scoreTerm(name, t, allowFuzzy)
 	end
 	if t.typos then
 		for _, word in ipairs(t.typos) do
-			local w = string.find(name, word, 1, true)
-			if w then
-				local before, after = string.sub(name, w - 1, w - 1), string.sub(name, w + #word, w + #word)
-				if not string.find(before, "[%w']") and not string.find(after, "[%w']") then
-					return 45
-				end
+			if wholeWord(name, word) then
+				return 45
 			end
 		end
 	end
-	if t.pattern and allowFuzzy ~= "typo" then
+	if t.starts and allowFuzzy ~= "typo" then
+		for _, word in ipairs(t.starts) do
+			if wholeWord(name, word) then
+				return 42
+			end
+		end
+	end
+	if t.pattern and allowFuzzy == true then
 		local first, last = string.find(name, t.pattern)
 		if first then
 			return 30 + math.max(0, 10 - (last - first + 1 - #t.text))
@@ -1125,20 +1187,30 @@ function FD.Search(text, limit, kinds, options)
 	pass(false)
 	if #found == 0 and #terms > 0 then
 		-- Nothing plain: first the names with a word one typo off what was
-		-- typed, reached through the word index; only when there are none,
-		-- letters in order, over every name, the last resort.
-		local only, typos = {}, false
-		for _, t in ipairs(terms) do
-			fuzzy(t)
-			for _, word in ipairs(t.typos or EMPTY) do
-				typos = true
-				for _, x in ipairs(namesByWord and namesByWord[word] or EMPTY) do
-					only[#only + 1] = x
+		-- typed, reached through the word index; then those with a word that
+		-- starts one typo off it; only when there are none, letters in
+		-- order, over every name, the last resort.
+		local function namesOf(which)
+			local only = {}
+			for _, t in ipairs(terms) do
+				for _, word in ipairs(t[which] or EMPTY) do
+					for _, x in ipairs(namesByWord and namesByWord[word] or EMPTY) do
+						only[#only + 1] = x
+					end
 				end
 			end
+			return only
 		end
-		if typos then
-			pass("typo", only)
+		for _, t in ipairs(terms) do
+			fuzzy(t)
+		end
+		pass("typo", namesOf("typos"))
+		-- Then the same for a word not typed out yet.
+		if #found == 0 then
+			for _, t in ipairs(terms) do
+				starts(t)
+			end
+			pass("start", namesOf("starts"))
 		end
 		if #found == 0 then
 			pass(true)

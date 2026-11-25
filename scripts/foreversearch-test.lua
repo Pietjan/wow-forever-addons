@@ -908,6 +908,65 @@ for id in pairs(data.quests) do
 end
 check("result list: no level -1", noLevel > 0 and #shown == 0, noLevel .. " quests, shown: " .. table.concat(shown, "; "))
 
+-- The quest lists on the pages of who gives and takes a quest: its level at
+-- the right, nothing there for one without its own (-1).
+local entries, minus = 0, {}
+for id in pairs(data.quests) do
+	local q = ForeverData.Quest(id)
+	if q.level and q.level <= 0 then
+		for _, refs in ipairs({ q.starts, q.ends }) do
+			for _, ref in ipairs(refs) do
+				if ref.kind == "npc" or ref.kind == "object" then
+					for _, line in ipairs(ns.Details(ref.kind, ref.id, "side:both")) do
+						if type(line) == "table" and line[1] and line[1]:find("|Hfsearch:quest:" .. id .. "|h", 1, true) then
+							entries = entries + 1
+							if line[2] ~= "" then minus[#minus + 1] = id .. " on " .. ref.kind .. ref.id .. ": " .. line[2] end
+						end
+					end
+				end
+			end
+		end
+	end
+end
+check("quest lists: no level -1", entries > 0 and #minus == 0, entries .. " entries; " .. table.concat(minus, "; "))
+local locke
+for _, line in ipairs(ns.Details("npc", ForeverData.Quest(6571).starts[1].id, "side:both")) do
+	if type(line) == "table" and line[1] and line[1]:find("|Hfsearch:quest:6571|h", 1, true) then locke = line[2] end
+end
+check("quest lists: a quest's level at the right", locke == "27", locke)
+
+-- Quests that require more than their own level: a level-1 repeatable
+-- turn-in says only what it requires, on its page and in the lists; the
+-- others (priests' 4 and 5, warlocks' 58 and 60) keep both.
+local turnIns, both, bad = 0, 0, {}
+for id in pairs(data.quests) do
+	local q = ForeverData.Quest(id)
+	if q.level and q.level > 0 and q.requiredLevel and q.requiredLevel > q.level then
+		local line, row = factsLine(id), questRow(id)
+		if q.level == 1 then
+			turnIns = turnIns + 1
+			if not line:find("^Requires level " .. q.requiredLevel) or row:find("level", 1, true) then bad[#bad + 1] = id .. ": " .. line .. " / " .. row end
+		else
+			both = both + 1
+			if not line:find(("^Level %d requires level %d"):format(q.level, q.requiredLevel)) or not row:find("level " .. q.level, 1, true) then
+				bad[#bad + 1] = id .. ": " .. line .. " / " .. row
+			end
+		end
+	end
+end
+check("levels: 15 turn-ins only require, 15 others say both", turnIns == 15 and both == 15 and #bad == 0, turnIns .. ", " .. both .. "; " .. table.concat(bad, "; "))
+check("levels: Rocknot's Ale", factsLine(4295):find("^Requires level 42") ~= nil, factsLine(4295))
+local ale
+for _, ref in ipairs(ForeverData.Quest(4295).starts) do
+	for _, line in ipairs(ns.Details(ref.kind, ref.id, "side:both")) do
+		if type(line) == "table" and line[1] and line[1]:find("|Hfsearch:quest:4295|h", 1, true) then ale = line[2] end
+	end
+end
+check("levels: no 1 beside it in a page's quest list", ale == "", ale)
+-- A level-1 quest that asks no more keeps its level: Give Gerard a Drink,
+-- repeatable, requires 1.
+check("levels: an ordinary level 1 is said", questRow(16):find("level 1", 1, true) ~= nil, questRow(16))
+
 if failures > 0 then
 	print(failures .. " failed")
 	os.exit(1)
