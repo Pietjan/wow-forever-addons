@@ -16,8 +16,11 @@
 --   loot[key][method] = { looted = sources opened, items = { [item] = { n = times, q = amount } } }
 --            key "n<creature>" or "o<object>"; for fishing "a<uiMap>"; method
 --            drop, skinning, pickpocketing, gathering, fishing, contained
---   vendors[creature] = { seen = "YYYY-MM-DD", items = { [item] = { price, stack, available, costs } } }
---            price copper per purchase (0 when it costs only items or currency),
+--   vendors[creature] = { seen = "YYYY-MM-DD", standing, bartering,
+--            items = { [item] = { price, stack, available, costs } } }
+--            standing your reaction level with it (1 hated .. 8 exalted), bartering
+--            your Bartering talent rank: what the prices were discounted by;
+--            price copper per purchase as shown, after discounts (0 when it costs only items or currency),
 --            available -1 unlimited, costs "i<item>:<n>,c<currency>:<n>" or nil
 --   quests[quest] = { starts = { [key] = true }, ends = { [key] = true },
 --            rewards = { [item] = n }, choices = { [item] = n }, money = copper }

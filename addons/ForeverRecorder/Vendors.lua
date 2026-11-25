@@ -2,8 +2,35 @@
 -- replaces what the last one saw: the list is the vendor's whole stock.
 -- Limited stock is recorded as "available" (how many it has now, -1
 -- unlimited); what a purchase costs besides gold as "costs".
+--
+-- The prices are what the window shows: after your discounts. So each visit
+-- also records what makes them: your standing with the vendor (its
+-- reaction to you, 1 hated .. 8 exalted) and your rank in Bartering, the
+-- Professions Legacy talent ("Reduces the gold price of items from all
+-- vendors by 5%", 2 ranks): spell 1225459, trait node 110286 of trait
+-- system 45 (client tables, build 1.60.1.71091). A rank the game does not
+-- give is left out and counted as "bartering rank unread".
 
 local _, ns = ...
+
+local BARTERING_SYSTEM, BARTERING_NODE = 45, 110286
+
+-- Bartering is your rank in Bartering, nil when the game does not say.
+function ns.Bartering()
+	if not (C_Traits and C_Traits.GetConfigIDBySystemID and C_Traits.GetNodeInfo) then
+		return nil
+	end
+	local config = ns.Read("bartering config", C_Traits.GetConfigIDBySystemID, BARTERING_SYSTEM)
+	if not config then
+		return nil
+	end
+	local info = ns.Read("bartering node", C_Traits.GetNodeInfo, config, BARTERING_NODE)
+	if type(info) ~= "table" then
+		return nil
+	end
+	local rank = ns.Plain(info.activeRank) or ns.Plain(info.currentRank)
+	return type(rank) == "number" and rank or nil
+end
 
 local function MerchantItem(index)
 	if C_MerchantFrame and C_MerchantFrame.GetItemInfo then
@@ -57,7 +84,16 @@ function ns.ReadVendor()
 		end
 	end
 	if next(items) then
-		ns.db.vendors[id] = { seen = ns.Today(), items = items }
+		local bartering = ns.Bartering()
+		if not bartering then
+			ns.Secret("bartering rank unread")
+		end
+		ns.db.vendors[id] = {
+			seen = ns.Today(),
+			standing = ns.Read("standing", UnitReaction, "npc", "player"),
+			bartering = bartering,
+			items = items,
+		}
 		ns.Place(key)
 	end
 end

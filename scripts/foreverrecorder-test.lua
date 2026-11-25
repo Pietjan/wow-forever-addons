@@ -107,6 +107,19 @@ function GetMerchantItemCostItem(i, j)
 	return "icon", c[1], c[2], c[3]
 end
 
+-- Talents: the Professions Legacy tree (trait system 45) is config 7;
+-- Bartering is node 110286. barteringRank nil: the game gives no node.
+local barteringRank = 1
+C_Traits = {
+	GetConfigIDBySystemID = function(system) return system == 45 and 7 or nil end,
+	GetNodeInfo = function(config, node)
+		if config == 7 and node == 110286 and barteringRank then
+			return { currentRank = barteringRank, activeRank = barteringRank }
+		end
+		return {}
+	end,
+}
+
 -- A quest dialog.
 local quest = {}
 function GetQuestID() return quest.id end
@@ -218,7 +231,7 @@ local function hasGuid(t)
 end
 
 -- Vendors.
-units.npc = { guid = creature(3000) }
+units.npc = { guid = creature(3000), reaction = 6 }
 merchant = {
 	{ id = 159, price = 25, stack = 5, available = -1 },
 	{ id = 18949, price = 0, stack = 1, available = 1, costs = { { 3, item(6948) }, { 10, "|Hcurrency:3402|h[Favor]|h" } } },
@@ -226,11 +239,17 @@ merchant = {
 fire("MERCHANT_SHOW")
 local v = db.vendors[3000]
 check("a vendor's stock", v and v.seen == "2026-11-25" and v.items[159].price == 25 and v.items[159].stack == 5 and v.items[159].available == -1)
+check("the discounts: standing and Bartering rank", v and v.standing == 6 and v.bartering == 1, v and (tostring(v.standing) .. " " .. tostring(v.bartering)))
 check("limited stock and costs besides gold", v and v.items[18949].available == 1 and v.items[18949].costs == "i6948:3,c3402:10",
 	v and v.items[18949].costs)
 merchant = { { id = 117, price = 25, stack = 1, available = -1 } }
 fire("MERCHANT_SHOW")
 check("a visit replaces the stock", db.vendors[3000].items[117] and not db.vendors[3000].items[159])
+barteringRank = nil
+merchant = { { id = 117, price = 25, stack = 1, available = -1 } }
+fire("MERCHANT_SHOW")
+check("a rank the game does not give is left out and counted", db.vendors[3000].bartering == nil and (db.secret["bartering rank unread"] or 0) >= 1)
+barteringRank = 1
 fighting = true
 merchant = { { id = 2287, price = 100, stack = 1, available = -1 } }
 fire("MERCHANT_SHOW")
