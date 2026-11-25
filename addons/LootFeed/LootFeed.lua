@@ -30,6 +30,7 @@
 -- - Class colours of group looters: the chat line's GUID through
 --   GetPlayerInfoByGUID, then the group's names and classes as saved at
 --   login, on group changes and after combat, when they are not secret.
+-- A group member shows by first name only unless that option is off.
 -- The lines never take the mouse, so they cannot get in the way of a click
 -- into the world. No Blizzard function is hooked and no Blizzard field is
 -- written.
@@ -70,7 +71,7 @@ local ICON_UNKNOWN = 134400 -- INV_Misc_QuestionMark
 
 -- quality, partyQuality: the lowest item quality that gets a line (0 poor, 1
 -- common, 2 uncommon, 3 rare, 4 epic), for everything and for group loot.
-local DEFAULTS = { duration = 6, max = 8, money = true, rep = true, xp = true, honor = true, party = true, quality = 0, partyQuality = 0 }
+local DEFAULTS = { duration = 6, max = 8, money = true, rep = true, xp = true, honor = true, party = true, firstName = true, quality = 0, partyQuality = 0 }
 local MAX_QUALITY = 4
 
 local db, anchor, unlocked
@@ -632,7 +633,7 @@ local function PushItem(text, count, who, class, guid)
 		kind = "item", amount = count or 1, icon = icon, link = text,
 		itemID = id, whoKey = who or "", rollKind = result and result.kind, roll = result and result.roll,
 		label = (text:gsub("|h%[(.-)%]|h", "|h%1|h")), -- the link without its brackets, colour kept
-		who = who and ClassText(who, class),
+		who = who and ClassText(db.firstName and who:match("^(%S+)") or who, class),
 	})
 end
 
@@ -954,6 +955,7 @@ local function RegisterSettings()
 	Checkbox("xp", "Experience", nil, DEFAULTS.xp)
 	Checkbox("honor", "Honor", nil, DEFAULTS.honor)
 	Checkbox("party", "Group loot", "What members of your group loot, with their name.", DEFAULTS.party)
+	Checkbox("firstName", "First name only", "Leaves the surname off group members' names.", DEFAULTS.firstName)
 	Checkbox("unlocked", "Unlock to move", "Shows the anchor of the lines: drag it where you want them, then lock again.", false,
 		function() return unlocked or false end, SetUnlocked)
 	Button("Try it", "Test lines", Test, "Shows one line of each kind.")
