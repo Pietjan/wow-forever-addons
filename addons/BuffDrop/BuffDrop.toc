@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: BuffDrop
+## Notes: In combat, a pulsing grey icon the moment a buff you keep up on yourself falls off: Battle Shout, shaman shields, seals, Slice and Dice, Inner Fire, armors, Thorns, aspects. /buffdrop to move it.
+## Author: Pietjan
+## OptionalDeps: ForeverSnap
+## Version: 1.0
+## SavedVariables: BuffDropDB
+## SavedVariablesPerCharacter: BuffDropCharDB
+
+BuffDrop.lua
