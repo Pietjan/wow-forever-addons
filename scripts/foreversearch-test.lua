@@ -10,7 +10,7 @@ local function check(name, ok, detail)
 end
 
 local data = {}
-for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers" }) do
+for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched" }) do
 	assert(loadfile("addons/ForeverData/Data/" .. f .. ".lua"))("ForeverData", data)
 end
 assert(loadfile("addons/ForeverData/Core.lua"))("ForeverData", data)

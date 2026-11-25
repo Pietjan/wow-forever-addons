@@ -188,7 +188,7 @@ check("instances: a dungeon, a zone; no raid, none open yet", FD.Zone(2677) == n
 do
 	-- World drops: an item given everywhere, rarely, is no zone's loot.
 	local data = {}
-	for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers" }) do
+	for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched" }) do
 		assert(loadfile("addons/ForeverData/Data/" .. f .. ".lua"))("ForeverData", data)
 	end
 	assert(loadfile("addons/ForeverData/Core.lua"))("ForeverData", data)
@@ -205,6 +205,23 @@ do
 	check("world drop: Silk Cloth, common there, still is", inZone("Silk Cloth", 796))
 	check("world drop: a boss drop still is", inZone("Ravager", 796))
 end
+-- The search lists built ahead, and placeholder names left out as the
+-- generator marked them.
+-- (Searches above built them already: here it only has to say so.)
+local slices = 0
+repeat
+	slices = slices + 1
+until ForeverData.PrepareSearch(0.002, os.clock) or slices > 10000
+check("search prepared", ForeverData.PrepareSearch(0.002, os.clock) == true, slices)
+check("placeholders not found", (function()
+	for _, q in ipairs({ "UNUSED", "doodad", "PH" }) do
+		for _, r in ipairs(ForeverData.Search(q, 30)) do
+			if r.name:find("UNUSED") or r.name:find("^[Dd]oodad") or r.name:find("^%[") then return false end
+		end
+	end
+	return true
+end)())
+
 if failures > 0 then
 	print(failures .. " failed")
 	os.exit(1)

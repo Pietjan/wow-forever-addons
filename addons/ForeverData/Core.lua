@@ -386,20 +386,41 @@ function FD.HasLoot(kind, id)
 end
 
 -- Where an item comes from. Rows {kind, id, method, chance, sample, basis}.
+-- Only the item's own rows of each source's loot are read: a source's whole
+-- table is not decoded (Linen Cloth has 773 sources, each with dozens of
+-- items; decoding them all took 300 ms).
 function FD.Drops(itemID)
 	local refs = ns.drops and ns.drops[itemID]
 	if not refs then
 		return EMPTY
 	end
 	local out = {}
+	local key = itemID .. ","
 	for _, ref in ipairs(split(refs, ",")) do
-		for _, row in ipairs(lootOf(ref) or EMPTY) do
-			if row.item == itemID then
-				out[#out + 1] = {
-					kind = KIND_NAME[string.sub(ref, 1, 1)], id = tonumber(string.sub(ref, 2)),
-					method = row.method, chance = row.chance, sample = row.sample, basis = row.basis,
-				}
+		local code, id = string.sub(ref, 1, 1), tonumber(string.sub(ref, 2))
+		local s = ns.loot and ns.loot[code] and ns.loot[code][id]
+		-- Each "item,method,chance,sample,basis" row of the item: one at the
+		-- start, or after a ";".
+		local start = s and string.sub(s, 1, #key) == key and 1 or nil
+		local from = 1
+		while s do
+			if not start then
+				local hit = string.find(s, ";" .. key, from, true)
+				if not hit then
+					break
+				end
+				start = hit + 1
 			end
+			local stop = string.find(s, ";", start, true)
+			local f = split(string.sub(s, start, stop and stop - 1 or -1), ",")
+			out[#out + 1] = {
+				kind = KIND_NAME[code], id = id,
+				method = METHOD[f[2]], chance = number(f[3]), sample = number(f[4]), basis = BASIS[f[5]],
+			}
+			if not stop then
+				break
+			end
+			from, start = stop, nil
 		end
 	end
 	return out
@@ -455,18 +476,43 @@ local function junk(name)
 	return false
 end
 
--- names builds a kind's search list on first use: {id, lower-case name,
--- name, words in the name, lower-case title (creatures with one)}.
-local function names(kind)
-	local list = index[kind]
-	if list then
-		return list
+-- unsearchedSet is the set of a kind's IDs whose names search leaves out,
+-- as the generator marked them (Data/Unsearched.lua); nil for data made
+-- before it did, which junk() then checks name by name.
+local function unsearchedSet(kind)
+	local list = ns.unsearched and ns.unsearched[kind]
+	if not ns.unsearched then
+		return nil
 	end
-	list = {}
+	local set = {}
+	for id in string.gmatch(list or "", "%d+") do
+		set[tonumber(id)] = true
+	end
+	return set
+end
+
+-- buildNames makes a kind's search list: {id, lower-case name, name, words
+-- in the name, lower-case title (creatures with one)}. With pause, it
+-- calls pause() every few hundred names, so a coroutine can spread the
+-- work over frames.
+local function buildNames(kind, pause)
+	local list = {}
+	local hidden = unsearchedSet(kind)
+	local n = 0
 	for id, s in pairs(ns[SOURCE[kind]] or EMPTY) do
+		n = n + 1
+		if pause and n % 500 == 0 then
+			pause()
+		end
 		local bar = string.find(s, "|", 1, true)
 		local name = bar and string.sub(s, 1, bar - 1) or s
-		if name ~= "" and not junk(name) then
+		local skip
+		if hidden then
+			skip = hidden[id]
+		else
+			skip = junk(name)
+		end
+		if name ~= "" and not skip then
 			local _, words = string.gsub(name, "%S+", "")
 			local title
 			if kind == "npc" and bar then
@@ -476,7 +522,16 @@ local function names(kind)
 			list[#list + 1] = { id, string.lower(name), name, words, title }
 		end
 	end
-	index[kind] = list
+	return list
+end
+
+-- names is a kind's search list, built on first use if not built yet.
+local function names(kind)
+	local list = index[kind]
+	if not list then
+		list = buildNames(kind)
+		index[kind] = list
+	end
 	return list
 end
 
@@ -498,24 +553,65 @@ end
 -- wordsBy collects the distinct words of all names searched, by first
 -- letter, on first use.
 local wordsByFirst
-local function wordsBy(letter)
-	if not wordsByFirst then
-		local seen = {}
-		wordsByFirst = {}
-		for _, kind in ipairs(SEARCHED) do
-			for _, entry in ipairs(names(kind)) do
-				for word in string.gmatch(entry[2], "[%w']+") do
-					if not seen[word] and #word >= 3 then
-						seen[word] = true
-						local first = string.sub(word, 1, 1)
-						wordsByFirst[first] = wordsByFirst[first] or {}
-						table.insert(wordsByFirst[first], word)
-					end
+local function buildWords(pause)
+	local seen, out, n = {}, {}, 0
+	for _, kind in ipairs(SEARCHED) do
+		for _, entry in ipairs(names(kind)) do
+			n = n + 1
+			if pause and n % 500 == 0 then
+				pause()
+			end
+			for word in string.gmatch(entry[2], "[%w']+") do
+				if not seen[word] and #word >= 3 then
+					seen[word] = true
+					local first = string.sub(word, 1, 1)
+					out[first] = out[first] or {}
+					table.insert(out[first], word)
 				end
 			end
 		end
 	end
+	return out
+end
+local function wordsBy(letter)
+	if not wordsByFirst then
+		wordsByFirst = buildWords()
+	end
 	return wordsByFirst[letter] or EMPTY
+end
+
+-- FD.PrepareSearch builds the search lists ahead of the first search, a
+-- slice at a time: each call works for at most seconds (by clock, a
+-- function returning seconds; GetTime would not move within a frame) and
+-- returns true once all is built. A search before then builds what it
+-- needs itself, as without this.
+local preparing
+function FD.PrepareSearch(seconds, clock)
+	if index.prepared then
+		return true
+	end
+	preparing = preparing or coroutine.create(function()
+		for _, kind in ipairs(SEARCHED) do
+			if not index[kind] then
+				local list = buildNames(kind, coroutine.yield)
+				index[kind] = index[kind] or list
+			end
+		end
+		if not wordsByFirst then
+			local words = buildWords(coroutine.yield)
+			wordsByFirst = wordsByFirst or words
+		end
+		index.prepared = true
+	end)
+	local start = clock()
+	repeat
+		local ok, err = coroutine.resume(preparing)
+		if not ok then
+			preparing = nil
+			error(err)
+		end
+	until coroutine.status(preparing) == "dead" or clock() - start >= seconds
+	return index.prepared == true
 end
 
 -- oneEdit tells whether a and b differ by at most one insertion, deletion,

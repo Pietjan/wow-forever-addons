@@ -2,7 +2,7 @@
 -- Data from ForeverDB.net (https://foreverdb.net), CMaNGOS classic-db (GPL-3.0), wowhead,
 -- QuestieDB and the WoW Forever client; see NOTICE.txt.
 local _, ns = ...
-ns.meta = {contract = 1, made = "2026-11-25T10:47:58Z", sources = {
+ns.meta = {contract = 1, made = "2026-11-25T11:46:16Z", sources = {
 	["auctionator"] = "20261125T095646Z (11 snapshots)",
 	["cache"] = "build 71037, 1 snapshots",
 	["client"] = "1.60.1.71037",

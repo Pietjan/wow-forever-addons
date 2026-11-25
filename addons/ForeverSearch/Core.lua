@@ -161,37 +161,63 @@ local function PlayerWorld()
 	return nil
 end
 
+-- A map's x and y turn into world positions linearly, so the game is asked
+-- for three points of each map once (its corners at 0,0, 1,0 and 0,1) and
+-- the rest is arithmetic: a page measures thousands of spots (Linen Cloth's
+-- sources stand at 14,090). false: the game gives no position for the map.
+local mapToWorld = {}
+local function MapToWorld(map)
+	local t = mapToWorld[map]
+	if t == nil then
+		t = false
+		local ok, c, o, ex, ey = pcall(function()
+			local c0, o0 = C_Map.GetWorldPosFromMapPos(map, CreateVector2D(0, 0))
+			local _, px = C_Map.GetWorldPosFromMapPos(map, CreateVector2D(1, 0))
+			local _, py = C_Map.GetWorldPosFromMapPos(map, CreateVector2D(0, 1))
+			return c0, { x = o0.x + 0, y = o0.y + 0 }, { x = px.x - o0.x, y = px.y - o0.y }, { x = py.x - o0.x, y = py.y - o0.y }
+		end)
+		if ok and c and o then
+			t = { continent = c, o = o, ex = ex, ey = ey }
+		end
+		mapToWorld[map] = t
+	end
+	return t
+end
+
 -- SpotWorld is a spawn's continent and world position, nil unknown.
 local function SpotWorld(spot)
 	local z = spot.x and FD.Zone(spot.zone)
 	if not (z and z.map and C_Map and C_Map.GetWorldPosFromMapPos and CreateVector2D) then
 		return nil
 	end
-	local ok, continent, world = pcall(C_Map.GetWorldPosFromMapPos, z.map, CreateVector2D(spot.x / 100, spot.y / 100))
-	if ok and continent and world then
-		return continent, world
+	local t = MapToWorld(z.map)
+	if not t then
+		return nil
 	end
-	return nil
+	local x, y = spot.x / 100, spot.y / 100
+	return t.continent, { x = t.o.x + x * t.ex.x + y * t.ey.x, y = t.o.y + x * t.ex.y + y * t.ey.y }
 end
 
 -- Nearest is the spawn of a creature or object nearest the player and how
 -- many yards off it is; yards nil when none is on the player's continent or
 -- where either stands is unknown (the spot is then its first).
 local function Nearest(kind, id, continent, at)
-	local best, yards, first
+	local best, best2, first
 	for _, spot in ipairs(FD.Spawns(kind, id)) do
 		first = first or spot
-		if continent then
-			local c, w = SpotWorld(spot)
-			if c == continent then
-				local d = math.sqrt((w.x - at.x) ^ 2 + (w.y - at.y) ^ 2)
-				if not yards or d < yards then
-					best, yards = spot, d
-				end
+		local z = continent and spot.x and FD.Zone(spot.zone)
+		local t = z and z.map and C_Map and C_Map.GetWorldPosFromMapPos and CreateVector2D and MapToWorld(z.map)
+		if t and t.continent == continent then
+			local x, y = spot.x / 100, spot.y / 100
+			local dx = t.o.x + x * t.ex.x + y * t.ey.x - at.x
+			local dy = t.o.y + x * t.ex.y + y * t.ey.y - at.y
+			local d2 = dx * dx + dy * dy
+			if not best2 or d2 < best2 then
+				best, best2 = spot, d2
 			end
 		end
 	end
-	return best or first, yards
+	return best or first, best2 and math.sqrt(best2)
 end
 
 -- A place link sets a waypoint there: |Hfsearch:way:<kind>:<id>:<zone>:<x>:<y>|h,
@@ -1408,7 +1434,7 @@ local function Purpose(id)
 	return purpose
 end
 
-local QuestLines, ByLevel -- below
+local QuestLines, ByLevel, ItemWays, WaysLines -- below
 local function ItemLines(id, lines)
 	local item = FD.Item(id)
 	if item and not item.available then
@@ -1445,6 +1471,29 @@ local function ItemLines(id, lines)
 		lines[#lines + 1] = GOLD .. "You own:|r " .. total .. " (" .. table.concat(who, ", ") .. ")"
 	end
 
+	-- How to get it: built once, and kept a moment for the page's redraws
+	-- as the item's tooltip comes in (Linen Cloth's took 30 ms).
+	for _, line in ipairs(ItemWays(id)) do
+		lines[#lines + 1] = line
+	end
+end
+
+local WAYS_KEPT = 2 -- seconds
+local waysKept = {}
+function ItemWays(id)
+	local key = id .. ":" .. tostring(pageSide)
+	local now = GetTime and GetTime()
+	local kept = waysKept[key]
+	if kept and now and now - kept.at < WAYS_KEPT then
+		return kept.lines
+	end
+	local lines = {}
+	WaysLines(id, lines)
+	waysKept = { [key] = now and { at = now, lines = lines } or nil }
+	return lines
+end
+
+function WaysLines(id, lines)
 	-- The question behind the item: what it is for decides what the page
 	-- leads with ("Buy:", "For:", "Farm:", "Get it:") and the order of the
 	-- ways of getting it after.
@@ -1486,9 +1535,15 @@ local function ItemLines(id, lines)
 			end
 		end
 	end
-	local function Reachable(d)
+	-- Worked out once per source, not in every comparison of the sorts.
+	local reachable, score = {}, {}
+	for _, d in ipairs(sources) do
 		local n = level and d.kind == "npc" and FD.Npc(d.id)
-		return not (n and n.minLevel and n.minLevel > level + 3)
+		reachable[d] = not (n and n.minLevel and n.minLevel > level + 3)
+		score[d] = (d.chance or 0) * math.min(near[d] and near[d].spawns or 0, 20)
+	end
+	local function Reachable(d)
+		return reachable[d]
 	end
 	local function SourceOrder(a, b)
 		local ra, rb = Reachable(a), Reachable(b)
@@ -1523,8 +1578,7 @@ local function ItemLines(id, lines)
 		if (ya ~= nil) ~= (yb ~= nil) then
 			return ya ~= nil
 		end
-		local sa = (a.chance or 0) * math.min(near[a] and near[a].spawns or 0, 20)
-		local sb = (b.chance or 0) * math.min(near[b] and near[b].spawns or 0, 20)
+		local sa, sb = score[a], score[b]
 		if sa ~= sb then
 			return sa > sb
 		end

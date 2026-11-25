@@ -327,7 +327,21 @@ local function DrawRows()
 end
 
 -- Choose picks a find by place.
-local function Choose(index)
+-- Choose makes a find the chosen one: lit at once, its page shown at once
+-- from the keyboard; from the mouse only once it rests on the row
+-- (HOVER_DELAY), so passing over rows does not build a page for each. A
+-- page already showing that find is not built again.
+local HOVER_DELAY = 0.12
+local pendingPage
+local function ShowChosen()
+	pendingPage = nil
+	local find = finds[chosen]
+	if find and page and page.kind == find.kind and page.id == find.id and #history == 0 then
+		return
+	end
+	ShowPreview()
+end
+local function Choose(index, hovered)
 	if #finds == 0 then
 		return
 	end
@@ -338,13 +352,24 @@ local function Choose(index)
 		offset = chosen - ROWS
 	end
 	DrawRows()
-	ShowPreview()
+	if hovered and C_Timer and C_Timer.After then
+		local wait = {}
+		pendingPage = wait
+		C_Timer.After(HOVER_DELAY, function()
+			if pendingPage == wait then
+				ShowChosen()
+			end
+		end)
+	else
+		ShowChosen()
+	end
 end
 
 local function Show(results)
 	finds = results
 	found = #results
 	offset, chosen = 0, 1
+	pendingPage = nil
 	DrawRows()
 	ShowPreview()
 end
@@ -458,7 +483,7 @@ local function MakeRow(i)
 	row.sub:SetJustifyH("LEFT")
 	row.sub:SetWordWrap(false)
 	row:SetScript("OnEnter", function(self)
-		Choose(offset + i)
+		Choose(offset + i, true)
 	end)
 	row:SetScript("OnClick", function(self)
 		if IsShiftKeyDown() then
@@ -814,8 +839,29 @@ events:RegisterEvent("TOOLTIP_DATA_UPDATE")
 -- REDRAWS caps how often one page is drawn again for late tooltip data:
 -- drawing asks for the tooltip again, which may start a new lookup.
 local REDRAWS = 5
+-- The search lists are built after login, a few milliseconds a frame, so
+-- the first search does not stall a frame building them (130 ms offline).
+local PREPARE_BUDGET = 0.004 -- seconds of work a frame
+local preparer = CreateFrame("Frame")
+local function Clock()
+	return debugprofilestop() / 1000
+end
+local function StartPreparing()
+	if not (ns.Ready() and ForeverData.PrepareSearch and debugprofilestop) then
+		return
+	end
+	preparer:SetScript("OnUpdate", function(self)
+		local ok, done = pcall(ForeverData.PrepareSearch, PREPARE_BUDGET, Clock)
+		if not ok or done then
+			self:SetScript("OnUpdate", nil)
+		end
+	end)
+end
+events:RegisterEvent("PLAYER_LOGIN")
 events:SetScript("OnEvent", function(self, event, arg)
-	if event == "ADDON_LOADED" and arg == ADDON then
+	if event == "PLAYER_LOGIN" then
+		StartPreparing()
+	elseif event == "ADDON_LOADED" and arg == ADDON then
 		ForeverSearchDB = ForeverSearchDB or {}
 		self:UnregisterEvent("ADDON_LOADED")
 	elseif bar and bar:IsShown() and page and page.kind == "item" and (page.redraws or 0) < REDRAWS
