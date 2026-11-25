@@ -362,6 +362,21 @@ function FD.Subzones(id)
 	return out
 end
 
+-- The level of what one fights in a zone, as the generator worked it out
+-- (Data/Levels.lua): low, high; nil when too few creatures say, or for data
+-- made before it did (ok then false: the caller works it out itself).
+function FD.ZoneLevels(id)
+	if not ns.levels then
+		return nil, nil, false
+	end
+	local s = ns.levels[id]
+	if not s then
+		return nil, nil, true
+	end
+	local low, high = string.match(s, "^(%d+),(%d+)$")
+	return tonumber(low), tonumber(high), true
+end
+
 -- {id, name, parent, instance, map}: an area; parent nil for a zone or an
 -- instance; instance "dungeon", "raid" or "battleground" for an instance's
 -- own area, else nil; map the game map (UiMap) the x and y of spawns in it
@@ -386,17 +401,21 @@ function FD.HasLoot(kind, id)
 end
 
 -- Where an item comes from. Rows {kind, id, method, chance, sample, basis}.
+-- pause, if given, is called every 25 sources (see FD.Search's options.pause).
 -- Only the item's own rows of each source's loot are read: a source's whole
 -- table is not decoded (Linen Cloth has 773 sources, each with dozens of
 -- items; decoding them all took 300 ms).
-function FD.Drops(itemID)
+function FD.Drops(itemID, pause)
 	local refs = ns.drops and ns.drops[itemID]
 	if not refs then
 		return EMPTY
 	end
 	local out = {}
 	local key = itemID .. ","
-	for _, ref in ipairs(split(refs, ",")) do
+	for n, ref in ipairs(split(refs, ",")) do
+		if pause and n % 25 == 0 then
+			pause()
+		end
 		local code, id = string.sub(ref, 1, 1), tonumber(string.sub(ref, 2))
 		local s = ns.loot and ns.loot[code] and ns.loot[code][id]
 		-- Each "item,method,chance,sample,basis" row of the item: one at the
@@ -546,15 +565,19 @@ end
 --  30-40 its letters are in the name in order (3 letters or more) "trtl",
 --        the closer together the better
 -- Within a score, shorter names first. The search is staged: first only
--- the plain tiers (100, 85, 60); typos and letters in order only when that
--- finds nothing, so a near miss never pads a list of real matches. Typos are found against the distinct words
+-- the plain tiers (100, 85, 60); typos only when that finds nothing, and
+-- letters in order only when typos find nothing too, so a near miss never
+-- pads a list of better matches. Typos are found against the distinct words
 -- of all names, not every name.
 
 -- wordsBy collects the distinct words of all names searched, by first
 -- letter, on first use.
-local wordsByFirst
+-- It also keeps, for each word, the names it is a whole word of (kind,
+-- entry, kind, entry, ...): a typo word leads straight to its names, not
+-- through all of them (48,054).
+local wordsByFirst, namesByWord
 local function buildWords(pause)
-	local seen, out, n = {}, {}, 0
+	local byWord, out, n = {}, {}, 0
 	for _, kind in ipairs(SEARCHED) do
 		for _, entry in ipairs(names(kind)) do
 			n = n + 1
@@ -562,20 +585,28 @@ local function buildWords(pause)
 				pause()
 			end
 			for word in string.gmatch(entry[2], "[%w']+") do
-				if not seen[word] and #word >= 3 then
-					seen[word] = true
-					local first = string.sub(word, 1, 1)
-					out[first] = out[first] or {}
-					table.insert(out[first], word)
+				if #word >= 3 then
+					local list = byWord[word]
+					if not list then
+						list = {}
+						byWord[word] = list
+						local first = string.sub(word, 1, 1)
+						out[first] = out[first] or {}
+						table.insert(out[first], word)
+					end
+					if list[#list] ~= entry then -- "Linen Linen" once
+						list[#list + 1] = kind
+						list[#list + 1] = entry
+					end
 				end
 			end
 		end
 	end
-	return out
+	return out, byWord
 end
 local function wordsBy(letter)
 	if not wordsByFirst then
-		wordsByFirst = buildWords()
+		wordsByFirst, namesByWord = buildWords()
 	end
 	return wordsByFirst[letter] or EMPTY
 end
@@ -598,8 +629,10 @@ function FD.PrepareSearch(seconds, clock)
 			end
 		end
 		if not wordsByFirst then
-			local words = buildWords(coroutine.yield)
-			wordsByFirst = wordsByFirst or words
+			local words, byWord = buildWords(coroutine.yield)
+			if not wordsByFirst then
+				wordsByFirst, namesByWord = words, byWord
+			end
 		end
 		index.prepared = true
 	end)
@@ -749,7 +782,7 @@ local function scoreTerm(name, t, allowFuzzy)
 			end
 		end
 	end
-	if t.pattern then
+	if t.pattern and allowFuzzy ~= "typo" then
 		local first, last = string.find(name, t.pattern)
 		if first then
 			return 30 + math.max(0, 10 - (last - first + 1 - #t.text))
@@ -938,8 +971,12 @@ local COMPLETE = 30 -- bonus for a name with no words beyond those typed
 -- names first. A whole search takes up to a few tens of milliseconds; to
 -- keep the game smooth, call it in a coroutine with options {yieldEvery =
 -- n}: it yields after every n names, and the caller resumes it a frame later.
+local PAUSE_EVERY = 200
 function FD.Search(text, limit, kinds, options)
 	local yieldEvery = options and options.yieldEvery
+	-- options.pause: called every PAUSE_EVERY names, so a caller can give
+	-- the frame back when its time is up (it yields its own coroutine).
+	local pause = options and options.pause
 	local seen = 0
 	if type(text) ~= "string" then
 		return EMPTY
@@ -955,58 +992,96 @@ function FD.Search(text, limit, kinds, options)
 	local found, matched = {}, {}
 	local want = limit or 50
 	-- pass scores every name the plain tiers (or, when fuzzy, all tiers) match.
-	local function pass(allowFuzzy)
+	local searched = {}
+	for _, kind in ipairs(kinds or SEARCHED) do
+		searched[kind] = SOURCE[kind] ~= nil and (not allowed or allowed[kind]) or nil
+	end
+	local score
+	-- pass scores every name the plain tiers (or, when fuzzy, the fuzzy
+	-- ones too) match; with only = {kind, entry, ...}, only those names.
+	local function pass(allowFuzzy, only)
+		if only then
+			for i = 1, #only, 2 do
+				if searched[only[i]] then
+					score(only[i], only[i + 1], allowFuzzy)
+				end
+			end
+			return
+		end
 		for _, kind in ipairs(kinds or SEARCHED) do
-			if SOURCE[kind] and (not allowed or allowed[kind]) then
+			if searched[kind] then
 				for _, entry in ipairs(names(kind)) do
-					if yieldEvery then
+					if yieldEvery or pause then
 						seen = seen + 1
-						if seen % yieldEvery == 0 then
+						if yieldEvery and seen % yieldEvery == 0 then
 							coroutine.yield()
 						end
-					end
-					if not matched[entry] then
-						local total, byName = 0, true
-						for _, t in ipairs(terms) do
-							local s = scoreTerm(entry[2], t, allowFuzzy)
-							if not s and entry[5] then
-								s = scoreTerm(entry[5], t, false)
-								s = s and s - 15
-								byName = false
-							end
-							if not s then
-								total = nil
-								break
-							end
-							total = total + s
-						end
-						-- A name with no words beyond those typed is the one
-						-- meant: "turtle scale" is Turtle Scale, not Turtle
-						-- Scale Helm.
-						if total and byName and entry[4] == #terms then
-							total = total + COMPLETE
-						end
-						if total and (not accept or accept(kind, entry[1])) then
-							matched[entry] = true
-							found[#found + 1] = { kind = kind, id = entry[1], name = entry[3], score = total }
+						if pause and seen % PAUSE_EVERY == 0 then
+							pause()
 						end
 					end
+					score(kind, entry, allowFuzzy)
 				end
 			end
 		end
 	end
+	function score(kind, entry, allowFuzzy)
+		if matched[entry] then
+			return
+		end
+		local total, byName = 0, true
+		for _, t in ipairs(terms) do
+			local s = scoreTerm(entry[2], t, allowFuzzy)
+			if not s and entry[5] then
+				s = scoreTerm(entry[5], t, false)
+				s = s and s - 15
+				byName = false
+			end
+			if not s then
+				return
+			end
+			total = total + s
+		end
+		-- A name with no words beyond those typed is the one meant: "turtle
+		-- scale" is Turtle Scale, not Turtle Scale Helm.
+		if byName and entry[4] == #terms then
+			total = total + COMPLETE
+		end
+		if not accept or accept(kind, entry[1]) then
+			matched[entry] = true
+			found[#found + 1] = { kind = kind, id = entry[1], name = entry[3], score = total }
+		end
+	end
 	pass(false)
 	if #found == 0 and #terms > 0 then
+		-- Nothing plain: first the names with a word one typo off what was
+		-- typed, reached through the word index; only when there are none,
+		-- letters in order, over every name, the last resort.
+		local only, typos = {}, false
 		for _, t in ipairs(terms) do
 			fuzzy(t)
+			for _, word in ipairs(t.typos or EMPTY) do
+				typos = true
+				for _, x in ipairs(namesByWord and namesByWord[word] or EMPTY) do
+					only[#only + 1] = x
+				end
+			end
 		end
-		pass(true)
+		if typos then
+			pass("typo", only)
+		end
+		if #found == 0 then
+			pass(true)
+		end
 	end
 	-- Among equal matches: places (whole zones first), bosses, items
 	-- (materials first, the commonest first; see MATERIAL), the best
 	-- quality first, then by type
 	-- (class, subclass), then the shortest name.
 	for n, f in ipairs(found) do
+		if pause and n % PAUSE_EVERY == 0 then
+			pause()
+		end
 		if yieldEvery and n % yieldEvery == 0 then
 			coroutine.yield()
 		end

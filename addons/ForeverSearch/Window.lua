@@ -66,7 +66,7 @@ local FILTER_LIMIT = 1000
 local PAUSE = 0.1      -- seconds after the last key
 local BUDGET = 6       -- milliseconds of searching a frame
 local STEP = 500       -- names a step (each may be decoded for a filter)
-local job, startAt, jobText
+local job, startAt, jobText, searchTiming
 local FILTER_LINE = 20 -- height of the line saying how the filter words were read
 local CHIPS_HEIGHT = 30 -- the row of filter buttons under the bar
 local KIND_CHIPS = { { nil, "All" }, { "item", "Items" }, { "npc", "Creatures" }, { "object", "Objects" }, { "quest", "Quests" }, { "zone", "Zones" } }
@@ -146,8 +146,30 @@ local RIGHT_WIDTH = 76 -- wide enough for a price, "12g 34s 56c"
 local blocks = {}
 local Block -- made in MakeBar's part, as it needs the link handlers
 
-local function ShowPage(kind, id, keepScroll)
-	page = { kind = kind, id = id }
+-- Timing ------------------------------------------------------------------------
+--
+-- What the last search and the last page cost, measured in the game: the
+-- milliseconds of work, over how many frames, the longest frame's share,
+-- and for a page the drawing of it. /find time prints them.
+ns.timings = {}
+local function NewTiming(what)
+	return { what = what, work = 0, frames = 0, longest = 0, draw = 0 }
+end
+local function TimeSlice(t, ms)
+	t.work, t.frames, t.longest = t.work + ms, t.frames + 1, math.max(t.longest, ms)
+end
+
+-- Pages are built like searches: in a coroutine, a slice a frame
+-- (PAGE_BUDGET), so a long page (a zone, Linen Cloth's 700 sources) never
+-- holds a frame. The page's heading shows at once; the rest when built. A
+-- redraw (keepScroll) leaves the page as it is until the new one is ready.
+local PAGE_BUDGET = 5 -- milliseconds a frame
+local pageJob
+local pageDriver = CreateFrame("Frame")
+pageDriver:Hide()
+local Render
+
+local function PageHead(kind, id)
 	local quality = kind == "item" and ForeverData.Item(id) and ForeverData.Item(id).quality
 	local r, g, b = QualityColour(quality)
 	local lines = {}
@@ -159,10 +181,69 @@ local function ShowPage(kind, id, keepScroll)
 	lines[#lines + 1] = ("|cff%02x%02x%02x%s|r"):format(r * 255, g * 255, b * 255, ns.NameOf(kind, id))
 	lines[#lines + 1] = ("|cff9d9d9d%s %d|r"):format(ns.KindLabel(kind, id), id)
 	lines[#lines + 1] = ""
-	for _, line in ipairs(ns.Details(kind, id, box:GetText())) do
-		lines[#lines + 1] = line
-	end
+	return lines
+end
 
+-- StepPage works on a page for one slice; true once it is drawn (or failed).
+local function StepPage(job)
+	local start = debugprofilestop()
+	ns.SliceUntil(start + PAGE_BUDGET)
+	local ok, lines = coroutine.resume(job.co)
+	ns.SliceUntil(nil)
+	TimeSlice(job.timing, debugprofilestop() - start)
+	if not ok then
+		geterrorhandler()(lines)
+		return true
+	end
+	if coroutine.status(job.co) ~= "dead" then
+		return false
+	end
+	local all = job.head
+	for _, line in ipairs(lines or {}) do
+		all[#all + 1] = line
+	end
+	local drawStart = debugprofilestop()
+	Render(all, job.keepScroll)
+	job.timing.draw = debugprofilestop() - drawStart
+	ns.timings.page = job.timing
+	return true
+end
+
+local function ShowPage(kind, id, keepScroll)
+	page = { kind = kind, id = id }
+	local head = PageHead(kind, id)
+	local typed = box:GetText()
+	local job = {
+		co = coroutine.create(function() return ns.Details(kind, id, typed) end),
+		head = head, keepScroll = keepScroll, page = page,
+		timing = NewTiming(ns.NameOf(kind, id)),
+	}
+	-- Most pages take a millisecond: the first slice now, and only a page
+	-- that needs more shows its heading and "..." while it is built.
+	if StepPage(job) then
+		pageJob = nil
+		pageDriver:Hide()
+		return
+	end
+	if not keepScroll then
+		local waiting = {}
+		for i, l in ipairs(head) do waiting[i] = l end
+		waiting[#waiting + 1] = "|cff9d9d9d...|r"
+		Render(waiting, false)
+	end
+	pageJob = job
+	pageDriver:Show()
+end
+
+pageDriver:SetScript("OnUpdate", function(self)
+	local job = pageJob
+	if not job or job.page ~= page or StepPage(job) then
+		pageJob = nil
+		self:Hide()
+	end
+end)
+
+function Render(lines, keepScroll)
 	local used, y, run = 0, 0, {}
 	local function Put(text, right)
 		used = used + 1
@@ -401,23 +482,32 @@ driver:SetScript("OnUpdate", function(self)
 		job = coroutine.create(function()
 			return ns.Results(text, limit, { yieldEvery = STEP, grouped = grouped })
 		end)
+		searchTiming = NewTiming(text)
 	end
-	local until_ = debugprofilestop() + BUDGET
+	local start = debugprofilestop()
+	local until_ = start + BUDGET
+	ns.SliceUntil(until_)
 	repeat
 		local ok, results = coroutine.resume(job)
 		if not ok then
+			ns.SliceUntil(nil)
 			job = nil
 			self:Hide()
 			geterrorhandler()(results)
 			return
 		end
 		if coroutine.status(job) == "dead" then
+			ns.SliceUntil(nil)
+			TimeSlice(searchTiming, debugprofilestop() - start)
+			ns.timings.search = searchTiming
 			job = nil
 			self:Hide()
 			Show(results or {})
 			return
 		end
 	until debugprofilestop() >= until_
+	ns.SliceUntil(nil)
+	TimeSlice(searchTiming, debugprofilestop() - start)
 end)
 
 local function Close()
@@ -877,8 +967,28 @@ end)
 
 SLASH_FOREVERSEARCH1 = "/find"
 SLASH_FOREVERSEARCH2 = "/foreversearch"
+-- TimingLine says what one search or page cost.
+local function TimingLine(label, t)
+	if not t then
+		return label .. ": none yet"
+	end
+	local line = ("%s \"%s\": %.1f ms of work over %d frame%s, at most %.1f ms in one"):format(
+		label, t.what, t.work, t.frames, t.frames == 1 and "" or "s", t.longest)
+	if t.draw > 0 then
+		line = line .. (", drawn in %.1f ms"):format(t.draw)
+	end
+	return line
+end
+
 SlashCmdList.FOREVERSEARCH = function(text)
 	text = text and text:match("^%s*(.-)%s*$") or ""
+	-- /find time: what the last search and page cost. (To search for the
+	-- word itself, type it in the bar.)
+	if text == "time" then
+		print("ForeverSearch: " .. TimingLine("last search", ns.timings.search))
+		print("ForeverSearch: " .. TimingLine("last page", ns.timings.page))
+		return
+	end
 	if text == "" and bar and bar:IsShown() then
 		Close()
 		return

@@ -15,4 +15,5 @@ Data\Spawns.lua
 Data\Vendors.lua
 Data\Trainers.lua
 Data\Unsearched.lua
+Data\Levels.lua
 Core.lua

@@ -188,7 +188,7 @@ check("instances: a dungeon, a zone; no raid, none open yet", FD.Zone(2677) == n
 do
 	-- World drops: an item given everywhere, rarely, is no zone's loot.
 	local data = {}
-	for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched" }) do
+	for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched", "Levels" }) do
 		assert(loadfile("addons/ForeverData/Data/" .. f .. ".lua"))("ForeverData", data)
 	end
 	assert(loadfile("addons/ForeverData/Core.lua"))("ForeverData", data)
@@ -221,6 +221,27 @@ check("placeholders not found", (function()
 	end
 	return true
 end)())
+
+-- Misspelled: names with a word one typo off, through the word index;
+-- letters in order (Leatherworking for "leathr") only when there are none.
+local function names(q, n)
+	local out = {}
+	for i, r in ipairs(ForeverData.Search(q, n or 30)) do out[i] = r.name end
+	return out
+end
+local function has(list, name)
+	for _, n in ipairs(list) do if n == name then return true end end
+	return false
+end
+check("typo: rough arow is Rough Arrow", names("rough arow")[1] == "Rough Arrow", table.concat(names("rough arow", 3), "; "))
+check("typo: linnen finds Linen Cloth", has(names("linnen", 3), "Linen Cloth"), table.concat(names("linnen", 3), "; "))
+check("typo: no letters-in-order hits beside typo hits", has(names("leathr"), "Thick Leather") and not has(names("leathr"), "Leatherworking"))
+check("letters in order when nothing else: trtl", #ForeverData.Search("trtl", 5) > 0)
+
+-- Zone levels come with the data (Data/Levels.lua), worked out by the
+-- generator as ForeverSearch did in game: The Deadmines 18-20.
+local low, high, shipped = ForeverData.ZoneLevels(1581)
+check("zone levels shipped", shipped == true and low == 18 and high == 20, tostring(low) .. "-" .. tostring(high))
 
 if failures > 0 then
 	print(failures .. " failed")

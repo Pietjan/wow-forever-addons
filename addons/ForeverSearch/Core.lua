@@ -25,6 +25,24 @@ local STANDING_LABEL = { [4] = "Neutral", [5] = "Friendly", [6] = "Honored", [7]
 local CURRENCY_LABEL = { [3402] = "Merchant's Favor" }
 local GREY, GOLD, RED = "|cff9d9d9d", "|cffffd100", "|cffff6040"
 
+-- Frame budget ---------------------------------------------------------------
+--
+-- Work the window does for a keystroke or a hover runs in a coroutine, a
+-- slice a frame (Window.lua). Long loops here call Pause: when the slice's
+-- time is used up it gives the frame back (yields), else it returns at
+-- once. Outside such a job it does nothing, so the same code runs whole
+-- when called plainly (the tests, a tooltip).
+local sliceEnd -- debugprofilestop() when the running slice must stop
+function ns.SliceUntil(ms)
+	sliceEnd = ms
+end
+function ns.Pause()
+	if sliceEnd and debugprofilestop and debugprofilestop() >= sliceEnd and coroutine.running() then
+		coroutine.yield()
+	end
+end
+local Pause = ns.Pause
+
 -- Ready is true once ForeverData is there and of the layout this was written for.
 function ns.Ready()
 	if FD then
@@ -203,7 +221,10 @@ end
 -- where either stands is unknown (the spot is then its first).
 local function Nearest(kind, id, continent, at)
 	local best, best2, first
-	for _, spot in ipairs(FD.Spawns(kind, id)) do
+	for n, spot in ipairs(FD.Spawns(kind, id)) do
+		if n % 200 == 0 then
+			Pause()
+		end
 		first = first or spot
 		local z = continent and spot.x and FD.Zone(spot.zone)
 		local t = z and z.map and C_Map and C_Map.GetWorldPosFromMapPos and CreateVector2D and MapToWorld(z.map)
@@ -291,7 +312,10 @@ end
 local function Places(kind, id)
 	local continent, at = PlayerWorld()
 	local byZone, order, near = {}, {}, {}
-	for _, spot in ipairs(FD.Spawns(kind, id)) do
+	for n, spot in ipairs(FD.Spawns(kind, id)) do
+		if n % 200 == 0 then
+			Pause()
+		end
 		if not byZone[spot.zone] then
 			byZone[spot.zone] = {}
 			order[#order + 1] = spot.zone
@@ -604,7 +628,7 @@ local function FromFilter(word)
 		return fromCache[word]
 	end
 	local name = string.gsub(word, "%-", " ")
-	local hits = FD.Search(name, 50, { "npc", "object" }, { distinct = true })
+	local hits = FD.Search(name, 50, { "npc", "object" }, { distinct = true, pause = Pause })
 	local chosen = {}
 	for _, h in ipairs(hits) do
 		if Bare(h.name) == Bare(name) then
@@ -709,17 +733,17 @@ local function Instance(id)
 	return z and z.instance
 end
 local IS_FILTER = {
-	rare = { label = "rare creatures", test = function(kind, id) return kind == "npc" and Rank(id, { [2] = true, [4] = true }) end },
-	elite = { label = "elite creatures", test = function(kind, id) return kind == "npc" and Rank(id, { [1] = true, [2] = true }) end },
-	boss = { label = "bosses", test = function(kind, id) return kind == "npc" and Rank(id, { [3] = true }) end },
-	repeatable = { label = "repeatable quests", test = function(kind, id)
+	rare = { kinds = { "npc" }, label = "rare creatures", test = function(kind, id) return kind == "npc" and Rank(id, { [2] = true, [4] = true }) end },
+	elite = { kinds = { "npc" }, label = "elite creatures", test = function(kind, id) return kind == "npc" and Rank(id, { [1] = true, [2] = true }) end },
+	boss = { kinds = { "npc" }, label = "bosses", test = function(kind, id) return kind == "npc" and Rank(id, { [3] = true }) end },
+	repeatable = { kinds = { "quest" }, label = "repeatable quests", test = function(kind, id)
 		local q = kind == "quest" and FD.Quest(id)
 		return q and q.repeatable == true or false
 	end },
-	dungeon = { label = "dungeons", test = function(kind, id) return kind == "zone" and Instance(id) == "dungeon" end },
-	raid = { label = "raids", test = function(kind, id) return kind == "zone" and Instance(id) == "raid" end },
-	battleground = { label = "battlegrounds", test = function(kind, id) return kind == "zone" and Instance(id) == "battleground" end },
-	new = { label = "quests new in Forever", test = function(kind, id)
+	dungeon = { kinds = { "zone" }, label = "dungeons", test = function(kind, id) return kind == "zone" and Instance(id) == "dungeon" end },
+	raid = { kinds = { "zone" }, label = "raids", test = function(kind, id) return kind == "zone" and Instance(id) == "raid" end },
+	battleground = { kinds = { "zone" }, label = "battlegrounds", test = function(kind, id) return kind == "zone" and Instance(id) == "battleground" end },
+	new = { kinds = { "quest" }, label = "quests new in Forever", test = function(kind, id)
 		local q = kind == "quest" and FD.Quest(id)
 		return q and q.new == true or false
 	end },
@@ -928,6 +952,24 @@ function ns.Parse(typed)
 	end
 	if options.tests then
 		local tests = options.tests
+		-- A test that only one kind can pass (is:dungeon, zones) keeps the
+		-- search to that kind: the other 48,000 names are not looked at.
+		-- (The chips still go by the kinds typed.)
+		for _, f in ipairs(tests) do
+			if f.kinds then
+				local keep = {}
+				for _, k in ipairs(f.kinds) do
+					local typed = not (options.searchKinds or kinds)
+					for _, have in ipairs(options.searchKinds or kinds or {}) do
+						typed = typed or have == k
+					end
+					if typed then
+						keep[#keep + 1] = k
+					end
+				end
+				options.searchKinds = keep
+			end
+		end
 		options.filter = function(kind, id)
 			for _, f in ipairs(tests) do
 				if not f.test(kind, id) then
@@ -1091,11 +1133,18 @@ end
 -- creatures. Kept once worked out: it searches the zone's creatures.
 local zoneLevels = {}
 function ns.ZoneLevels(id)
+	-- Shipped with the data: no work in game.
+	if FD.ZoneLevels then
+		local low, high, shipped = FD.ZoneLevels(id)
+		if shipped then
+			return low, high
+		end
+	end
 	local known = zoneLevels[id]
 	if known == nil then
 		known = false
 		local levels = {}
-		for _, row in ipairs(FD.Search("", 1000, { "npc" }, { zone = { id }, distinct = true })) do
+		for _, row in ipairs(FD.Search("", 1000, { "npc" }, { zone = { id }, distinct = true, pause = Pause })) do
 			local n = FD.Npc(row.id)
 			if n and not n.boss and n.alliance ~= "friendly" and n.horde ~= "friendly" and n.maxLevel
 				and FD.HasLoot("npc", row.id) then
@@ -1149,8 +1198,14 @@ function ns.Results(typed, limit, options)
 		filters.filter = NoPoorFilter(filters.filter)
 	end
 	filters.distinct = true
+	filters.pause = Pause
 	local out = {}
-	for _, hit in ipairs(FD.Search(text, limit or 30, kinds, filters)) do
+	local searchKinds = filters.searchKinds
+	filters.searchKinds = nil
+	if searchKinds and #searchKinds == 0 then
+		return {} -- npc: is:dungeon: no kind passes both
+	end
+	for _, hit in ipairs(FD.Search(text, limit or 30, searchKinds or kinds, filters)) do
 		local row = { kind = hit.kind, id = hit.id, name = hit.name, ids = hit.ids }
 		if not signsWanted and Signpost(row) then
 			row = nil
@@ -1202,6 +1257,14 @@ function ns.Results(typed, limit, options)
 		if row.kind == "item" then
 			local item = FD.Item(row.id)
 			row.quality, row.available = item and item.quality, item and item.available
+		end
+	end
+	-- Every instance's level range now, in the job, so drawing the rows'
+	-- subtitles does not work them out in one frame.
+	for _, row in ipairs(out) do
+		local z = row.kind == "zone" and FD.Zone(row.id)
+		if z and z.instance then
+			ns.ZoneLevels(row.id)
 		end
 	end
 	-- A list of dungeons, raids or battlegrounds asked for by filters alone
@@ -1336,8 +1399,11 @@ local function Grouped(lines, rows, headings, label, more, opts)
 			-- Things of one name (two Defias Mercenary creatures) are one
 			-- entry: the likeliest, as the list is sorted.
 			local seen, kept = {}, {}
-			for _, row in ipairs(list) do
-				local key = ns.Unlink(label(row))
+			for i, row in ipairs(list) do
+				if i % 50 == 0 then
+					Pause()
+				end
+				local key = opts and opts.key and opts.key(row) or ns.Unlink(label(row))
 				if not seen[key] then
 					seen[key] = true
 					kept[#kept + 1] = row
@@ -1506,7 +1572,10 @@ function WaysLines(id, lines)
 	-- is no place to get it at 12); then likeliest, then nearest. Each with
 	-- its nearest spot.
 	local sources = {}
-	for _, d in ipairs(FD.Drops(id)) do
+	for i, d in ipairs(FD.Drops(id, Pause)) do
+		if i % 25 == 0 then
+			Pause()
+		end
 		if not Theirs(d.kind, d.id) then
 			sources[#sources + 1] = d
 		end
@@ -1514,7 +1583,10 @@ function WaysLines(id, lines)
 	-- Where each source stands: its nearest spot and how many spots it has,
 	-- over every creature or object of its name (Copper Vein is several).
 	local near, byName = {}, {}
-	for _, d in ipairs(sources) do
+	for i, d in ipairs(sources) do
+		if i % 25 == 0 then
+			Pause()
+		end
 		if d.kind == "npc" or d.kind == "object" then
 			local key = d.kind .. ":" .. ns.NameOf(d.kind, d.id)
 			byName[key] = byName[key] or { kind = d.kind, ids = {}, seen = {} }
@@ -1526,8 +1598,10 @@ function WaysLines(id, lines)
 		end
 	end
 	for _, group in pairs(byName) do
+		Pause()
 		group.spawns = 0
 		for _, other in ipairs(group.ids) do
+			Pause()
 			group.spawns = group.spawns + #FD.Spawns(group.kind, other)
 			local spot, yards = Nearest(group.kind, other, continent, at)
 			if spot and (not group.spot or (yards and (not group.yards or yards < group.yards))) then
@@ -1536,24 +1610,28 @@ function WaysLines(id, lines)
 		end
 	end
 	-- Worked out once per source, not in every comparison of the sorts.
-	local reachable, score = {}, {}
-	for _, d in ipairs(sources) do
+	-- The sorts below cannot give the frame back mid-way, so what they
+	-- compare is worked out first, as plain fields of each source: reach
+	-- (it can be fought), yards (to its nearest spot), farm (chance by how
+	-- many stand about).
+	for i, d in ipairs(sources) do
+		if i % 25 == 0 then
+			Pause()
+		end
 		local n = level and d.kind == "npc" and FD.Npc(d.id)
-		reachable[d] = not (n and n.minLevel and n.minLevel > level + 3)
-		score[d] = (d.chance or 0) * math.min(near[d] and near[d].spawns or 0, 20)
-	end
-	local function Reachable(d)
-		return reachable[d]
+		d.reach = not (n and n.minLevel and n.minLevel > level + 3)
+		d.yards = near[d] and near[d].yards
+		d.farm = (d.chance or 0) * math.min(near[d] and near[d].spawns or 0, 20)
+		d.key = d.kind .. ns.NameOf(d.kind, d.id)
 	end
 	local function SourceOrder(a, b)
-		local ra, rb = Reachable(a), Reachable(b)
-		if ra ~= rb then
-			return ra
+		if a.reach ~= b.reach then
+			return a.reach
 		end
 		if (a.chance or -1) ~= (b.chance or -1) then
 			return ByChance(a, b)
 		end
-		local ya, yb = near[a] and near[a].yards, near[b] and near[b].yards
+		local ya, yb = a.yards, b.yards
 		if (ya ~= nil) ~= (yb ~= nil) then
 			return ya ~= nil
 		end
@@ -1570,15 +1648,14 @@ function WaysLines(id, lines)
 	-- then the most likely catch for the time spent: chance by how many of it
 	-- stand about (up to 20; one named creature is no farm), then nearest.
 	local function FarmOrder(a, b)
-		local ra, rb = Reachable(a), Reachable(b)
-		if ra ~= rb then
-			return ra
+		if a.reach ~= b.reach then
+			return a.reach
 		end
-		local ya, yb = near[a] and near[a].yards, near[b] and near[b].yards
+		local ya, yb = a.yards, b.yards
 		if (ya ~= nil) ~= (yb ~= nil) then
 			return ya ~= nil
 		end
-		local sa, sb = score[a], score[b]
+		local sa, sb = a.farm, b.farm
 		if sa ~= sb then
 			return sa > sb
 		end
@@ -1686,7 +1763,7 @@ function WaysLines(id, lines)
 	local function Drops()
 		Grouped(lines, sources, FROM_HEADING, function(d)
 			return ns.Link(d.kind, d.id)
-		end, nil, { order = sourceOrder, suffix = SourceWhere, methods = methods })
+		end, nil, { order = sourceOrder, suffix = SourceWhere, methods = methods, key = function(d) return d.key end })
 	end
 	local function Sold()
 		if #vendors == 0 then
@@ -1985,7 +2062,10 @@ local function ZoneLines(id, lines)
 	for _, area in ipairs(FD.Subzones(id)) do
 		inZone[area] = true
 	end
-	for _, row in ipairs(FD.Search("", 1000, { "npc" }, { zone = { id }, distinct = true })) do
+	for i, row in ipairs(FD.Search("", 1000, { "npc" }, { zone = { id }, distinct = true, pause = Pause })) do
+		if i % 50 == 0 then
+			Pause()
+		end
 		local n = FD.Npc(row.id)
 		-- An instance's bosses, loot known or not (Scarlet Enclave's is not).
 		if n and n.boss then
@@ -2077,7 +2157,7 @@ local function ZoneLines(id, lines)
 	Creatures("Creatures here", fought)
 	Creatures("People here", people)
 
-	local objects = FD.Search("", 1000, { "object" }, { zone = { id }, distinct = true })
+	local objects = FD.Search("", 1000, { "object" }, { zone = { id }, distinct = true, pause = Pause })
 	local useful = {}
 	for _, row in ipairs(objects) do
 		useful[row.id] = (FD.HasLoot("object", row.id) and 2 or 0) + (#FD.QuestsOf("object", row.id) > 0 and 1 or 0)
