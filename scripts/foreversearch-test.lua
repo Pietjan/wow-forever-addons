@@ -263,7 +263,7 @@ check("quest list: the other side's quest has its crest", raw(lines, "Kobold Cam
 check("vendor page: sells, price right", has(ns.Details("npc", 54), "Sells (") and has(ns.Details("npc", 54), "Gladius | 5s 36c"), joined(ns.Details("npc", 54)))
 check("item page: starts a quest", has(ns.Details("item", 16305), "Starts a quest (1):"), joined(ns.Details("item", 16305)))
 lines = ns.Details("zone", 12)
-check("zone page: level range", has(lines, "creatures mostly level 1-11"), joined(lines))
+check("zone page: level range", has(lines, "creatures mostly level 2-11"), joined(lines))
 check("zone page: quests, subzones' too", has(lines, "Quests here (79):"), joined(lines))
 local herbFirst
 for i, line in ipairs(lines) do
@@ -333,7 +333,7 @@ check("is:dungeon finds dungeons only", allOf(ns.Results("is:dungeon", 30), func
 	return r.kind == "zone" and ForeverData.Zone(r.id).instance == "dungeon"
 end))
 -- Dungeons by level, lowest first, each with its level range.
-local dungeons = ns.Results("is:dungeon", 30)
+local dungeons = ns.Results("is:dungeon", 1000) -- as many as the window asks for
 check("dungeons: ordered by level", (function()
 	local last = 0
 	for _, r in ipairs(dungeons) do
@@ -352,6 +352,63 @@ end)())
 local rfc
 for _, r in ipairs(dungeons) do if r.name == "Ragefire Chasm" then rfc = r end end
 check("dungeons: the level range in the subtitle", rfc and ns.Subtitle(rfc):find("^Dungeon · level %d+%-%d+$"), rfc and ns.Subtitle(rfc))
+-- Scarlet Monastery is listed as its four wings, and one filters by either.
+local wingRow = {}
+for _, r in ipairs(dungeons) do wingRow[r.name] = r end
+check("wings: the four are listed, the whole is not", wingRow["Scarlet Monastery - Graveyard"] and wingRow["Scarlet Monastery - Library"]
+	and wingRow["Scarlet Monastery - Armory"] and wingRow["Scarlet Monastery - Cathedral"] and not wingRow["Scarlet Monastery"])
+check("wings: a wing's subtitle", wingRow["Scarlet Monastery - Library"]
+	and ns.Subtitle(wingRow["Scarlet Monastery - Library"]):find("^Dungeon · level %d+%-%d+$"), ns.Subtitle(wingRow["Scarlet Monastery - Library"]))
+check("wings: the whole is found by name, first", ns.Results("scarlet monastery", 10)[1].id == 796, ns.Results("scarlet monastery", 10)[1].name)
+local function zonesOf(typed)
+	local _, _, options = ns.Parse(typed)
+	return table.concat(options.zone or {}, " ")
+end
+for typed, want in pairs({
+	["in:sm"] = "796", ["in:scarlet-monastery"] = "796", ["in:scarlet"] = "796", ["in:library"] = "796002",
+	["in:armory"] = "796003", ["in:cathedral"] = "796004", ["in:graveyard"] = "796001",
+	[ns.InWord("Scarlet Monastery - Armory")] = "796003", ["in:goldshire"] = "12", ["in:dun-morogh"] = "1",
+}) do
+	check("wings: " .. typed, zonesOf(typed) == want, zonesOf(typed))
+end
+check("wings: a wing's in: word", ns.InWord("Scarlet Monastery - Armory") == "in:scarlet-monastery-armory", ns.InWord("Scarlet Monastery - Armory"))
+check("wings: where the game says you are is the whole", zonesOf(ns.InWord("Scarlet Monastery")) == "796")
+local function wingPage(id)
+	local t = {}
+	for _, line in ipairs(ns.Details("zone", id)) do
+		t[#t + 1] = type(line) == "table" and table.concat({ line[1] or "", line[2] or "" }, " | ") or line
+	end
+	return table.concat(t, "\n")
+end
+local wholePage, armoryPage = wingPage(796), wingPage(796003)
+check("wings: the whole's page links them, with levels", wholePage:find("Wings %(4%):|r\n[^\n]*|Hfsearch:zone:796001|h[^\n]* | %d+%-%d+\n[^\n]*|Hfsearch:zone:796002|h"), wholePage)
+check("wings: the whole's page has all the bosses", wholePage:find("Hfsearch:npc:3975|", 1, true) and wholePage:find("Hfsearch:npc:3983|", 1, true))
+check("wings: a wing's page has its own boss", armoryPage:find("Bosses (1)", 1, true) and armoryPage:find("Hfsearch:npc:3975|", 1, true), armoryPage)
+check("wings: and is in the whole, with no wings", armoryPage:find("In |", 1, true) == 1 and armoryPage:find("Hfsearch:zone:796|", 1, true)
+	and not armoryPage:find("Wings (", 1, true), armoryPage)
+check("wings: and lists its quests", armoryPage:find("Hfsearch:quest:1048|", 1, true) ~= nil, armoryPage)
+check("wings: a creature's page says its wing", wingPage and (function()
+	for _, line in ipairs(ns.Details("npc", 3975)) do
+		if type(line) == "string" and line:find("Where:", 1, true) then
+			return line:find("Hfsearch:zone:796003|", 1, true) ~= nil
+		end
+	end
+end)())
+-- Worked out in game, for data that ships none, a zone's levels come out as
+-- the generator's: no critters (Elwynn Forest, Moonglade's and Darnassus'
+-- rats and frogs alone).
+do
+	local shipped = ForeverData.ZoneLevels
+	for id, name in pairs({ [12] = "Elwynn Forest", [493] = "Moonglade", [1657] = "Darnassus", [47] = "The Hinterlands" }) do
+		ForeverData.ZoneLevels = function() return nil, nil, false end
+		local low, high = ns.ZoneLevels(id)
+		ForeverData.ZoneLevels = shipped
+		local a, b = shipped(id)
+		check("levels: " .. name .. " worked out in game as shipped", low == a and high == b,
+			("%s-%s / %s-%s"):format(tostring(low), tostring(high), tostring(a), tostring(b)))
+	end
+	check("levels: Moonglade has none, only critters below its one", shipped(493) == nil)
+end
 -- Filter words: from:, is:, type:, class:, skill:, and the links to them.
 local function all(results, test)
 	if #results == 0 then return false end
@@ -430,8 +487,8 @@ check("is:new", all(ns.Results("is:new in:elwynn", 50), function(r) return Forev
 check("filter words take the next word", ns.Describe("from: saltwater-snapjaw") == "from Saltwater Snapjaw")
 
 lines = ns.Details("zone", 12)
-local range = searchLink(lines, "creatures mostly level 1-11")
-check("zone page: the level range searches its creatures", range == "npc: in:elwynn-forest lvl:1-11", joined(lines))
+local range = searchLink(lines, "creatures mostly level 2-11")
+check("zone page: the level range searches its creatures", range == "npc: in:elwynn-forest lvl:2-11", joined(lines))
 check("that level search finds creatures", range and #ns.Results(range, 30) > 0)
 
 -- Dungeons and raids.

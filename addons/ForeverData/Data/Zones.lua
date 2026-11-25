@@ -1119,4 +1119,8 @@ ns.zones = {
 [17809]="Forlorn Pit|16591||",
 [17847]="Twilight Hollow|16591||",
 [17853]="Sunken Hollow|33||",
+[796001]="Scarlet Monastery - Graveyard|796|d|",
+[796002]="Scarlet Monastery - Library|796|d|",
+[796003]="Scarlet Monastery - Armory|796|d|",
+[796004]="Scarlet Monastery - Cathedral|796|d|",
 }

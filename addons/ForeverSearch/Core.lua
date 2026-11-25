@@ -497,11 +497,18 @@ local QUALITY_WORD = {
 	rare = 3, blue = 3, epic = 4, purple = 4, legendary = 5, orange = 5,
 }
 
--- The zone an area lies in: a subzone's top zone, a zone itself.
+-- A place things are filed under: a whole zone, or a wing of an instance
+-- (the one kind of place inside another that is one).
+local function Whole(zone)
+	return zone and (not zone.parent or zone.instance) and true or false
+end
+
+-- The place an area lies in: a subzone's top zone; a whole zone or a wing
+-- itself.
 local function TopZone(id)
 	local zone = FD.Zone(id)
 	local guard = 0
-	while zone and zone.parent and guard < 8 do
+	while zone and not Whole(zone) and guard < 8 do
 		local parent = FD.Zone(zone.parent)
 		if not parent then
 			break
@@ -536,9 +543,10 @@ local ABBREVIATIONS = {
 -- IDs and names; nil when it is none. An abbreviation of a place
 -- ForeverData does not ship (a raid, none open yet: "bwl") gives none.
 -- Bare is a name as in:/from: words compare it: lower case, without
--- apostrophes, so in:kroldok-stronghold is Krol'dok Stronghold.
+-- apostrophes, so in:kroldok-stronghold is Krol'dok Stronghold, nor a dash
+-- between spaces: in:scarlet-monastery-library.
 local function Bare(name)
-	return (string.gsub(string.lower(name), "'", ""))
+	return (string.gsub(string.gsub(string.lower(name), "'", ""), " %- ", " "))
 end
 
 local function Abbreviated(word)
@@ -560,7 +568,8 @@ end
 -- ("blackrock": Blackrock Depths, Blackrock Spire, ...); failing that, the
 -- best fuzzy match ("hinterlnds"). Spots are filed under whole zones, so
 -- when the word names only subzones ("goldshire"), their zones count
--- (Elwynn Forest); when it names a whole zone too, only whole zones do.
+-- (Elwynn Forest); when it names a whole zone or a wing too ("library"),
+-- only those do.
 local function ZonesNamed(word)
 	-- An abbreviation (in:bwl) is the zones it stands for.
 	local short, shortNames = Abbreviated(word)
@@ -596,10 +605,15 @@ local function ZonesNamed(word)
 	if #matched == 0 and found[1] then
 		matched[1] = found[1]
 	end
-	local whole = {}
+	-- A wing's whole instance matched too ("scarlet"): it stands for its
+	-- wings.
+	local whole, named = {}, {}
+	for _, z in ipairs(matched) do
+		named[z.id] = true
+	end
 	for _, z in ipairs(matched) do
 		local zone = FD.Zone(z.id)
-		if zone and not zone.parent then
+		if Whole(zone) and not named[zone.parent or 0] then
 			whole[#whole + 1] = z
 		end
 	end
@@ -778,7 +792,10 @@ local IS_FILTER = {
 		local q = kind == "quest" and FD.Quest(id)
 		return q and q.repeatable == true or false
 	end },
-	dungeon = { kinds = { "zone" }, label = "dungeons", test = function(kind, id) return kind == "zone" and Instance(id) == "dungeon" end },
+	-- A dungeon of wings is listed as its wings.
+	dungeon = { kinds = { "zone" }, label = "dungeons", test = function(kind, id)
+		return kind == "zone" and Instance(id) == "dungeon" and #FD.Wings(id) == 0
+	end },
 	raid = { kinds = { "zone" }, label = "raids", test = function(kind, id) return kind == "zone" and Instance(id) == "raid" end },
 	battleground = { kinds = { "zone" }, label = "battlegrounds", test = function(kind, id) return kind == "zone" and Instance(id) == "battleground" end },
 	new = { kinds = { "quest" }, label = "quests new in Forever", test = function(kind, id)
@@ -1234,7 +1251,7 @@ local function Signpost(row)
 end
 
 -- ZoneLevels is the level of what you fight in a zone: the middle 80% of
--- its hostile creatures that give loot (bosses aside), so a dragon or a
+-- its hostile creatures that give loot (bosses and critters aside), so a dragon or a
 -- rare does not stretch it. low, high; nil with fewer than 3 such
 -- creatures. Kept once worked out: it searches the zone's creatures.
 local zoneLevels = {}
@@ -1252,7 +1269,7 @@ function ns.ZoneLevels(id)
 		local levels = {}
 		for _, row in ipairs(FD.Search("", 1000, { "npc" }, { zone = { id }, distinct = true, pause = Pause })) do
 			local n = FD.Npc(row.id)
-			if n and not n.boss and n.alliance ~= "friendly" and n.horde ~= "friendly" and n.maxLevel
+			if n and not n.boss and n.kind ~= "Critter" and n.alliance ~= "friendly" and n.horde ~= "friendly" and n.maxLevel
 				and FD.HasLoot("npc", row.id) then
 				levels[#levels + 1] = n.maxLevel
 			end
@@ -1457,7 +1474,8 @@ function ns.Subtitle(row)
 		end
 	elseif row.kind == "zone" then
 		local z = FD.Zone(row.id)
-		if z and z.parent then
+		-- A wing's name says what it is in.
+		if z and z.parent and not z.instance then
 			parts[#parts + 1] = "in " .. ns.NameOf("zone", z.parent)
 		end
 		-- A dungeon, raid or battleground: the level of what you fight there.
@@ -2491,6 +2509,23 @@ local function ZoneLines(id, lines)
 		local range = RangeText(low, high)
 		lines[#lines + 1] = ns.FindLink("npc: " .. Zone(id) .. " lvl:" .. range,
 			(low == high and "creatures level %s" or "creatures mostly level %s"):format(range))
+	end
+
+	local wings = FD.Wings(id)
+	if #wings > 0 then
+		table.sort(wings, function(a, b)
+			local la, lb = ns.ZoneLevels(a) or 0, ns.ZoneLevels(b) or 0
+			if la ~= lb then
+				return la < lb
+			end
+			return a < b
+		end)
+		lines[#lines + 1] = ""
+		lines[#lines + 1] = GOLD .. ("Wings (%d):|r"):format(#wings)
+		for _, wing in ipairs(wings) do
+			local from, to = ns.ZoneLevels(wing)
+			lines[#lines + 1] = { "  " .. ns.Link("zone", wing), from and RangeText(from, to) or "" }
+		end
 	end
 
 	if #bosses > 0 then

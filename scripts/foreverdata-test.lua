@@ -204,6 +204,54 @@ do
 	check("world drop: its own set still is", inZone("Scarlet Chestpiece", 796))
 	check("world drop: Silk Cloth, common there, still is", inZone("Silk Cloth", 796))
 	check("world drop: a boss drop still is", inZone("Ravager", 796))
+	-- Scarlet Monastery's wings: Graveyard, Library, Armory, Cathedral.
+	local GRAVEYARD, LIBRARY, ARMORY, CATHEDRAL = 796001, 796002, 796003, 796004
+	local function list(t) return table.concat(t, " ") end
+	check("wings: the four", list(real.Wings(796)) == "796001 796002 796003 796004", list(real.Wings(796)))
+	check("wings: none of a zone or another dungeon", #real.Wings(12) == 0 and #real.Wings(1581) == 0 and #real.Wings(ARMORY) == 0)
+	check("wings: dungeons in the whole", real.Zone(ARMORY).instance == "dungeon" and real.Zone(ARMORY).parent == 796)
+	local function stands(id)
+		local t = {}
+		for _, s in ipairs(real.Spawns("npc", id)) do t[#t + 1] = s.zone end
+		return list(t)
+	end
+	for _, b in ipairs({
+		{ 3983, "Vishas", GRAVEYARD }, { 4543, "Thalnos", GRAVEYARD }, { 3974, "Loksey", LIBRARY }, { 6487, "Doan", LIBRARY },
+		{ 3975, "Herod", ARMORY }, { 4542, "Fairbanks", CATHEDRAL }, { 3976, "Mograine", CATHEDRAL }, { 3977, "Whitemane", CATHEDRAL },
+		{ 6490, "Azshir, at no spot", GRAVEYARD }, { 6575, "Trainee, at no spot", ARMORY },
+	}) do
+		check("wings: " .. b[2], stands(b[1]) == tostring(b[3]), stands(b[1]))
+	end
+	check("wings: one of two wings in both", stands(4295) == "796003 796004", stands(4295))
+	check("wings: a boss drop in its wing only", inZone("Ravager", ARMORY) and not inZone("Ravager", LIBRARY))
+	check("wings: a world drop not a wing's", not inZone("Fiery War Axe", ARMORY))
+	check("wings: Silk Cloth, common there, is", inZone("Silk Cloth", ARMORY))
+	local function questsIn(zone)
+		local t = {}
+		for _, r in ipairs(real.Search("", 50, { "quest" }, { zone = zone })) do t[#t + 1] = r.id end
+		table.sort(t)
+		return list(t)
+	end
+	check("wings: the whole has its quests", questsIn(796) == "1048 1049 1050 1051 1053 1113 1160 96800", questsIn(796))
+	check("wings: Herod's quests in the Armory", (" " .. questsIn(ARMORY) .. " "):find(" 1048 ") and (" " .. questsIn(ARMORY) .. " "):find(" 1053 "), questsIn(ARMORY))
+	check("wings: no Armory quest in a wing it has nothing in", not questsIn(GRAVEYARD):find("1048"), questsIn(GRAVEYARD))
+	check("wings: Mythology of the Titans in the Library", questsIn(LIBRARY):find("1050") and not questsIn(ARMORY):find("1050"), questsIn(LIBRARY))
+	check("wings: Vorrel's Revenge in the Graveyard", questsIn(GRAVEYARD):find("1051") ~= nil, questsIn(GRAVEYARD))
+	local every, some = {}, 0
+	for _, r in ipairs(real.Search("", 1000, { "npc" }, { zone = 796 })) do every[r.id] = true end
+	local all = true
+	for _, wing in ipairs(real.Wings(796)) do
+		for _, r in ipairs(real.Search("", 1000, { "npc" }, { zone = wing })) do
+			some = some + 1
+			all = all and every[r.id] == true
+		end
+	end
+	check("wings: the whole finds all a wing does", all and some > 40, some)
+	local low, high = real.ZoneLevels(796)
+	local gLow = real.ZoneLevels(GRAVEYARD)
+	local _, cHigh = real.ZoneLevels(CATHEDRAL)
+	check("wings: the whole's levels span its wings'", low and low >= gLow and low <= gLow + 3 and high <= cHigh,
+		("%s-%s %s %s"):format(tostring(low), tostring(high), tostring(gLow), tostring(cHigh)))
 end
 -- The search lists built ahead, and placeholder names left out as the
 -- generator marked them.

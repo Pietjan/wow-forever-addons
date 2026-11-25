@@ -432,6 +432,20 @@ function FD.Subzones(id)
 	return out
 end
 
+-- The wings of an instance: the areas in it that are instances themselves
+-- (Scarlet Monastery's four), in order; none for any other.
+function FD.Wings(id)
+	local out = {}
+	for _, area in ipairs(FD.Subzones(id)) do
+		local z = area ~= id and FD.Zone(area)
+		if z and z.instance then
+			out[#out + 1] = area
+		end
+	end
+	table.sort(out)
+	return out
+end
+
 -- The level of what one fights in a zone, as the generator worked it out
 -- (Data/Levels.lua): low, high; nil when too few creatures say, or for data
 -- made before it did (ok then false: the caller works it out itself).
@@ -933,6 +947,34 @@ local FILTER_KINDS = {
 	zone = { npc = true, object = true, item = true, quest = true },
 }
 
+-- withWings is the zones and their wings: what stands in a wing of an
+-- instance is in the instance, though its spots are filed under the wing.
+local function withWings(zones)
+	local out = {}
+	for _, id in ipairs(zones) do
+		out[#out + 1] = id
+		for _, wing in ipairs(FD.Wings(id)) do
+			out[#out + 1] = wing
+		end
+	end
+	return out
+end
+
+-- wingQuests is the quests that take one to the wings among the zones:
+-- those are filed under the whole instance.
+local function wingQuests(zones)
+	local out = {}
+	for _, id in ipairs(zones) do
+		local z = zone(id)
+		if z and z.instance and z.parent then
+			for _, row in ipairs(questsOf("a" .. id) or EMPTY) do
+				out[row.quest] = true
+			end
+		end
+	end
+	return out
+end
+
 -- questIn tells whether a quest is filed under one of the zones, or under
 -- a subzone of one (Northshire Valley lies in Elwynn Forest).
 local function questIn(id, zones)
@@ -1034,6 +1076,11 @@ local function accepter(options)
 	if type(zones) == "number" then
 		zones = { zones }
 	end
+	local wing
+	if zones then
+		zones = withWings(zones)
+		wing = wingQuests(zones)
+	end
 	local lo, hi = level and level[1] or 0, level and (level[2] or level[1]) or math.huge
 	return function(kind, id)
 		if quality then
@@ -1067,7 +1114,7 @@ local function accepter(options)
 					return false
 				end
 			elseif kind == "quest" then
-				if not questIn(id, zones) then
+				if not wing[id] and not questIn(id, zones) then
 					return false
 				end
 			elseif not standsIn(kind == "npc" and "n" or "o", id, zones) then
