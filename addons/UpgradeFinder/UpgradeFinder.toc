@@ -8,5 +8,6 @@
 ## SavedVariables: UpgradeFinderDB
 
 Data.lua
+Ignore.lua
 Core.lua
 Window.lua
