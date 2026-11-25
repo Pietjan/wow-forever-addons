@@ -2,7 +2,7 @@
 ## Title: ForeverData
 ## Notes: WoW Forever's game data for other addons: items, creatures, objects, quests and zones, what drops where and how often, where things stand, who sells and teaches what, and a search over their names. No window of its own. Data from ForeverDB.net (https://foreverdb.net), CMaNGOS classic-db, wowhead and QuestieDB.
 ## Author: Pietjan
-## Version: 0.1
+## Version: 0.2
 
 Data\Meta.lua
 Data\Items.lua
