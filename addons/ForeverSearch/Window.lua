@@ -55,6 +55,7 @@ local BACKDROP = {
 }
 
 local bar, box, list, rows, preview
+local SearchFor -- below: puts words in the bar and searches
 local finds, offset, chosen = {}, 0, 1
 local found, limit = 0, 30 -- how many were found; how many were asked for
 -- With only filter words (in:sm, is:raid) the whole lot is wanted, grouped:
@@ -236,6 +237,26 @@ end
 -- rounded mask and border ring), made as needed.
 local BADGE = 24
 local BADGE_STEP = BADGE + GAP
+
+-- Clickable makes a crest or icon a search for its kind (f.query: "quest:
+-- class:druid"), named on hover (f.label).
+local function Clickable(f)
+	f:EnableMouse(true)
+	f:SetScript("OnMouseUp", function(self, button)
+		if button == "LeftButton" and self.query then
+			SearchFor(self.query)
+		end
+	end)
+	f:SetScript("OnEnter", function(self)
+		if self.label then
+			GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+			GameTooltip:SetText(self.label)
+			GameTooltip:AddLine("Click to find them", 0.6, 0.6, 0.6)
+			GameTooltip:Show()
+		end
+	end)
+	f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+end
 local badges = {}
 local function Badge(i)
 	local b = badges[i]
@@ -244,6 +265,7 @@ local function Badge(i)
 	end
 	b = CreateFrame("Frame", nil, preview.content)
 	b:SetSize(BADGE, BADGE)
+	Clickable(b)
 	b.icon = b:CreateTexture(nil, "ARTWORK")
 	b.icon:SetAllPoints()
 	if HasAtlas("UI-HUD-CoolDownManager-Mask") and HasAtlas("UI-HUD-CoolDownManager-IconOverlay") then
@@ -299,6 +321,17 @@ local function SetCrest(kind, id)
 	else
 		crestsShown = Crest(preview.crest, side) + Crest(preview.crest2, nil)
 	end
+	-- A crest finds that side's quests or people.
+	local sides = side == "Both" and { "Horde", "Alliance" } or { side }
+	for i, hit in ipairs({ preview.crestHit, preview.crest2Hit }) do
+		local s = sides[i]
+		hit:SetShown(s ~= nil and (i == 1 and preview.crest or preview.crest2):IsShown())
+		if s then
+			local what = kind == "npc" and "npc" or "quest"
+			hit.query = what .. ": side:" .. string.lower(s)
+			hit.label = s .. (what == "npc" and " people" or " quests")
+		end
+	end
 	-- Classes nearest the crests, races left of them. A race portrait has
 	-- a frame of its own (4 px of its 64): cropped off, so it is framed as
 	-- the class art is.
@@ -308,14 +341,22 @@ local function SetCrest(kind, id)
 		for _, atlas in ipairs(list) do
 			local name = ArtName(atlas)
 			if name then
-				table.insert(art[crop], name)
+				table.insert(art[crop], { name = name, atlas = atlas })
 			end
 		end
 	end
 	local ordered = {}
 	for _, crop in ipairs({ 0, RACE_CROP }) do
-		for _, name in ipairs(art[crop] or {}) do
-			ordered[#ordered + 1] = { name = name, crop = crop }
+		for _, a in ipairs(art[crop] or {}) do
+			local word = crop == 0 and string.match(a.atlas, "^classicon%-(.+)$")
+				or string.match(a.atlas, "^raceicon%-(.-)%-[fe]*male$")
+			local key = crop == 0 and "class" or "race"
+			local named = word and (word:gsub("^%l", string.upper)):gsub("elf$", " Elf")
+			ordered[#ordered + 1] = {
+				name = a.name, crop = crop,
+				query = word and ("quest: " .. key .. ":" .. word) or nil,
+				label = named and (named .. " quests") or nil,
+			}
 		end
 	end
 	art = ordered
@@ -323,6 +364,7 @@ local function SetCrest(kind, id)
 	for i, a in ipairs(art) do
 		local b = Badge(i)
 		SetArt(b.icon, a.name, a.crop)
+		b.query, b.label = a.query, a.label
 		b:ClearAllPoints()
 		b:SetPoint("TOPRIGHT", preview.content, "TOPRIGHT", right - (i - 1) * BADGE_STEP, -(CREST_H - BADGE) / 2)
 		b:Show()
@@ -649,7 +691,7 @@ end
 
 -- SearchFor puts words in the bar and searches: a search link's, or a
 -- zone's in: word.
-local function SearchFor(text)
+function SearchFor(text)
 	box:SetText(text)
 	box:SetCursorPosition(#text)
 	Search()
@@ -979,6 +1021,13 @@ local function MakeBar()
 	preview.crest2 = preview.content:CreateTexture(nil, "OVERLAY")
 	preview.crest2:SetSize(CREST_W, CREST_H)
 	preview.crest2:SetPoint("TOPRIGHT", preview.crest, "TOPLEFT", 0, 0)
+	for _, which in ipairs({ "crest", "crest2" }) do
+		local hit = CreateFrame("Frame", nil, preview.content)
+		hit:SetAllPoints(preview[which])
+		Clickable(hit)
+		hit:Hide()
+		preview[which .. "Hit"] = hit
+	end
 	preview.crest2:Hide()
 	preview:SetScript("OnMouseUp", function(_, button)
 		if button == "Button4" then

@@ -751,6 +751,72 @@ local IS_FILTER = {
 
 -- class:<name>: quests only that class may take. A start of the name does
 -- ("class:sham").
+-- LimitedRaces is the races a quest is for when that is part of its side
+-- (Undead only, Skyborne only), nil when it is any race or a whole side's:
+-- a quest for every Classic race of its side is the side's, whether or not
+-- its list names the Skyborne (Classic's data never does).
+local CLASSIC_RACES = { alliance = { 1, 3, 4, 7 }, horde = { 2, 5, 6, 8 } }
+local function LimitedRaces(q)
+	if not (q and q.races and #q.races > 0 and FD.Race) then
+		return nil
+	end
+	local has = {}
+	for _, r in ipairs(q.races) do
+		has[r] = true
+	end
+	for _, list in pairs(CLASSIC_RACES) do
+		local all = true
+		for _, r in ipairs(list) do
+			all = all and has[r] == true
+		end
+		if all then
+			return nil
+		end
+	end
+	return q.races
+end
+
+-- RaceKey is a race's word, for race: and its art: "nightelf", "skyborne"
+-- (both Skyborne).
+function ns.RaceKey(name)
+	if string.find(name, "Skyborne$") then
+		return "skyborne"
+	end
+	return string.lower((string.gsub(name, "[%s']", "")))
+end
+
+-- race:<name>: quests only some races may take, that race among them
+-- (race:undead, race:skyborne). A quest any race of its side may take is
+-- the side's (side:horde).
+local function RaceFilter(word)
+	word = string.gsub(string.lower(word), "[%s'%-]", "")
+	local want, name = {}, nil
+	for _, id in ipairs(FD.Races and FD.Races() or {}) do
+		local race = FD.Race(id)
+		local key = race and ns.RaceKey(race.name)
+		if key and string.sub(key, 1, #word) == word then
+			want[id] = true
+			name = name or (key == "skyborne" and "Skyborne" or race.name)
+		end
+	end
+	if not name then
+		return { kinds = { "quest" }, test = function() return false end, label = "race: no such race" }
+	end
+	return {
+		kinds = { "quest" },
+		test = function(kind, id)
+			local races = kind == "quest" and LimitedRaces(FD.Quest(id))
+			for _, r in ipairs(races or {}) do
+				if want[r] then
+					return true
+				end
+			end
+			return false
+		end,
+		label = name .. " quests",
+	}
+end
+
 local function ClassFilter(word)
 	for class = 1, 12 do
 		local name = FD.ClassName(class)
@@ -790,12 +856,14 @@ local function NewFilter(key, value)
 		return TypeFilter(value)
 	elseif key == "is" then
 		return IS_FILTER[value] or { test = function() return false end, label = "is: rare, elite, boss, repeatable, new, dungeon, raid or battleground" }
+	elseif key == "race" then
+		return RaceFilter(value)
 	elseif key == "class" then
 		return ClassFilter(value)
 	end
 	return SkillFilter(value)
 end
-local NEW_KEY = { from = true, type = true, is = true, class = true, skill = true }
+local NEW_KEY = { from = true, type = true, is = true, class = true, skill = true, race = true }
 
 -- side:<word>: whose things to find. Without it, a search leaves out the
 -- other side's: its quests, and the people only it is friendly to.
@@ -1905,32 +1973,14 @@ end
 -- race of its side is the side's, which its crest says. Quests from
 -- Classic's data leave the Skyborne out of such a list; that is not taken
 -- to mean they cannot.
-local CLASSIC_RACES = { alliance = { 1, 3, 4, 7 }, horde = { 2, 5, 6, 8 } }
 function ns.PageRaces(kind, id)
-	local q = kind == "quest" and FD.Quest(id)
 	local out = {}
-	if not (q and q.races and #q.races > 0 and FD.Race) then
-		return out
-	end
-	local has = {}
-	for _, r in ipairs(q.races) do
-		has[r] = true
-	end
-	for _, list in pairs(CLASSIC_RACES) do
-		local all = true
-		for _, r in ipairs(list) do
-			all = all and has[r] == true
-		end
-		if all then
-			return out
-		end
-	end
+	local races = kind == "quest" and LimitedRaces(FD.Quest(id))
 	local female = UnitSex and UnitSex("player") == 3
-	for _, r in ipairs(q.races) do
+	for _, r in ipairs(races or {}) do
 		local race = FD.Race(r)
 		if race then
-			local key = string.find(race.name, "Skyborne$") and "skyborne" or string.lower((string.gsub(race.name, "[%s']", "")))
-			out[#out + 1] = "raceicon-" .. key .. (female and "-female" or "-male")
+			out[#out + 1] = "raceicon-" .. ns.RaceKey(race.name) .. (female and "-female" or "-male")
 		end
 	end
 	return out
@@ -2020,7 +2070,6 @@ function Wanted(itemID)
 	return ns.Link("item", itemID)
 end
 
-local SIDE_LABEL = { alliance = "Alliance only", horde = "Horde only" }
 
 local function QuestPage(id, lines)
 	local q = FD.Quest(id)
@@ -2034,10 +2083,10 @@ local function QuestPage(id, lines)
 	if q.requiredLevel then
 		facts[#facts + 1] = "from level " .. q.requiredLevel
 	end
-	if SIDE_LABEL[q.side] then
-		facts[#facts + 1] = Crest(SIDE_SHORT[q.side]) .. " " .. SIDE_LABEL[q.side]
-	end
-	if q.classes then
+	-- The side, the classes and the races are the crest and icons at the
+	-- top of the page. Classes only in words when there are more than its
+	-- icons show (Vile Familiars: all but Warlock).
+	if q.classes and #ns.PageClasses("quest", id) == 0 then
 		local names = {}
 		for class = 1, 12 do
 			if math.floor(q.classes / 2 ^ (class - 1)) % 2 == 1 then

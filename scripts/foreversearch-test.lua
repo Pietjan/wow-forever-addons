@@ -232,8 +232,7 @@ local function raw(lines, needle)
 end
 -- Pages: a quest's, a vendor's, quests on a creature's and an item's, a zone's.
 lines = ns.Details("quest", 7)
-check("quest page: facts", has(lines, "level 2, from level 1, Alliance only"), joined(lines))
-check("quest page: the side's crest", raw(lines, "|A:UI-HUD-UnitFrame-SmallCircle-Alliance:18:18:0:-3|a Alliance only"), joined(lines))
+check("quest page: facts, the side not in words (the crest says it)", has(lines, "level 2, from level 1") and not has(lines, "Alliance only"), joined(lines))
 check("quest page: starts at, with where", has(lines, "Marshal McBride · Elwynn Forest 48.9, 41.6"), joined(lines))
 check("quest page: objective", has(lines, "Kobold Vermin · Elwynn Forest"), joined(lines))
 check("quest page: reputation", has(lines, "+100 Stormwind"), joined(lines))
@@ -716,6 +715,25 @@ UnitSex = function() return 3 end
 check("race icons: the player's gender", races(5627) == "raceicon-nightelf-female", races(5627))
 UnitSex = nil
 check("a Skyborne quest is its side's", ns.PageSide("quest", 92551) == "Alliance", ns.PageSide("quest", 92551))
+
+check("quest page: classes not in words beside their icons", not has(ns.Details("quest", 26), "Druid only"), joined(ns.Details("quest", 26)))
+check("quest page: classes in words past five icons", has(ns.Details("quest", 792), "only"), joined(ns.Details("quest", 792)))
+
+-- race: what a race icon's click searches: quests for part of a side,
+-- that race among them.
+local function questsWith(q, icon)
+	local found = ns.Results(q, 1000)
+	if #found == 0 then return false, 0 end
+	for _, r in ipairs(found) do
+		if r.kind ~= "quest" or not table.concat(ns.PageRaces("quest", r.id), " "):find(icon, 1, true) then return false, r.id end
+	end
+	return true, #found
+end
+local ok, n = questsWith("quest: race:tauren", "raceicon-tauren")
+check("race:tauren finds the Tauren quests, only those", ok, n)
+ok, n = questsWith("quest: race:skyborne side:both", "raceicon-skyborne")
+check("race:skyborne finds both Skyborne's quests", ok and n >= 24, n)
+check("race: no such race finds nothing", #ns.Results("quest: race:murloc", 30) == 0)
 
 if failures > 0 then
 	print(failures .. " failed")
