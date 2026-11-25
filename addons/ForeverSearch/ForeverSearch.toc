@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: ForeverSearch
-## Notes: Spotlight for WoW Forever: a floating search bar; type to find any item, creature, object, quest or zone (fuzzy, best first), see its details beside the list: where it drops and how often, who sells it, its auction price, how many you own; where a creature stands and what it drops. /find, or a key under Key Bindings > AddOns.
+## Notes: Spotlight for WoW Forever: a floating search bar; type to find any item, creature, object, quest or zone (fuzzy, best first), see its details beside the list: where it drops and how often, who sells it, its auction price, how many you own; where a creature stands and what it drops. Ctrl-K, another key under Key Bindings > AddOns, or /find.
 ## Author: Pietjan
 ## Version: 0.1
 ## Dependencies: ForeverData

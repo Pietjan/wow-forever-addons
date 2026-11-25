@@ -1,7 +1,7 @@
 -- ForeverSearch, the bar: a floating search bar near the top of the screen,
 -- finds appearing in rows under it as you type, and the chosen find's
 -- details in a panel beside them. /find [text] or the key bound under
--- Key Bindings > AddOns opens it, Escape closes it.
+-- Key Bindings > AddOns (Ctrl-K by default) opens it, Escape closes it.
 --
 --   typing        searches as you type; words narrow it: item: npc: object:
 --                 quest: zone:, q:rare (quality), lvl:40-50, in:hinterlands
@@ -1268,8 +1268,35 @@ function ForeverSearch_Toggle()
 	end
 end
 
+-- The key is Ctrl-K unless you chose another: bound once for the account's
+-- key bindings and once for a character's own, so one you take off stays
+-- off. Not over a key of yours for the bar, nor over what Ctrl-K does
+-- already. A few seconds after the world is there, so your own bindings are
+-- in before they are saved; not in combat, where no key may be bound.
+local DEFAULT_KEY, TOGGLE = "CTRL-K", "FOREVERSEARCH_TOGGLE"
+local KEY_DELAY = 5 -- seconds
 local events = CreateFrame("Frame")
+local function BindDefaultKey()
+	local given = ForeverSearchDB.keyGiven or {}
+	ForeverSearchDB.keyGiven = given
+	local set = GetCurrentBindingSet()
+	local whose = set == 2 and UnitGUID("player") or "account"
+	if given[whose] then
+		return
+	end
+	if InCombatLockdown() then
+		events:RegisterEvent("PLAYER_REGEN_ENABLED") -- when it is over
+		return
+	end
+	given[whose] = true
+	local action = GetBindingAction(DEFAULT_KEY)
+	if not GetBindingKey(TOGGLE) and (action == nil or action == "") and SetBinding(DEFAULT_KEY, TOGGLE) then
+		SaveBindings(set)
+	end
+end
+
 events:RegisterEvent("ADDON_LOADED")
+events:RegisterEvent("PLAYER_ENTERING_WORLD")
 events:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 events:RegisterEvent("TOOLTIP_DATA_UPDATE")
 -- REDRAWS caps how often one page is drawn again for late tooltip data:
@@ -1297,6 +1324,11 @@ events:RegisterEvent("PLAYER_LOGIN")
 events:SetScript("OnEvent", function(self, event, arg)
 	if event == "PLAYER_LOGIN" then
 		StartPreparing()
+	elseif event == "PLAYER_ENTERING_WORLD" then
+		C_Timer.After(KEY_DELAY, BindDefaultKey)
+	elseif event == "PLAYER_REGEN_ENABLED" then
+		self:UnregisterEvent(event)
+		BindDefaultKey()
 	elseif event == "ADDON_LOADED" and arg == ADDON then
 		ForeverSearchDB = ForeverSearchDB or {}
 		self:UnregisterEvent("ADDON_LOADED")

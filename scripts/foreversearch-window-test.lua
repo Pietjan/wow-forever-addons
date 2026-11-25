@@ -241,6 +241,22 @@ function GetCoinTextureString(copper)
 	return copper .. "|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t"
 end
 
+-- Key bindings: the working set, how often it was saved, and combat.
+local keys, saves, bindingSet, inCombat = {}, {}, 1, false
+function GetCurrentBindingSet() return bindingSet end
+function GetBindingAction(key) return keys[key] or "" end
+function GetBindingKey(action)
+	for key, a in pairs(keys) do if a == action then return key end end
+end
+function SetBinding(key, action)
+	if inCombat then error("SetBinding in combat") end
+	keys[key] = action
+	return true
+end
+function SaveBindings(set) saves[#saves + 1] = set end
+function InCombatLockdown() return inCombat end
+function UnitGUID() return "Player-1-00000001" end
+
 -- The addons ---------------------------------------------------------------------
 
 local data = {}
@@ -529,6 +545,42 @@ check("/find time knows the last page", ns.timings and ns.timings.page and ns.ti
 SlashCmdList.FOREVERSEARCH("time")
 check("/find time prints both", printed[#printed - 1] and printed[#printed - 1]:find("last search") and printed[#printed]:find("last page"),
 	printed[#printed])
+
+-- The default key: Ctrl-K, once.
+do
+	local function Login(bound, given, set)
+		keys, saves, bindingSet = bound, {}, set or 1
+		ForeverSearchDB.keyGiven = given
+		Fire("PLAYER_ENTERING_WORLD")
+		return function(seconds) Frames(seconds * 60) end
+	end
+	local wait = Login({}, nil)
+	wait(3)
+	check("key: not before your own bindings are in", keys["CTRL-K"] == nil)
+	wait(3)
+	check("key: Ctrl-K opens the bar, saved", keys["CTRL-K"] == "FOREVERSEARCH_TOGGLE" and #saves == 1 and saves[1] == 1, #saves)
+	local given = ForeverSearchDB.keyGiven
+	Login({}, given)(6)
+	check("key: taken off stays off", keys["CTRL-K"] == nil and #saves == 0)
+	Login({ ["ALT-F"] = "FOREVERSEARCH_TOGGLE" }, nil)(6)
+	check("key: not beside another you chose", keys["CTRL-K"] == nil and #saves == 0)
+	Login({ ["CTRL-K"] = "TOGGLESHEATH" }, nil)(6)
+	check("key: not over what Ctrl-K does already", keys["CTRL-K"] == "TOGGLESHEATH" and #saves == 0)
+	Login({}, { account = true }, 2)(6)
+	check("key: a character's own bindings get it too", keys["CTRL-K"] == "FOREVERSEARCH_TOGGLE" and saves[1] == 2 and ForeverSearchDB.keyGiven["Player-1-00000001"], saves[1])
+	inCombat = true
+	Login({}, nil)(6)
+	check("key: not in combat", keys["CTRL-K"] == nil)
+	inCombat = false
+	Fire("PLAYER_REGEN_ENABLED")
+	check("key: after combat", keys["CTRL-K"] == "FOREVERSEARCH_TOGGLE" and #saves == 1)
+	keys = {}
+	Fire("PLAYER_REGEN_ENABLED")
+	check("key: later fights leave it", keys["CTRL-K"] == nil)
+	-- The name in Bindings.xml is the one bound.
+	local xml = assert(io.open("addons/ForeverSearch/Bindings.xml")):read("*a")
+	check("key: the action is the addon's", xml:find('name="FOREVERSEARCH_TOGGLE"', 1, true) ~= nil)
+end
 
 if failures > 0 then
 	io.write(failures .. " failed\n")
