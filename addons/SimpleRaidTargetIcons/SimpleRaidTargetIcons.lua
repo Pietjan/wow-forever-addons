@@ -477,10 +477,16 @@ local function WrapUnitFramesIn(frame)
 	if not frame or (frame.IsForbidden and frame:IsForbidden()) then
 		return
 	end
-	if frame.GetObjectType and frame:GetObjectType() == "AuraContainer" then
+	-- IsForbidden is not enough: an aura button (Blizzard_AuraContainer-
+	-- FrameProviders) passed it and then raised "forbidden object" on
+	-- GetObjectType (2026-11-22). Any frame whose methods fail is skipped
+	-- with everything inside it.
+	local readable, objectType, unit = pcall(function()
+		return frame:GetObjectType(), frame.GetAttribute and frame:GetAttribute("unit")
+	end)
+	if not readable or objectType == "AuraContainer" then
 		return
 	end
-	local unit = frame.GetAttribute and frame:GetAttribute("unit")
 	if IsSecret(unit) or unit ~= nil then
 		WrapUnitFrame(frame)
 	end
