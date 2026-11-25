@@ -1107,7 +1107,7 @@ end
 -- A vendor's price: money, or so many of a currency.
 local function Price(v)
 	if not v.price then
-		return GREY .. "price unknown|r"
+		return GREY .. "unknown|r"
 	end
 	if v.currency then
 		return ("%d %s"):format(v.price, CURRENCY_LABEL[v.currency] or ("currency " .. v.currency))

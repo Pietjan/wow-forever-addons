@@ -242,7 +242,9 @@ check("quest page: item starter with its source", has(ns.Details("quest", 2), "S
 lines = ns.Details("npc", 197)
 check("creature page: quests it starts, level right", has(lines, "Starts quests (") and has(lines, "Kobold Camp Cleanup | 2"), joined(lines))
 check("quest list: the other side's quest has its crest", raw(lines, "Kobold Camp Cleanup|r|h |A:UI-HUD-UnitFrame-SmallCircle-Alliance:18:18:0:-3|a"), joined(lines))
-check("vendor page: sells, price right", has(ns.Details("npc", 54), "Sells (") and has(ns.Details("npc", 54), "Gladius | 5s 68c"), joined(ns.Details("npc", 54)))
+-- Gladius at Corina Steele: the client's buy price, 5s 36c (wowhead's 5s 68c
+-- is a scanned price, not shipped since 2026-11-25).
+check("vendor page: sells, price right", has(ns.Details("npc", 54), "Sells (") and has(ns.Details("npc", 54), "Gladius | 5s 36c"), joined(ns.Details("npc", 54)))
 check("item page: starts a quest", has(ns.Details("item", 16305), "Starts a quest (1):"), joined(ns.Details("item", 16305)))
 lines = ns.Details("zone", 12)
 check("zone page: level range", has(lines, "creatures mostly level 1-11"), joined(lines))

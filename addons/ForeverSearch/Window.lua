@@ -174,6 +174,11 @@ local function ShowPage(kind, id, keepScroll)
 		local height = math.max(1, block.html:GetContentHeight())
 		block.html:SetHeight(height)
 		block.right:SetText(right or "")
+		-- The row is as tall as its taller side: a right-hand text that
+		-- wraps must not run into the next row.
+		if right then
+			height = math.max(height, block.right:GetStringHeight())
+		end
 		block:SetHeight(height)
 		block:Show()
 		y = y + height + (right and 2 or 0)
