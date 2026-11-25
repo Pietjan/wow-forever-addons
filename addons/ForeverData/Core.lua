@@ -218,7 +218,18 @@ local zone = cached(function(id)
 	return { id = id, name = f[1], parent = number(f[2]), instance = INSTANCE[f[3] or ""], map = number(f[4]) }
 end)
 
--- lootOf decodes what one thing gives: "item,method,chance,sample,basis;...".
+-- amounts decodes how many come at once: "1-2" 1, 2; "3" 3, 3; nothing
+-- when it is one or not known.
+local function amounts(s)
+	local low, high = string.match(s or "", "^(%d+)%-(%d+)$")
+	if low then
+		return tonumber(low), tonumber(high)
+	end
+	return number(s), number(s)
+end
+
+-- lootOf decodes what one thing gives: "item,method,chance,sample,basis;...",
+-- each with ",amount" after it where more than one comes at once.
 local lootOf = cached(function(ref)
 	local code, id = string.sub(ref, 1, 1), tonumber(string.sub(ref, 2))
 	local s = ns.loot and ns.loot[code] and ns.loot[code][id]
@@ -228,8 +239,10 @@ local lootOf = cached(function(ref)
 	local rows = {}
 	for _, row in ipairs(split(s, ";")) do
 		local f = split(row, ",")
+		local low, high = amounts(f[6])
 		rows[#rows + 1] = {
 			item = tonumber(f[1]), method = METHOD[f[2]], chance = number(f[3]), sample = number(f[4]), basis = BASIS[f[5]],
+			low = low, high = high,
 		}
 	end
 	return rows
@@ -468,8 +481,10 @@ end
 function FD.Zone(id) return zone(id) end
 
 -- What a thing gives: kind "npc", "object", "item" (a container) or
--- "zone" (fishing). Rows {item, method, chance, sample, basis}, likeliest
--- first; sample is the kills or opens a counted chance is over.
+-- "zone" (fishing). Rows {item, method, chance, sample, basis, low, high},
+-- likeliest first; sample is the kills or opens a counted chance is over;
+-- low and high how many come at once (1-2 Silk Cloth), nil for one or
+-- unknown.
 function FD.Loot(kind, id)
 	local code = KIND_CODE[kind]
 	if not code or not id then
@@ -484,7 +499,8 @@ function FD.HasLoot(kind, id)
 	return code ~= nil and ns.loot ~= nil and ns.loot[code] ~= nil and ns.loot[code][id] ~= nil
 end
 
--- Where an item comes from. Rows {kind, id, method, chance, sample, basis}.
+-- Where an item comes from. Rows {kind, id, method, chance, sample, basis,
+-- low, high} (see FD.Loot).
 -- pause, if given, is called every 25 sources (see FD.Search's options.pause).
 -- Only the item's own rows of each source's loot are read: a source's whole
 -- table is not decoded (Linen Cloth has 773 sources, each with dozens of
@@ -516,9 +532,11 @@ function FD.Drops(itemID, pause)
 			end
 			local stop = string.find(s, ";", start, true)
 			local f = split(string.sub(s, start, stop and stop - 1 or -1), ",")
+			local low, high = amounts(f[6])
 			out[#out + 1] = {
 				kind = KIND_NAME[code], id = id,
 				method = METHOD[f[2]], chance = number(f[3]), sample = number(f[4]), basis = BASIS[f[5]],
+				low = low, high = high,
 			}
 			if not stop then
 				break
@@ -538,6 +556,64 @@ function FD.Spawns(kind, id)
 	end
 	return spawnsOf(code .. id) or EMPTY
 end
+
+-- What killing a creature of the open world is worth on average, in copper:
+-- {items, coin, basis}: items what a vendor pays for its drops, coin the
+-- money it drops (Classic's); basis what most of items is from, "forever"
+-- or "classic_era" (counted there) or "classic_table", nil without items.
+-- nil when not known, or for a creature only in instances.
+local WORTH_BASIS = { f = "forever", e = "classic_era", c = "classic_table" }
+function FD.Worth(npcID)
+	local s = ns.worth and ns.worth[npcID]
+	local items, coin, basis = string.match(s or "", "^(%d+),(%d+),(%a*)$")
+	if not items then
+		return nil
+	end
+	return { items = tonumber(items), coin = tonumber(coin), basis = WORTH_BASIS[basis] }
+end
+
+-- What a reagent is used in: rows {spell, name, skillLine, item, skill,
+-- count}: the recipe's spell and name, its profession, the item it makes
+-- (nil for an enchantment), the skill it asks (nil unknown) and how many of
+-- the reagent it takes. Lowest skill first.
+local usedIn = cached(function(itemID)
+	local spells = ns.uses and ns.uses[itemID]
+	if not spells then
+		return nil
+	end
+	local rows = {}
+	for _, spell in ipairs(split(spells, ",")) do
+		spell = tonumber(spell)
+		local s = ns.recipes and ns.recipes[spell]
+		if s then
+			local f = split(s, "|")
+			local made = number(f[3])
+			local name, count = f[1], nil
+			if name == "" then
+				local it = made and item(made)
+				name = it and it.name or ""
+			end
+			for _, reagent in ipairs(split(f[5] or "", ",")) do
+				local id, n = string.match(reagent, "^(%d+):(%d+)$")
+				if tonumber(id) == itemID then
+					count = tonumber(n)
+				end
+			end
+			rows[#rows + 1] = { spell = spell, name = name, skillLine = number(f[2]), item = made, skill = number(f[4]), count = count }
+		end
+	end
+	table.sort(rows, function(a, b)
+		if (a.skill or 0) ~= (b.skill or 0) then
+			return (a.skill or 0) < (b.skill or 0)
+		end
+		if a.name ~= b.name then
+			return a.name < b.name
+		end
+		return a.spell < b.spell
+	end)
+	return rows
+end)
+function FD.UsedIn(itemID) return usedIn(itemID) or EMPTY end
 
 -- Who sells an item: rows {npc, price, currency, stock, standing}. price
 -- in copper, or in currency when currency is set (3402 Merchant's Favor);

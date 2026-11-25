@@ -10,7 +10,7 @@ local function check(name, ok, detail)
 end
 
 local data = {}
-for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched", "Levels" }) do
+for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched", "Levels", "Worth", "Recipes" }) do
 	assert(loadfile("addons/ForeverData/Data/" .. f .. ".lua"))("ForeverData", data)
 end
 assert(loadfile("addons/ForeverData/Core.lua"))("ForeverData", data)
@@ -85,7 +85,7 @@ check("results", #found > 0 and found[1].kind == "item" and found[1].id == 8167 
 
 local lines = ns.Details("item", 8167)
 check("item: drops have their own heading", has(lines, "Drops from (") and has(lines, "Skinned from ("), joined(lines))
-check("item: a drop, the chance on its own", has(lines, "Stolid Snapjaw · Maraudon | 15%"), joined(lines))
+check("item: a drop, the chance on its own", has(lines, "Stolid Snapjaw 1-2 · Maraudon | 15%"), joined(lines))
 local entry
 for _, line in ipairs(lines) do
 	if type(line) == "table" and ns.Unlink(line[1]):find("Stolid Snapjaw", 1, true) then entry = line break end
@@ -116,7 +116,7 @@ end)())
 lines = ns.Details("npc", 2505)
 check("npc: level and neutral", has(lines, "level 49-50") and has(lines, "neutral"), lines[1])
 check("npc: where", has(lines, "Where: The Hinterlands ("), joined(lines))
-check("npc: gives, by way of getting", has(lines, "Drops (") and has(lines, "Skinning (") and has(lines, "Turtle Scale | "))
+check("npc: gives, by way of getting", has(lines, "Drops (") and has(lines, "Skinning (") and has(lines, "Turtle Scale 1-2 | "))
 
 lines = ns.Details("npc", 54)
 check("a vendor: by side", has(lines, "<Weaponsmith>") and has(lines, "friendly to Alliance, hostile to Horde"), lines[1])
@@ -414,6 +414,112 @@ do
 			("%s-%s / %s-%s"):format(tostring(low), tostring(high), tostring(a), tostring(b)))
 	end
 	check("levels: Moonglade has none, only critters below its one", shipped(493) == nil)
+end
+-- How many come at once, after the name, when it is more than one.
+do
+	local real, realDrops = ForeverData.Loot, ForeverData.Drops
+	ForeverData.Loot = function()
+		return { { item = 2589, method = "drop", chance = 30, low = 1, high = 2 }, { item = 2592, method = "drop", chance = 20, low = 3, high = 3 },
+			{ item = 8167, method = "drop", chance = 10 }, { item = 4306, method = "drop", chance = 5, low = 1, high = 1 } }
+	end
+	ForeverData.Drops = function(id)
+		return id == 2589 and { { kind = "npc", id = 40, method = "drop", chance = 30, low = 1, high = 2 }, { kind = "npc", id = 3098, method = "drop", chance = 20 } } or realDrops(id)
+	end
+	local function left(kind, id, name)
+		for _, l in ipairs(ns.Details(kind, id)) do
+			if type(l) == "table" and l[1] and ns.Unlink(l[1]):find(name, 1, true) then return ns.Unlink(l[1]), l[2] end
+		end
+	end
+	for name, want in pairs({ ["Linen Cloth"] = "  Linen Cloth 1-2", ["Wool Cloth"] = "  Wool Cloth 3", ["Turtle Scale"] = "  Turtle Scale", ["Silk Cloth"] = "  Silk Cloth" }) do
+		check("amounts: on a creature's page, " .. want, left("npc", 46, name) == want, left("npc", 46, name))
+	end
+	check("amounts: the chance stays at the right", ns.Unlink(select(2, left("npc", 46, "Linen Cloth")) or "") == "30%", select(2, left("npc", 46, "Linen Cloth")))
+	local miner, boar = left("item", 2589, "Kobold Miner"), left("item", 2589, "Mottled Boar")
+	check("amounts: on the item's page, before the place", miner and miner:find("^  Kobold Miner 1%-2 · ") ~= nil, miner)
+	check("amounts: one of it says nothing", boar and boar:find("^  Mottled Boar · ") ~= nil, boar)
+	ForeverData.Loot, ForeverData.Drops = real, realDrops
+	local silk
+	for _, r in ipairs(ForeverData.Loot("npc", 4286)) do if r.item == 4306 then silk = r end end
+	check("amounts: a Scarlet Soldier's silk, really", silk and silk.low and silk.high > 1, silk and silk.high)
+end
+-- What a reagent is used in: each recipe when they are few, else the
+-- professions; uses: finds what they make.
+do
+	local function used(id)
+		local out, on = {}, false
+		for _, l in ipairs(ns.Details("item", id)) do
+			local t = ns.Unlink(lineText(l))
+			if t:find("^Used in") then on = true end
+			if on then out[#out + 1] = t end
+		end
+		return table.concat(out, "\n")
+	end
+	check("used in: few, each recipe", used(8167):find("^Used in %(5%):\n  Turtle Scale Gloves · takes 8 · Leatherworking | 180\n"), used(8167))
+	local real = ForeverData.UsedIn
+	ForeverData.UsedIn = function()
+		return { { spell = 1, name = "Enchant Boots", skillLine = 333, skill = 50, count = 1 }, { spell = 2, name = "x", skillLine = 165, item = 8167, count = 3 } }
+	end
+	check("used in: an enchantment by name, one of it not said, no skill", used(8167) == "Used in (2):\n  Enchant Boots · Enchanting | 50\n  Turtle Scale · takes 3 · Leatherworking | ", used(8167))
+	ForeverData.UsedIn = function()
+		local out = {}
+		for i = 1, 9 do out[i] = { spell = i, name = "e" .. i, skillLine = i < 3 and 165 or 333, item = i < 3 and 8167 or nil } end
+		return out
+	end
+	check("used in: many, by profession, most first", used(8167) == "Used in (9):\n  Enchanting | 7\n  Leatherworking | 2", used(8167))
+	local raws = {}
+	for _, l in ipairs(ns.Details("item", 8167)) do raws[#raws + 1] = lineText(l) end
+	raws = table.concat(raws, "\n")
+	check("used in: a profession that makes items searches them", raws:find("|Hfsearch:find:item:,uses:turtle-scale/leatherworking|h", 1, true) ~= nil, raws)
+	check("used in: one of enchantments only does not", not raws:find("uses:turtle-scale/enchanting", 1, true))
+	ForeverData.UsedIn = nil
+	check("used in: with data that has none", used(8167) == "" and ns.Describe("uses:copper-bar") == "uses: needs a newer ForeverData")
+	ForeverData.UsedIn = real
+	check("used in: not a reagent", used(4928) == "", used(4928))
+	local copper, smith = ns.Results("item: uses:copper-bar", 1000), ns.Results("item: uses:copper-bar/blacksmithing", 1000)
+	check("uses: what is made with it", #copper > 40 and #smith > 30 and #smith < #copper, #copper .. " " .. #smith)
+	check("uses: it makes them all", allOf(smith, function(r)
+		for _, u in ipairs(real(2840)) do if u.item == r.id and u.skillLine == 164 then return true end end
+	end))
+	check("uses: described", ns.Describe("uses:copper-bar/blacksmithing") == "made with Copper Bar by Blacksmithing" and ns.Describe("uses:zzzz") == "uses: no such reagent"
+		and ns.Describe("uses:copper-bar/zzzz") == "made with Copper Bar by no such profession" and #ns.Results("uses:copper-bar/zzzz", 10) == 0)
+	check("uses: the exact name before another", ns.Describe("uses:leather") ~= nil and ns.Describe("uses:heavy-leather") == "made with Heavy Leather", ns.Describe("uses:heavy-leather"))
+	local web = used(3182) -- Spider's Silk: in two professions, searched from its page
+	local link
+	for _, l in ipairs(ns.Details("item", 3182)) do link = link or lineText(l):match("|Hfsearch:find:(item:,uses:[^|]*)|h") end
+	check("uses: an apostrophe, from the page's own link", link and ns.Describe((link:gsub(",", " "))):find("made with Spider's Silk by ", 1, true) ~= nil,
+		web .. " / " .. tostring(link))
+	check("uses: that link finds as many as the page says", link and #ns.Results((link:gsub(",", " ")), 1000) == tonumber(web:match("\n  %a+ | (%d+)")), web)
+end
+-- What a kill is worth, on a creature's page.
+do
+	local function worth(w, id, side)
+		local real, faction = ForeverData.Worth, UnitFactionGroup
+		ForeverData.Worth = w and function() return w end or nil
+		UnitFactionGroup = function() return side end
+		local found, at = nil, nil
+		for i, l in ipairs(ns.Details("npc", id)) do
+			if type(l) == "string" and l:find("Worth per kill", 1, true) then found, at = ns.Unlink(l), i end
+		end
+		ForeverData.Worth, UnitFactionGroup = real, faction
+		return found, at
+	end
+	for text, w in pairs({
+		["Worth per kill: 25c (items 17c, coin 8c)"] = { items = 17, coin = 8, basis = "forever" },
+		["Worth per kill: 17c (items)"] = { items = 17, coin = 0, basis = "forever" },
+		["Worth per kill: 8c (coin)"] = { items = 0, coin = 8 },
+		["Worth per kill: 1s 10c (items 1s 00c, coin 10c, drops counted in Classic Era)"] = { items = 100, coin = 10, basis = "classic_era" },
+		["Worth per kill: 10c (items, Classic's drops)"] = { items = 10, coin = 0, basis = "classic_table" },
+	}) do
+		check("worth: " .. text, worth(w, 40, "Horde") == text, worth(w, 40, "Horde"))
+	end
+	local some = { items = 17, coin = 8, basis = "forever" }
+	check("worth: not of one friendly to you (Gar'Thok)", worth(some, 3139, "Horde") == nil and worth(some, 3139, "Alliance") ~= nil)
+	check("worth: with data that has none", worth(nil, 40, "Horde") == nil)
+	check("worth: the real Kobold Miner's", (function()
+		for _, l in ipairs(ns.Details("npc", 40)) do
+			if type(l) == "string" and ns.Unlink(l):find("^Worth per kill: %d+c %(items %d+c, coin %d+c%)$") then return true end
+		end
+	end)())
 end
 -- Filter words: from:, is:, type:, class:, skill:, and the links to them.
 local function all(results, test)

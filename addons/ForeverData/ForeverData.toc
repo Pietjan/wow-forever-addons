@@ -16,4 +16,6 @@ Data\Vendors.lua
 Data\Trainers.lua
 Data\Unsearched.lua
 Data\Levels.lua
+Data\Worth.lua
+Data\Recipes.lua
 Core.lua

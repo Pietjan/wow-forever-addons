@@ -30,13 +30,15 @@ local function fixture()
 		quests = { [17] = "|42|||0", [92479] = "A Scribbled Letter|1|1|1" },
 		zones = { [47] = "The Hinterlands|", [2257] = "Deeprun Tram|" },
 		loot = {
-			n = { [2505] = "8167,k,50.5,4822,f;8167,d,0.679,6189,f;2589,d,,,v" },
-			o = { [1731] = "2770,c,100,,c" },
+			n = { [2505] = "8167,k,50.5,4822,f;8167,d,0.679,6189,f,1-2;2589,d,,,v" },
+			o = { [1731] = "2770,c,100,,c,3" },
 		},
 		drops = { [8167] = "n2505", [2770] = "o1731" },
 		spawns = { n = { [2505] = "47:kokm;2257:" } },
 		vendors = { [4355] = "2399,1650,,1,6;256733,45,3402,," },
 		trainers = { [2385] = "2399,197,10,,50" },
+		recipes = { [10508] = "|165|8167|205|8167:12,2589:2", [10500] = "Scaly Thing|165|288924|180|8167:8", [10510] = "Enchant Turtle|333||205|8167:1", [10511] = "Aaa|333|||8167:3" },
+		uses = { [8167] = "10508,10510,10500,10511", [2589] = "10508" },
 	}
 	load({ "Core.lua" }, ns)
 	return ForeverData
@@ -58,9 +60,19 @@ check("new quest", FD.Quest(92479).new)
 local loot = FD.Loot("npc", 2505)
 check("loot rows", #loot == 3 and loot[1].method == "skinning" and loot[1].chance == 50.5 and loot[1].sample == 4822 and loot[1].basis == "forever")
 check("loot seen, no chance", loot[3].chance == nil and loot[3].basis == "seen" and loot[3].item == 2589)
+check("loot amounts: none, a range", loot[1].low == nil and loot[1].high == nil and loot[2].low == 1 and loot[2].high == 2 and loot[3].high == nil)
+check("loot amounts: always the same", FD.Loot("object", 1731)[1].low == 3 and FD.Loot("object", 1731)[1].high == 3)
 check("no loot", #FD.Loot("npc", 54) == 0 and #FD.Loot("nope", 1) == 0)
+local used = FD.UsedIn(8167)
+check("used in: by skill, then name, unknown first", #used == 4 and used[1].name == "Aaa" and used[1].skill == nil and used[2].spell == 10500
+	and used[3].spell == 10510 and used[4].spell == 10508, #used)
+check("used in: a name of its own", used[2].name == "Scaly Thing" and used[2].item == 288924 and used[2].count == 8 and used[2].skill == 180 and used[2].skillLine == 165)
+check("used in: the made item's name", used[4].name == "Turtle Scale" and used[4].item == 8167 and used[4].count == 12)
+check("used in: an enchantment makes none", used[3].item == nil and used[3].name == "Enchant Turtle" and used[3].skillLine == 333)
+check("used in: another reagent of it, none", FD.UsedIn(2589)[1].count == 2 and #FD.UsedIn(1) == 0)
 local drops = FD.Drops(8167)
 check("drops", #drops == 2 and drops[1].kind == "npc" and drops[1].id == 2505 and drops[2].chance == 0.679)
+check("drops amounts", drops[1].high == nil and drops[2].low == 1 and drops[2].high == 2 and FD.Drops(2770)[1].high == 3)
 check("drops from an object", FD.Drops(2770)[1].kind == "object" and FD.Drops(2770)[1].basis == "classic")
 local sp = FD.Spawns("npc", 2505)
 check("spawns", #sp == 2 and sp[1].zone == 47 and sp[1].x == 74.4 and sp[1].y == 74.2, sp[1] and (sp[1].x .. "," .. sp[1].y))
@@ -188,7 +200,7 @@ check("instances: a dungeon, a zone; no raid, none open yet", FD.Zone(2677) == n
 do
 	-- World drops: an item given everywhere, rarely, is no zone's loot.
 	local data = {}
-	for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched", "Levels" }) do
+	for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched", "Levels", "Worth", "Recipes" }) do
 		assert(loadfile("addons/ForeverData/Data/" .. f .. ".lua"))("ForeverData", data)
 	end
 	assert(loadfile("addons/ForeverData/Core.lua"))("ForeverData", data)
@@ -265,6 +277,12 @@ do
 	check("outside: the Sunken Temple's, by its map's name", questsIn(1477) == "1445 1446 1475 3373 3380 3446 3447 3528 8733", questsIn(1477))
 	check("outside: with those filed inside", (" " .. questsIn(721) .. " "):find(" 2904 ") and (" " .. questsIn(721) .. " "):find(" 80324 "), questsIn(721))
 	check("outside: one filed there is still of its zone", real.Quest(1101).zone == 1717)
+	-- What a kill is worth, in the open world only.
+	local kobold, boar = real.Worth(40), real.Worth(3098)
+	check("worth: Kobold Miner, counted in Forever, items and coin", kobold and kobold.basis == "forever" and kobold.items > 5 and kobold.items < 60
+		and kobold.coin > 2 and kobold.coin < 20, kobold and kobold.items .. " " .. kobold.coin)
+	check("worth: a Mottled Boar, no coin", boar and boar.coin == 0 and boar.items > 0 and boar.basis == "classic_table", boar and boar.coin)
+	check("worth: none for a dungeon's only (Scarlet Monk, a boss), an unknown one", real.Worth(4540) == nil and real.Worth(3975) == nil and real.Worth(1) == nil)
 	local every, some = {}, 0
 	for _, r in ipairs(real.Search("", 1000, { "npc" }, { zone = 796 })) do every[r.id] = true end
 	local all = true

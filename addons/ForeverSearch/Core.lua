@@ -732,6 +732,50 @@ local function FromFilter(word)
 	return f
 end
 
+-- uses:<reagent>: the items made with it; uses:copper-bar/blacksmithing
+-- those of one profession. The exact name wins; failing that, the best
+-- match. Enchantments make no item and are not found.
+local usesCache = {}
+local function UsesFilter(word)
+	if usesCache[word] then
+		return usesCache[word]
+	end
+	local reagent, skill = string.match(word, "^(.-)/(.*)$")
+	local name = string.gsub(reagent or word, "%-", " ")
+	local line = skill and FD.SkillLine((string.gsub(skill, "%-", " ")))
+	local chosen
+	for _, h in ipairs(FD.Search(name, 50, { "item" }, { pause = Pause })) do
+		if #FD.UsedIn(h.id) > 0 then
+			if Bare(h.name) == Bare(name) then
+				chosen = h
+				break
+			end
+			chosen = chosen or h
+		end
+	end
+	local made = {}
+	for _, row in ipairs(chosen and FD.UsedIn(chosen.id) or {}) do
+		if row.item and (not skill or row.skillLine == line) then
+			made[row.item] = true
+		end
+	end
+	local f = {
+		test = function(kind, id) return kind == "item" and made[id] == true end,
+		label = not chosen and "uses: no such reagent"
+			or ("made with " .. chosen.name .. (skill and (" by " .. (FD.SkillName(line) or "no such profession")) or "")),
+	}
+	usesCache[word] = f
+	return f
+end
+
+-- UsesWord writes a reagent's name, and a profession's, as one uses: word.
+-- Its apostrophe stays: "spiders silk" finds Spidersilk Boots, not Spider's
+-- Silk.
+local function UsesWord(name, skill)
+	local word = "uses:" .. string.gsub(string.lower(name), "%s+", "-")
+	return skill and (word .. "/" .. string.gsub(string.lower(skill), "%s+", "-")) or word
+end
+
 -- type:<word>: items of a type whose name has a word starting with it, as
 -- the game names types: type:sword is One-Handed Swords and Two-Handed
 -- Swords, type:recipe every recipe.
@@ -927,6 +971,8 @@ end
 local function NewFilter(key, value)
 	if key == "from" then
 		return FromFilter(value)
+	elseif key == "uses" then
+		return FD.UsedIn and UsesFilter(value) or { test = function() return false end, label = "uses: needs a newer ForeverData" }
 	elseif key == "type" then
 		return TypeFilter(value)
 	elseif key == "is" then
@@ -938,7 +984,7 @@ local function NewFilter(key, value)
 	end
 	return SkillFilter(value)
 end
-local NEW_KEY = { from = true, type = true, is = true, class = true, skill = true, race = true }
+local NEW_KEY = { from = true, uses = true, type = true, is = true, class = true, skill = true, race = true }
 
 -- side:<word>: whose things to find. Without it, a search leaves out the
 -- other side's: its quests, and the people only it is friendly to.
@@ -1527,6 +1573,15 @@ local GIVES_HEADING = {
 }
 local PER_METHOD = 8
 
+-- Amount says in grey how many come at once, when it is more than one:
+-- " 1-2", " 3".
+local function Amount(row)
+	if not row.high or row.high <= 1 then
+		return ""
+	end
+	return GREY .. " " .. (row.low == row.high and tostring(row.high) or ("%d-%d"):format(row.low, row.high)) .. "|r"
+end
+
 -- Grouped writes rows by way of getting, likeliest first (or by opts.order),
 -- at most PER_METHOD each; label names a row's other side, opts.suffix adds
 -- to it after (where it is).
@@ -1660,6 +1715,49 @@ local function Purpose(id)
 	return purpose
 end
 
+-- What a reagent is used in: each recipe, with how many it takes, its
+-- profession and its skill, when they are few; else each profession and how
+-- many, a click finding what they make (enchantments make no item).
+local USED_LISTED = 8
+local function UsedLines(id, lines)
+	local rows = FD.UsedIn and FD.UsedIn(id) or {}
+	if #rows == 0 then
+		return
+	end
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = GOLD .. ("Used in (%d):|r"):format(#rows)
+	if #rows <= USED_LISTED then
+		for _, row in ipairs(rows) do
+			local facts = { FD.SkillName(row.skillLine) }
+			if row.count and row.count > 1 then
+				table.insert(facts, 1, "takes " .. row.count)
+			end
+			lines[#lines + 1] = { "  " .. (row.item and ns.Link("item", row.item) or row.name)
+				.. (#facts > 0 and (GREY .. " · " .. table.concat(facts, " · ") .. "|r") or ""), row.skill and tostring(row.skill) or "" }
+		end
+		return
+	end
+	local counts, made, order = {}, {}, {}
+	for _, row in ipairs(rows) do
+		local line = row.skillLine or 0
+		if not counts[line] then
+			order[#order + 1] = line
+		end
+		counts[line] = (counts[line] or 0) + 1
+		made[line] = made[line] or row.item ~= nil
+	end
+	table.sort(order, function(a, b)
+		if counts[a] ~= counts[b] then
+			return counts[a] > counts[b]
+		end
+		return a < b
+	end)
+	for _, line in ipairs(order) do
+		local name = FD.SkillName(line) or "Other"
+		lines[#lines + 1] = { "  " .. (made[line] and ns.FindLink("item: " .. UsesWord(ns.NameOf("item", id), FD.SkillName(line)), name) or name), tostring(counts[line]) }
+	end
+end
+
 local QuestLines, ByLevel, ItemWays, WaysLines, RewardLines -- below
 local function ItemLines(id, lines)
 	local item = FD.Item(id)
@@ -1706,6 +1804,7 @@ local function ItemLines(id, lines)
 	for _, line in ipairs(ItemWays(id)) do
 		lines[#lines + 1] = line
 	end
+	UsedLines(id, lines)
 end
 
 local WAYS_KEPT = 2 -- seconds
@@ -1926,7 +2025,7 @@ function WaysLines(id, lines)
 	local function Drops()
 		Grouped(lines, sources, FROM_HEADING, function(d)
 			return ns.Link(d.kind, d.id)
-		end, nil, { order = sourceOrder, suffix = SourceWhere, methods = methods, key = function(d) return d.key end })
+		end, nil, { order = sourceOrder, suffix = function(d) return Amount(d) .. SourceWhere(d) end, methods = methods, key = function(d) return d.key end })
 	end
 	local function Sold()
 		if #vendors == 0 then
@@ -1958,7 +2057,7 @@ end
 local function LootLines(kind, id, lines)
 	Grouped(lines, FD.Loot(kind, id), GIVES_HEADING, function(row)
 		return ns.Link("item", row.item)
-	end, kind ~= "zone" and ns.FromWord(ns.NameOf(kind, id)) or nil)
+	end, kind ~= "zone" and ns.FromWord(ns.NameOf(kind, id)) or nil, { suffix = Amount })
 end
 
 -- Quests --------------------------------------------------------------------
@@ -2646,6 +2745,32 @@ local function ZoneLines(id, lines)
 	end
 end
 
+-- WorthLine says what killing a creature is worth on average: what a vendor
+-- pays for its drops and its coin, and that the drops are Classic's where
+-- they were not counted in Forever. nil when not known, or for one that is
+-- friendly to your side.
+local WORTH_FROM = { classic_era = "drops counted in Classic Era", classic_table = "Classic's drops" }
+local function WorthLine(id)
+	local w, n = FD.Worth and FD.Worth(id), FD.Npc(id)
+	local side = pageSide ~= "both" and (pageSide or MySide())
+	if not w or (n and side and n[side] == "friendly") then
+		return nil
+	end
+	local parts = {}
+	if w.items > 0 and w.coin > 0 then
+		parts[1] = "items " .. ns.Money(w.items)
+		parts[2] = "coin " .. ns.Money(w.coin)
+	elseif w.coin > 0 then
+		parts[1] = "coin"
+	else
+		parts[1] = "items"
+	end
+	if WORTH_FROM[w.basis] then
+		parts[#parts + 1] = WORTH_FROM[w.basis]
+	end
+	return GOLD .. "Worth per kill:|r " .. ns.Money(w.items + w.coin) .. GREY .. " (" .. table.concat(parts, ", ") .. ")|r"
+end
+
 -- What to say about a find, as lines of text with colour codes. A line
 -- that is a table, {left, right}, is a list entry whose right part (a
 -- chance) the preview aligns to the right. typed is the bar's text: its
@@ -2684,6 +2809,7 @@ function ns.Details(kind, id, typed)
 		if where ~= "" then
 			lines[#lines + 1] = GOLD .. "Where:|r " .. where
 		end
+		lines[#lines + 1] = WorthLine(id)
 		QuestLines(lines, "npc", id)
 		SellsLines(id, lines)
 		LootLines("npc", id, lines)

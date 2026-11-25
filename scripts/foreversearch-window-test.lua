@@ -260,7 +260,7 @@ function UnitGUID() return "Player-1-00000001" end
 -- The addons ---------------------------------------------------------------------
 
 local data = {}
-for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched", "Levels" }) do
+for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched", "Levels", "Worth", "Recipes" }) do
 	assert(loadfile("addons/ForeverData/Data/" .. f .. ".lua"))("ForeverData", data)
 end
 assert(loadfile("addons/ForeverData/Core.lua"))("ForeverData", data)
