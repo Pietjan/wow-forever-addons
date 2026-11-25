@@ -73,7 +73,8 @@ local hits = FD.Search("scale")
 check("search", #hits == 1 and hits[1].kind == "item" and hits[1].id == 8167)
 hits = FD.Search("LINEN")
 check("search any case", #hits == 1 and hits[1].name == "Linen Cloth")
-hits = FD.Search("e", 3)
+check("search: inside a word only from 3 letters", #FD.Search("ne") == 0 and #FD.Search("ine") > 0)
+hits = FD.Search("", 3, nil, { filter = function() return true end })
 check("search limit", #hits == 3)
 check("search prefix first", FD.Search("s")[1].name:sub(1, 1):lower() == "s")
 check("search: a typo", FD.Search("tutrle")[1] and FD.Search("tutrle")[1].name == "Turtle Scale")
@@ -97,8 +98,8 @@ check("filter: level, creatures by range", ids(FD.Search("", nil, nil, { level =
 check("filter: level, quests by level", ids(FD.Search("", nil, { "quest" }, { level = { 1, 1 } })) == "quest92479")
 check("filter: zone keeps what stands there and what it gives", ids(FD.Search("", nil, nil, { zone = 47 })) == "item8167 npc2505"
 	and ids(FD.Search("", nil, nil, { zone = 12 })) == "", ids(FD.Search("", nil, nil, { zone = 47 })))
-check("filter: a function", ids(FD.Search("e", nil, nil, { filter = function(kind) return kind == "zone" end })) == "zone2257 zone47",
-	ids(FD.Search("e", nil, nil, { filter = function(kind) return kind == "zone" end })))
+check("filter: a function", ids(FD.Search("", nil, nil, { filter = function(kind) return kind == "zone" end })) == "zone2257 zone47",
+	ids(FD.Search("", nil, nil, { filter = function(kind) return kind == "zone" end })))
 check("filter: no text and no filter finds nothing", #FD.Search("") == 0)
 FD = fixture()
 check("distinct: one row a kind and name", (function()
@@ -136,6 +137,7 @@ if arg[1] == "real" then
 	FD.Search("turtle")
 	print(string.format("next search: %.3f s", os.clock() - start))
 	check("real spawns", #FD.Spawns("npc", 2505) > 10)
+	check("real portrait model", FD.Npc(2505).display == 5027 and FD.Npc(11520).display == 7970, FD.Npc(2505).display)
 	-- In steps, as ForeverSearch runs it: the same answer, in many steps.
 	local steps = 0
 	local co = coroutine.create(function() return FD.Search("tutrle scale", 20, nil, { yieldEvery = 3000 }) end)
@@ -150,8 +152,59 @@ if arg[1] == "real" then
 		same = same and stepped[i].id == whole[i].id and stepped[i].kind == whole[i].kind
 	end
 	check("real search in steps", same and steps > 10, steps)
+
+	-- Quests: who starts and ends them, what they ask, what they give.
+	local q = FD.Quest(7)
+	check("quest: side", q.side == "alliance", q.side)
+	check("quest: starts and ends at Marshal McBride", q.starts[1].kind == "npc" and q.starts[1].id == 197 and q.ends[1].id == 197)
+	check("quest: kill Kobold Vermin", q.objectives[1].kind == "npc" and q.objectives[1].id == 6)
+	check("quest: reputation with Stormwind", q.reputation[1].faction == 72 and q.reputation[1].value == 100 and FD.Faction(72) == "Stormwind")
+	check("quest: chain", q.requiresOne[1] == 783 and q.next == 15)
+	check("quest: text", q.text and q.text:find("Kobold Vermin", 1, true) ~= nil, q.text)
+	check("quest: started by an item", FD.Quest(2).starts[1].kind == "item" and FD.Quest(2).starts[1].id == 16305)
+	check("quest: Horde", FD.Quest(2).side == "horde")
+	local roles = {}
+	for _, r in ipairs(FD.QuestsOf("npc", 197)) do roles[r.role .. r.quest] = true end
+	check("quests of Marshal McBride", roles.start7 and roles.end7)
+	roles = {}
+	for _, r in ipairs(FD.QuestsOf("item", 16305)) do roles[r.role .. r.quest] = true end
+	check("quests of Sharptalon's Claw", roles.start2)
+	check("class names", FD.ClassName(1) == "Warrior" and FD.ClassName(11) == "Druid")
+	check("profession names", FD.SkillName(164) == "Blacksmithing")
+	local sells = {}
+	for _, id in ipairs(FD.Sells(54)) do sells[id] = true end
+	check("a vendor sells", next(sells) ~= nil)
+	local subs = {}
+	for _, z in ipairs(FD.Subzones(12)) do subs[z] = true end
+	check("Elwynn's subzones: Northshire Valley, Northshire Abbey under it", subs[12] and subs[9] and subs[24])
+	check("has loot", FD.HasLoot("npc", 2505) and not FD.HasLoot("npc", 197))
+	local inElwynn = {}
+	for _, r in ipairs(FD.Search("", 500, { "quest" }, { zone = { 12 } })) do inElwynn[r.id] = true end
+	check("quests in a zone, its subzones' too", inElwynn[7] and inElwynn[5805], inElwynn[7])
 end
 
+check("instances: a dungeon, a zone; no raid, none open yet", FD.Zone(2677) == nil and FD.Zone(1581).instance == "dungeon"
+	and FD.Zone(12).instance == nil)
+do
+	-- World drops: an item given everywhere, rarely, is no zone's loot.
+	local data = {}
+	for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers" }) do
+		assert(loadfile("addons/ForeverData/Data/" .. f .. ".lua"))("ForeverData", data)
+	end
+	assert(loadfile("addons/ForeverData/Core.lua"))("ForeverData", data)
+	local real = ForeverData
+	local function inZone(name, zone)
+		for _, r in ipairs(real.Search(name, 20, { "item" }, { zone = zone })) do
+			if r.name == name then return true end
+		end
+		return false
+	end
+	check("widespread: Fiery War Axe is", real.Item(870).widespread == true and real.Item(16305).widespread ~= true)
+	check("world drop: not Scarlet Monastery's loot", not inZone("Fiery War Axe", 796))
+	check("world drop: its own set still is", inZone("Scarlet Chestpiece", 796))
+	check("world drop: Silk Cloth, common there, still is", inZone("Silk Cloth", 796))
+	check("world drop: a boss drop still is", inZone("Ravager", 796))
+end
 if failures > 0 then
 	print(failures .. " failed")
 	os.exit(1)

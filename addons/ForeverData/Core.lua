@@ -21,6 +21,9 @@ local METHOD = { d = "drop", k = "skinning", p = "pickpocketing", c = "contained
 -- percentage wowhead shows, CMaNGOS's Classic table, or only seen dropping.
 local BASIS = { f = "forever", e = "classicEra", s = "shown", c = "classic", v = "seen" }
 local REACTION = { h = "hostile", n = "neutral", f = "friendly" }
+local INSTANCE = { d = "dungeon", r = "raid", b = "battleground" }
+
+local EMPTY = {}
 
 -- split cuts s at each sep (plain), keeping empty fields.
 local function split(s, sep)
@@ -78,6 +81,7 @@ local item = cached(function(id)
 	return {
 		id = id, name = f[1], quality = number(f[2]), class = number(f[3]), subclass = number(f[4]),
 		itemLevel = number(f[5]), requiredLevel = number(f[6]), available = f[7] == "1",
+		widespread = string.sub(f[8] or "", 1, 1) == "*",
 	}
 end)
 
@@ -91,6 +95,7 @@ local npc = cached(function(id)
 	return {
 		id = id, name = f[1], title = text(f[2]), minLevel = number(f[3]), maxLevel = number(f[4]),
 		rank = number(f[5]), alliance = REACTION[string.sub(reaction, 1, 1)], horde = REACTION[string.sub(reaction, 2, 2)],
+		boss = f[7] == "1", display = number(f[8]), kind = text(f[9]),
 	}
 end)
 
@@ -103,13 +108,71 @@ local object = cached(function(id)
 	return { id = id, name = f[1], type = number(f[2]) }
 end)
 
+-- refs decodes "n2505,o1731,i8167" into {kind, id} rows; an "f" ref (a
+-- reputation objective, "f72:3000") becomes {kind = "faction", id, standing}.
+local function refs(s)
+	local out = {}
+	if s == nil or s == "" then
+		return out
+	end
+	for _, r in ipairs(split(s, ",")) do
+		local code = string.sub(r, 1, 1)
+		if code == "f" then
+			local faction, standing = string.match(r, "^f(%d+):(-?%d*)$")
+			out[#out + 1] = { kind = "faction", id = tonumber(faction), standing = number(standing) }
+		else
+			out[#out + 1] = { kind = KIND_NAME[code], id = tonumber(string.sub(r, 2)) }
+		end
+	end
+	return out
+end
+
+local function ids(s)
+	local out = {}
+	if s == nil or s == "" then
+		return out
+	end
+	for _, v in ipairs(split(s, ",")) do
+		out[#out + 1] = tonumber(v)
+	end
+	return out
+end
+
+local SIDE = { a = "alliance", h = "horde" }
+
 local quest = cached(function(id)
 	local s = ns.quests and ns.quests[id]
 	if not s then
 		return nil
 	end
 	local f = split(s, "|")
-	return { id = id, name = text(f[1]), level = number(f[2]), requiredLevel = number(f[3]), new = f[4] == "1" }
+	local reputation = {}
+	for _, r in ipairs(f[15] and f[15] ~= "" and split(f[15], ",") or EMPTY) do
+		local faction, value = string.match(r, "^(%d+):(-?%d+)$")
+		reputation[#reputation + 1] = { faction = tonumber(faction), value = tonumber(value) }
+	end
+	return {
+		id = id, name = text(f[1]), level = number(f[2]), requiredLevel = number(f[3]), new = f[4] == "1",
+		side = SIDE[f[5]], classes = number(f[6]), zone = number(f[7]), skillLine = number(f[8]), skill = number(f[9]),
+		repeatable = f[10] == "1", starts = refs(f[11]), ends = refs(f[12]), objectives = refs(f[13]),
+		rewards = ids(f[14]), reputation = reputation, requiresAll = ids(f[16]), requiresOne = ids(f[17]),
+		next = number(f[18]), text = text(f[19]),
+	}
+end)
+
+-- questsOf decodes the quests a thing is part of: "s123,e456,o789,r12,z34".
+local QUEST_ROLE = { s = "start", e = "end", o = "objective", r = "reward", z = "zone" }
+local questsOf = cached(function(ref)
+	local code, id = string.sub(ref, 1, 1), tonumber(string.sub(ref, 2))
+	local s = ns.questsOf and ns.questsOf[code] and ns.questsOf[code][id]
+	if not s then
+		return nil
+	end
+	local rows = {}
+	for _, r in ipairs(split(s, ",")) do
+		rows[#rows + 1] = { quest = tonumber(string.sub(r, 2)), role = QUEST_ROLE[string.sub(r, 1, 1)] }
+	end
+	return rows
 end)
 
 local zone = cached(function(id)
@@ -118,7 +181,7 @@ local zone = cached(function(id)
 		return nil
 	end
 	local f = split(s, "|")
-	return { id = id, name = f[1], parent = number(f[2]) }
+	return { id = id, name = f[1], parent = number(f[2]), instance = INSTANCE[f[3] or ""] }
 end)
 
 -- lootOf decodes what one thing gives: "item,method,chance,sample,basis;...".
@@ -188,8 +251,6 @@ local trainers = cached(function(id)
 	return rows
 end)
 
-local EMPTY = {}
-
 ForeverData = {}
 local FD = ForeverData
 
@@ -203,24 +264,107 @@ function FD.RequireContract(n)
 end
 
 -- {id, name, quality, class, subclass, itemLevel, requiredLevel,
--- available}: available is false for test, unused and not yet released
--- items (not available to players by wowhead).
+-- available, widespread}: available is false for test, unused and not yet
+-- released items (not available to players by wowhead); widespread is true
+-- for an item creatures or objects give in five zones or more (a world
+-- drop, or turtle meat): a zone filter counts it only where it is given
+-- at 1% or better.
 function FD.Item(id) return item(id) end
 
--- {id, name, title, minLevel, maxLevel, rank, alliance, horde}: rank 0
--- normal, 1 elite, 2 rare elite, 3 boss, 4 rare; alliance and horde how
--- it takes that side's players, "hostile", "neutral" (you can attack it, it
--- does not attack you) or "friendly", from its faction; nil when unknown.
+-- {id, name, title, minLevel, maxLevel, rank, alliance, horde, boss, display, kind}: rank
+-- 0 normal, 1 elite, 2 rare elite, 3 boss (a world boss), 4 rare; alliance
+-- and horde how it takes that side's players, "hostile", "neutral" (you can
+-- attack it, it does not attack you) or "friendly", from its faction; nil
+-- when unknown. boss is true for a dungeon or raid boss: named as one of
+-- the client's boss encounters, in that encounter's instance. display is
+-- the creature display ID wowhead shows its model with, for
+-- SetPortraitTextureFromCreatureDisplayID; nil when unknown.
+-- kind is its family ("Cat", "Turtle") or else its type ("Humanoid",
+-- "Undead"); nil when unknown.
 function FD.Npc(id) return npc(id) end
 
 -- {id, name, type}: type 3 chest (veins and herbs too), 25 fishing hole.
 function FD.Object(id) return object(id) end
 
--- {id, name, level, requiredLevel, new}: name nil for the few quests
--- known only by who starts and ends them; new true for quests new in Forever.
+-- {id, name, level, requiredLevel, new, side, classes, zone, skillLine,
+-- skill, repeatable, starts, ends, objectives, rewards, reputation,
+-- requiresAll, requiresOne, next, text}: name nil for the few quests known
+-- only by who starts and ends them; new true for quests new in Forever;
+-- side "alliance" or "horde", nil for both; classes a class mask (bit n-1
+-- for class n), nil for all; zone an area; skillLine and skill a
+-- profession and level it asks. starts, ends and objectives are rows
+-- {kind, id}: kind "npc", "object" or "item", or for a reputation
+-- objective "faction" with standing. rewards are item IDs, reputation rows
+-- {faction, value}; requiresAll the quests all needed first, requiresOne
+-- those of which one is; next the quest it leads to; text what to do, as
+-- QuestieDB writes it ($N your name, $B a new line).
 function FD.Quest(id) return quest(id) end
 
--- {id, name, parent}: an area; parent nil for a zone or an instance.
+-- The quests a thing is part of: kind "npc", "object", "item" or "zone".
+-- Rows {quest, role}: role "start", "end", "objective", "reward", or for a
+-- zone "zone" (the quests filed under it).
+function FD.QuestsOf(kind, id)
+	local code = KIND_CODE[kind]
+	if not code or not id then
+		return EMPTY
+	end
+	return questsOf(code .. id) or EMPTY
+end
+
+-- A faction's name, for a quest's reputation.
+function FD.Faction(id)
+	return ns.factions and ns.factions[id]
+end
+
+-- A class's name (1 Warrior .. 11 Druid), for a quest's classes.
+function FD.ClassName(id)
+	return ns.classes and ns.classes[id]
+end
+
+-- A profession's name by skill line (164 Blacksmithing), for a quest's skillLine.
+function FD.SkillName(line)
+	return ns.skills and ns.skills[line]
+end
+
+-- The skill line of a profession by name, any case ("fishing" 356); nil
+-- when no quest needs one of that name.
+function FD.SkillLine(name)
+	local lower = type(name) == "string" and string.lower(name)
+	for line, n in pairs(ns.skills or EMPTY) do
+		if string.lower(n) == lower then
+			return line
+		end
+	end
+	return nil
+end
+
+-- An area and every area inside it, at any depth: {12, 9, 24, ...} for
+-- Elwynn Forest, Northshire Valley, Northshire Abbey and the rest.
+local children
+function FD.Subzones(id)
+	if not children then
+		children = {}
+		for child, s in pairs(ns.zones or EMPTY) do
+			local parent = tonumber(string.match(s, "^[^|]*|(%d+)") or "")
+			if parent then
+				children[parent] = children[parent] or {}
+				table.insert(children[parent], child)
+			end
+		end
+	end
+	local out, at = { id }, 1
+	while out[at] and at <= 1000 do
+		for _, child in ipairs(children[out[at]] or EMPTY) do
+			out[#out + 1] = child
+		end
+		at = at + 1
+	end
+	return out
+end
+
+-- {id, name, parent, instance}: an area; parent nil for a zone or an
+-- instance; instance "dungeon", "raid" or "battleground" for an instance's
+-- own area, else nil.
 function FD.Zone(id) return zone(id) end
 
 -- What a thing gives: kind "npc", "object", "item" (a container) or
@@ -232,6 +376,12 @@ function FD.Loot(kind, id)
 		return EMPTY
 	end
 	return lootOf(code .. id) or EMPTY
+end
+
+-- Whether a thing gives anything, without decoding what.
+function FD.HasLoot(kind, id)
+	local code = KIND_CODE[kind]
+	return code ~= nil and ns.loot ~= nil and ns.loot[code] ~= nil and ns.loot[code][id] ~= nil
 end
 
 -- Where an item comes from. Rows {kind, id, method, chance, sample, basis}.
@@ -270,6 +420,15 @@ end
 -- exalted), nil for none.
 function FD.Vendors(itemID) return vendors(itemID) or EMPTY end
 
+-- What a vendor sells: item IDs; FD.Vendors(item) has its price there.
+function FD.Sells(npcID)
+	local s = ns.sells and ns.sells[npcID]
+	if not s then
+		return EMPTY
+	end
+	return ids(s)
+end
+
 -- Who teaches a recipe (its spell): rows {npc, skillLine, skill, level, cost}.
 function FD.Trainers(spellID) return trainers(spellID) or EMPTY end
 
@@ -279,7 +438,24 @@ local SEARCHED = { "item", "npc", "object", "quest", "zone" }
 local SOURCE = { item = "items", npc = "npcs", object = "objects", quest = "quests", zone = "zones" }
 local index = {}
 
--- names builds a kind's search list on first use: {id, lower-case name, name}.
+-- Names the client keeps for its own use, never meant to be seen: "[PH]
+-- Hakkar'i Urn", "Doodad_BlackRockDoors01", "Webwood Creeper UNUSED",
+-- "TEST WOLF", "zzOLDCodex of ...". Search leaves them out.
+local JUNK = {
+	"^%[", "^%(DNT%)", "%(OLD%)", "%(old%)", "^[Dd]oodad", "^G_", "^Monster %- ", "^zz", "^Not Used",
+	"UNUSED", "DEPRECATED", "REUSE", "PLACEHOLDER", "^TEST", "%f[%w]TEST%f[%W]", "GM can see",
+}
+local function junk(name)
+	for _, pattern in ipairs(JUNK) do
+		if string.find(name, pattern) then
+			return true
+		end
+	end
+	return false
+end
+
+-- names builds a kind's search list on first use: {id, lower-case name,
+-- name, words in the name, lower-case title (creatures with one)}.
 local function names(kind)
 	local list = index[kind]
 	if list then
@@ -289,9 +465,14 @@ local function names(kind)
 	for id, s in pairs(ns[SOURCE[kind]] or EMPTY) do
 		local bar = string.find(s, "|", 1, true)
 		local name = bar and string.sub(s, 1, bar - 1) or s
-		if name ~= "" then
+		if name ~= "" and not junk(name) then
 			local _, words = string.gsub(name, "%S+", "")
-			list[#list + 1] = { id, string.lower(name), name, words }
+			local title
+			if kind == "npc" and bar then
+				title = string.match(s, "^([^|]*)", bar + 1)
+				title = title ~= "" and string.lower(title) or nil
+			end
+			list[#list + 1] = { id, string.lower(name), name, words, title }
 		end
 	end
 	index[kind] = list
@@ -302,13 +483,15 @@ end
 -- the name somehow, and the name scores by how well each did:
 --   100  the name starts with it          "turtle" Turtle Scale
 --    85  a word of the name starts with it "scale"  Turtle Scale
+--   +15  and it is that whole word         "silk"   Silk Cloth over Silky Gown
 --    60  it is inside the name            "urtl"
+--   -15  only a creature's title has it   "banker" (title <Banker>)
 --    45  a word of the name is one typo away (4 letters or more) "tutrle"
 --  30-40 its letters are in the name in order (3 letters or more) "trtl",
 --        the closer together the better
 -- Within a score, shorter names first. The search is staged: first only
 -- the plain tiers (100, 85, 60); typos and letters in order only when that
--- finds fewer than asked for. Typos are found against the distinct words
+-- finds nothing, so a near miss never pads a list of real matches. Typos are found against the distinct words
 -- of all names, not every name.
 
 -- wordsBy collects the distinct words of all names searched, by first
@@ -413,17 +596,47 @@ local function fuzzy(t)
 	end
 end
 
+-- common is how many things give an item: creatures and objects that drop
+-- it, vendors that sell it. Linen Cloth (some 400) is what "linen" means
+-- more than Linen Boots (none). Search weighs it only for materials (see
+-- MATERIAL) and only when words are typed.
+local function common(id)
+	local refs = ns.drops and ns.drops[id]
+	local n = 0
+	if refs and refs ~= "" then
+		local _, commas = string.gsub(refs, ",", "")
+		n = commas + 1
+	end
+	local sold = ns.vendors and ns.vendors[id]
+	if sold and sold ~= "" then
+		local _, more = string.gsub(sold, ";", "")
+		n = n + more + 1
+	end
+	return n
+end
+
+-- Item classes a bare word names as a material: 5 reagent, 7 trade goods
+-- ("linen" Linen Cloth, "copper" Copper Ore). They come before the gear of
+-- that name, the commonest first.
+local MATERIAL = { [5] = true, [7] = true }
+
+local WHOLE = 15 -- bonus for a typed word that is a whole word of the name
+
 local function scoreTerm(name, t, allowFuzzy)
 	local at = string.find(name, t.text, 1, true)
-	if at == 1 then
-		return 100
-	end
 	if at then
+		local after = string.sub(name, at + #t.text, at + #t.text)
+		local whole = not string.find(after, "[%w']") and WHOLE or 0
+		-- "The Deadmines" starts with "deadmines" as much as with "the".
+		if at == 1 or (at == 5 and string.sub(name, 1, 4) == "the ") then
+			return 100 + whole
+		end
 		local before = string.sub(name, at - 1, at - 1)
 		if string.find(before, "[^%w']") then
-			return 85
+			return 85 + whole
 		end
-		return 60
+		-- Inside a word only for 3 letters or more: "dm" is not Deadmire.
+		return #t.text >= 3 and 60 or nil
 	end
 	if not allowFuzzy then
 		return nil
@@ -455,8 +668,25 @@ end
 local FILTER_KINDS = {
 	quality = { item = true },
 	level = { item = true, npc = true, quest = true },
-	zone = { npc = true, object = true, item = true },
+	zone = { npc = true, object = true, item = true, quest = true },
 }
+
+-- questIn tells whether a quest is filed under one of the zones, or under
+-- a subzone of one (Northshire Valley lies in Elwynn Forest).
+local function questIn(id, zones)
+	local q = quest(id)
+	local at, guard = q and q.zone, 0
+	while at and guard < 8 do
+		for _, z in ipairs(zones) do
+			if z == at then
+				return true
+			end
+		end
+		local area = zone(at)
+		at, guard = area and area.parent, guard + 1
+	end
+	return false
+end
 
 -- standsIn tells whether a creature (code n) or object (o) stands in one
 -- of the zones. The packed spots name their zones ("47:...;12:..."): look
@@ -476,12 +706,25 @@ local function standsIn(code, id, zones)
 end
 
 -- givenIn tells whether something in one of the zones gives the item: a
--- creature or object standing there, or fishing there. Reads the drop
+-- creature or object standing there, or fishing there; for a world drop,
+-- only a zone where it is given at 1% or better. Reads the drop
 -- index ("n9028,o1731,a47"), decoding no loot.
 local function givenIn(itemID, zones)
 	local refs = ns.drops and ns.drops[itemID]
 	if not refs then
 		return false
+	end
+	-- A world drop is a zone's only where it is given at 1% or better: the
+	-- zones after its "*" ("Fiery War Axe|...|*" is no zone's).
+	local packed = ns.items and ns.items[itemID]
+	local world = packed and string.match(packed, "|%*([%d,]*)$")
+	if world then
+		world = "," .. world .. ","
+		for _, zoneID in ipairs(zones) do
+			if string.find(world, "," .. zoneID .. ",", 1, true) then
+				return true
+			end
+		end
 	end
 	for ref in string.gmatch(refs, "[^,]+") do
 		local code, id = string.sub(ref, 1, 1), tonumber(string.sub(ref, 2))
@@ -491,7 +734,7 @@ local function givenIn(itemID, zones)
 					return true
 				end
 			end
-		elseif (code == "n" or code == "o") and standsIn(code, id, zones) then
+		elseif (code == "n" or code == "o") and not world and standsIn(code, id, zones) then
 			return true
 		end
 	end
@@ -502,7 +745,8 @@ end
 -- (function(kind, id) returning true to keep), quality (items of at least
 -- this quality), level ({min, max}: items by required level, creatures by
 -- their level range, quests by level), zone (an area ID or a list:
--- creatures and objects that stand there, items something there gives). Returns nil without filters, and the kinds
+-- creatures and objects that stand there, items something there gives,
+-- quests filed under it or a subzone of it). Returns nil without filters, and the kinds
 -- the filters allow.
 local function accepter(options)
 	if not options then
@@ -560,6 +804,10 @@ local function accepter(options)
 				if not givenIn(id, zones) then
 					return false
 				end
+			elseif kind == "quest" then
+				if not questIn(id, zones) then
+					return false
+				end
 			elseif not standsIn(kind == "npc" and "n" or "o", id, zones) then
 				return false
 			end
@@ -568,12 +816,14 @@ local function accepter(options)
 	end, allowed
 end
 
-local KIND_ORDER = { item = 1, npc = 2, object = 3, quest = 4, zone = 5 }
+-- Among equal matches, places and bosses are what a name usually means
+-- ("scarlet" Scarlet Monastery, "whitemane" the boss), then items.
+local KIND_ORDER = { zone = 1, boss = 2, item = 3, npc = 4, object = 5, quest = 6 }
 local COMPLETE = 30 -- bonus for a name with no words beyond those typed
 
 -- Things whose name matches the text, best first: rows {kind, id, name}.
 -- Best: how well the name matches (with a bonus for a name with no words
--- beyond those typed), then items before the rest, better quality first,
+-- beyond those typed), then places, bosses, items, the rest, better quality first,
 -- then by type, then the shorter name.
 -- kinds limits the search ({"item", "npc"}); limit caps the rows (default
 -- 50). options narrow what is found, before the limit:
@@ -581,7 +831,9 @@ local COMPLETE = 30 -- bonus for a name with no words beyond those typed
 --   quality  items of at least this quality (3 rare)
 --   level    {min, max}: items by required level, creatures by level, quests by level
 --   zone     an area ID, or a list of them: creatures and objects that stand
---            there, items something there gives (or that are fished there)
+--            there, items something there gives (or that are fished there;
+--            a world drop only where something gives it at 1% or better),
+--            quests filed under it or a subzone of it
 --   distinct one row a kind and name, with all its IDs in ids ({1731, 2055, ...}
 --            for the Copper Veins), before the limit
 -- quality, level and zone limit the search to the kinds they apply to.
@@ -617,9 +869,14 @@ function FD.Search(text, limit, kinds, options)
 						end
 					end
 					if not matched[entry] then
-						local total = 0
+						local total, byName = 0, true
 						for _, t in ipairs(terms) do
 							local s = scoreTerm(entry[2], t, allowFuzzy)
+							if not s and entry[5] then
+								s = scoreTerm(entry[5], t, false)
+								s = s and s - 15
+								byName = false
+							end
 							if not s then
 								total = nil
 								break
@@ -629,7 +886,7 @@ function FD.Search(text, limit, kinds, options)
 						-- A name with no words beyond those typed is the one
 						-- meant: "turtle scale" is Turtle Scale, not Turtle
 						-- Scale Helm.
-						if total and entry[4] == #terms then
+						if total and byName and entry[4] == #terms then
 							total = total + COMPLETE
 						end
 						if total and (not accept or accept(kind, entry[1])) then
@@ -642,24 +899,39 @@ function FD.Search(text, limit, kinds, options)
 		end
 	end
 	pass(false)
-	if #found < want and #terms > 0 then
+	if #found == 0 and #terms > 0 then
 		for _, t in ipairs(terms) do
 			fuzzy(t)
 		end
 		pass(true)
 	end
-	-- Among equal matches: items first, the best quality first, then by type
+	-- Among equal matches: places (whole zones first), bosses, items
+	-- (materials first, the commonest first; see MATERIAL), the best
+	-- quality first, then by type
 	-- (class, subclass), then the shortest name.
 	for n, f in ipairs(found) do
 		if yieldEvery and n % yieldEvery == 0 then
 			coroutine.yield()
 		end
 		f.order = KIND_ORDER[f.kind] or 9
+		if f.kind == "npc" then
+			local n = npc(f.id)
+			if n and n.boss then
+				f.order = KIND_ORDER.boss
+			end
+		end
 		if f.kind == "item" then
 			local it = item(f.id)
 			f.quality, f.class, f.subclass = it and it.quality or -1, it and it.class or 99, it and it.subclass or 99
+			f.common = #terms > 0 and MATERIAL[f.class] and 1 + common(f.id) or 0
 		else
-			f.quality, f.class, f.subclass = -1, 99, 99
+			f.quality, f.class, f.subclass, f.common = -1, 99, 99, 0
+			-- A whole zone before a spot in one: Scarlet Monastery before
+			-- Scarlet Base Camp.
+			if f.kind == "zone" then
+				local z = zone(f.id)
+				f.common = z and not z.parent and 1 or 0
+			end
 		end
 	end
 	table.sort(found, function(a, b)
@@ -668,6 +940,9 @@ function FD.Search(text, limit, kinds, options)
 		end
 		if a.order ~= b.order then
 			return a.order < b.order
+		end
+		if a.common ~= b.common then
+			return a.common > b.common
 		end
 		if a.quality ~= b.quality then
 			return a.quality > b.quality

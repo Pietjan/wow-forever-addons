@@ -9,6 +9,11 @@
 --   Enter         closes, keeping the text for next time
 --   Shift-Enter   or Shift-click: links the chosen item in chat
 --   mouse         hover or click chooses; the wheel scrolls the finds
+--   buttons       under the bar set the filter words: a kind, a quality or
+--                 better, your level (Near me), your zone (Here); Tab and
+--                 Shift-Tab step through the kinds
+--   links         names in the preview show that thing; Back (or the mouse's
+--                 back button) returns; hover an item for its tooltip
 --   in a dungeon or raid the bar opens with in:<that instance> in front of
 --                 the text (in:blackrock-depths), taken off again elsewhere;
 --                 a line above the finds says how the filter words were read
@@ -17,13 +22,30 @@ local ADDON, ns = ...
 local WIDTH = 520
 local BAR_HEIGHT = 44
 local ROW, ROWS = 36, 10
+local ICON = ROW - 8
+local RING_X, RING_Y = ICON * 0.2, ICON * 0.2 - 1 -- the ring reaches past the icon
+
+-- HasAtlas tells whether this client has an atlas of that name.
+local function HasAtlas(name)
+	local ok, info = pcall(function()
+		return C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name)
+	end)
+	return ok and info ~= nil
+end
 local PREVIEW_WIDTH = 380
 local KIND_ICON = {
 	npc = "Interface\\Icons\\Ability_Hunter_Pet_Wolf",
 	object = "Interface\\Icons\\INV_Misc_Bag_10",
 	quest = "Interface\\GossipFrame\\AvailableQuestIcon",
-	zone = "Interface\\Icons\\INV_Misc_Map_01",
+	zone = "Interface\\LFGFrame\\LFGIcon-Zone",
 	item = "Interface\\Icons\\INV_Misc_QuestionMark",
+}
+-- The game's own portraits for an instance (the calendar uses the dungeon
+-- and raid ones).
+local INSTANCE_ICON = {
+	dungeon = "Interface\\LFGFrame\\LFGIcon-Dungeon",
+	raid = "Interface\\LFGFrame\\LFGIcon-Raid",
+	battleground = "Interface\\LFGFrame\\LFGIcon-Battleground",
 }
 local BACKDROP = {
 	bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -34,6 +56,10 @@ local BACKDROP = {
 
 local bar, box, list, rows, preview
 local finds, offset, chosen = {}, 0, 1
+local found, limit = 0, 30 -- how many were found; how many were asked for
+-- With only filter words (in:sm, is:raid) the whole lot is wanted, grouped:
+-- up to this many, scrolled through.
+local FILTER_LIMIT = 1000
 
 -- A search runs in steps over several frames (see ForeverData.Search),
 -- starting a moment after the last key, so typing stays smooth.
@@ -42,6 +68,10 @@ local BUDGET = 6       -- milliseconds of searching a frame
 local STEP = 500       -- names a step (each may be decoded for a filter)
 local job, startAt, jobText
 local FILTER_LINE = 20 -- height of the line saying how the filter words were read
+local CHIPS_HEIGHT = 30 -- the row of filter buttons under the bar
+local KIND_CHIPS = { { nil, "All" }, { "item", "Items" }, { "npc", "Creatures" }, { "object", "Objects" }, { "quest", "Quests" }, { "zone", "Zones" } }
+local QUALITY_CHIPS = { { 2, "uncommon" }, { 3, "rare" }, { 4, "epic" }, { 5, "legendary" } }
+local chips
 local driver = CreateFrame("Frame")
 driver:Hide()
 
@@ -61,9 +91,28 @@ local function QualityColour(quality)
 	return 1, 1, 1
 end
 
+local QUEST_ATLAS = "Calendar_Quest" -- a square parchment tile with a gold "!"
+
+-- Portrait draws a creature's portrait from the model wowhead shows it
+-- with (ForeverData's display), as the client draws one of a unit it has
+-- not met; false when that model is unknown or this client has no such call.
+local function Portrait(texture, id)
+	local n = ForeverData.Npc(id)
+	if not (n and n.display and SetPortraitTextureFromCreatureDisplayID) then
+		return false
+	end
+	-- Always the game's circle: unlike SetPortraitTexture this call has no
+	-- disableMasking argument; the row's black fill shows around it.
+	return (pcall(SetPortraitTextureFromCreatureDisplayID, texture, n.display))
+end
+
 local function Icon(find)
 	if find.kind == "item" and C_Item.GetItemIconByID then
 		return C_Item.GetItemIconByID(find.id) or KIND_ICON.item
+	end
+	if find.kind == "zone" then
+		local z = ForeverData.Zone(find.id)
+		return z and INSTANCE_ICON[z.instance] or KIND_ICON.zone
 	end
 	return KIND_ICON[find.kind]
 end
@@ -85,29 +134,151 @@ local function LinkInChat(find)
 	end
 end
 
-local function ShowPreview()
-	local find = finds[chosen]
-	if not find then
-		preview:Hide()
-		return
+-- The preview shows one thing's page; following a link in it shows the
+-- linked thing's, and Back the one before. history holds the pages left.
+local page, history = nil, {}
+
+-- The page is a stack of blocks in preview.content: runs of text lines in
+-- one SimpleHTML each (its names are links), and list entries as a row of
+-- their own, the name left and its number (a chance, a level, a price)
+-- right-aligned beside it.
+local RIGHT_WIDTH = 76 -- wide enough for a price, "12g 34s 56c"
+local blocks = {}
+local Block -- made in MakeBar's part, as it needs the link handlers
+
+local function ShowPage(kind, id, keepScroll)
+	page = { kind = kind, id = id }
+	local quality = kind == "item" and ForeverData.Item(id) and ForeverData.Item(id).quality
+	local r, g, b = QualityColour(quality)
+	local lines = {}
+	if #history > 0 then
+		local last = history[#history]
+		lines[#lines + 1] = ("|Hfsearch:back|h|cff66bbff< Back to %s|r|h"):format(ns.NameOf(last.kind, last.id))
+		lines[#lines + 1] = ""
 	end
-	local r, g, b = QualityColour(find.quality)
-	local head = ("|cff%02x%02x%02x%s|r\n|cff9d9d9d%s %d|r"):format(r * 255, g * 255, b * 255, find.name,
-		ns.KIND_LABEL[find.kind] or find.kind, find.id)
-	preview.text:SetText(head .. "\n\n" .. table.concat(ns.Details(find.kind, find.id), "\n"))
-	preview.child:SetHeight(preview.text:GetStringHeight() + 8)
-	preview.scroll:SetVerticalScroll(0)
+	lines[#lines + 1] = ("|cff%02x%02x%02x%s|r"):format(r * 255, g * 255, b * 255, ns.NameOf(kind, id))
+	lines[#lines + 1] = ("|cff9d9d9d%s %d|r"):format(ns.KindLabel(kind, id), id)
+	lines[#lines + 1] = ""
+	for _, line in ipairs(ns.Details(kind, id, box:GetText())) do
+		lines[#lines + 1] = line
+	end
+
+	local used, y, run = 0, 0, {}
+	local function Put(text, right)
+		used = used + 1
+		local block = Block(used)
+		block:ClearAllPoints()
+		block:SetPoint("TOPLEFT", preview.content, "TOPLEFT", 0, -y)
+		block.html:SetWidth(PREVIEW_WIDTH - 44 - (right and RIGHT_WIDTH or 0))
+		block.html:SetText(text)
+		local height = math.max(1, block.html:GetContentHeight())
+		block.html:SetHeight(height)
+		block.right:SetText(right or "")
+		block:SetHeight(height)
+		block:Show()
+		y = y + height + (right and 2 or 0)
+	end
+	local function Flush()
+		if #run > 0 then
+			Put(table.concat(run, "\n"))
+			run = {}
+		end
+	end
+	for _, line in ipairs(lines) do
+		if type(line) == "table" then
+			Flush()
+			Put(line[1], line[2])
+		else
+			run[#run + 1] = line
+		end
+	end
+	Flush()
+	for i = used + 1, #blocks do
+		blocks[i]:Hide()
+	end
+	preview.content:SetHeight(math.max(1, y + 8))
+	if not keepScroll then
+		preview.scroll:SetVerticalScroll(0)
+	end
 	preview:Show()
 end
 
+local function ShowPreview()
+	local find = finds[chosen]
+	history = {}
+	if not find then
+		page = nil
+		preview:Hide()
+		return
+	end
+	ShowPage(find.kind, find.id)
+end
+
+-- Follow goes to a linked thing, keeping the page left for Back.
+local function Follow(kind, id)
+	if page then
+		history[#history + 1] = page
+	end
+	ShowPage(kind, id)
+end
+
+local function Back()
+	local last = table.remove(history)
+	if last then
+		ShowPage(last.kind, last.id)
+	end
+end
+
+-- UpdateChips lights the buttons whose filter is in the text.
+local IsHere -- below, by DrawRows
+
+local function UpdateChips()
+	if not chips then
+		return
+	end
+	local _, kinds, options = ns.Parse(box:GetText())
+	local kind = kinds and kinds[1]
+	for _, chip in ipairs(chips.kinds) do
+		chip:SetActive(chip.value == kind)
+	end
+	for _, chip in ipairs(chips.qualities) do
+		chip:SetActive(options.quality == chip.value)
+	end
+	chips.near:SetActive(options.level ~= nil)
+	chips.here:SetActive(IsHere(options.zone))
+end
+
+-- IsHere tells whether the in: zones are the zone you are in (Here lit),
+-- not some other in: typed (in:sm somewhere else).
+function IsHere(zones)
+	if not zones then
+		return false
+	end
+	local _, _, here = ns.Parse(ns.InWord(GetRealZoneText() or ""))
+	if not here.zone or #here.zone ~= #zones then
+		return false
+	end
+	for i, id in ipairs(zones) do
+		if here.zone[i] ~= id then
+			return false
+		end
+	end
+	return true
+end
+
 local function DrawRows()
+	UpdateChips()
 	local shown = math.min(ROWS, #finds - offset)
 	-- The filter words as the bar read them, above the finds.
 	local text = box:GetText()
 	local described = text:match("%S") and ns.Describe(text)
 	local top = described and FILTER_LINE or 0
 	if described then
-		list.filters:SetText(described .. (#finds == 0 and job == nil and "  ·  nothing found" or ""))
+		local count = ""
+		if job == nil then
+			count = found == 0 and "  ·  nothing found" or ("  ·  %d%s found"):format(found, found >= limit and "+" or "")
+		end
+		list.filters:SetText(described .. count)
 		list.filters:Show()
 	else
 		list.filters:Hide()
@@ -117,7 +288,16 @@ local function DrawRows()
 		local find = finds[offset + i]
 		if find then
 			row.find = find
-			row.icon:SetTexture(Icon(find))
+			-- A quest is the calendar's quest tile, an atlas; SetAtlas sets
+			-- the texture's coordinates, so the others set theirs back.
+			if find.kind == "quest" and HasAtlas(QUEST_ATLAS) then
+				row.icon:SetAtlas(QUEST_ATLAS)
+			elseif find.kind == "npc" and Portrait(row.icon, find.id) then
+				row.icon:SetTexCoord(unpack(row.coords))
+			else
+				row.icon:SetTexture(Icon(find))
+				row.icon:SetTexCoord(unpack(row.coords))
+			end
 			row.name:SetText(find.name)
 			if find.kind == "item" and find.available == false then
 				row.name:SetTextColor(0.5, 0.5, 0.5)
@@ -140,6 +320,7 @@ local function DrawRows()
 	end
 end
 
+-- Choose picks a find by place.
 local function Choose(index)
 	if #finds == 0 then
 		return
@@ -156,6 +337,7 @@ end
 
 local function Show(results)
 	finds = results
+	found = #results
 	offset, chosen = 0, 1
 	DrawRows()
 	ShowPreview()
@@ -182,8 +364,11 @@ driver:SetScript("OnUpdate", function(self)
 			return
 		end
 		local text = jobText
+		local words = ns.Parse(text)
+		local grouped = not words:match("%S")
+		limit = grouped and FILTER_LIMIT or 30
 		job = coroutine.create(function()
-			return ns.Results(text, 30, { yieldEvery = STEP })
+			return ns.Results(text, limit, { yieldEvery = STEP, grouped = grouped })
 		end)
 	end
 	local until_ = debugprofilestop() + BUDGET
@@ -208,6 +393,15 @@ local function Close()
 	bar:Hide()
 end
 
+-- SearchFor puts words in the bar and searches: a search link's, or a
+-- zone's in: word.
+local function SearchFor(text)
+	box:SetText(text)
+	box:SetCursorPosition(#text)
+	Search()
+	startAt = 0
+end
+
 local function MakeRow(i)
 	local row = CreateFrame("Button", nil, list)
 	row:SetSize(WIDTH - 12, ROW)
@@ -218,8 +412,35 @@ local function MakeRow(i)
 	row.selected:SetAllPoints()
 	row.selected:SetColorTexture(0.3, 0.55, 1, 0.22)
 	row.icon = row:CreateTexture(nil, "ARTWORK")
-	row.icon:SetSize(ROW - 8, ROW - 8)
+	row.icon:SetSize(ICON, ICON)
 	row.icon:SetPoint("LEFT", 4, 0)
+	-- The Cooldown Manager's icon dressing, as the other addons use it: its
+	-- rounded mask and border ring over the uncropped picture. A plain dark
+	-- square edge stands in on a client without those atlases.
+	if HasAtlas("UI-HUD-CoolDownManager-Mask") and HasAtlas("UI-HUD-CoolDownManager-IconOverlay") then
+		local mask = row:CreateMaskTexture()
+		mask:SetAtlas("UI-HUD-CoolDownManager-Mask")
+		mask:SetAllPoints(row.icon)
+		row.icon:AddMaskTexture(mask)
+		row.coords = { 0, 1, 0, 1 }
+		-- A black fill under the picture: a creature portrait comes as a
+		-- circle, and its corners show this instead of the window.
+		local fill = row:CreateTexture(nil, "BORDER")
+		fill:SetColorTexture(0, 0, 0, 1)
+		fill:SetAllPoints(row.icon)
+		fill:AddMaskTexture(mask)
+		local ring = row:CreateTexture(nil, "OVERLAY")
+		ring:SetAtlas("UI-HUD-CoolDownManager-IconOverlay")
+		ring:SetPoint("TOPLEFT", row.icon, "TOPLEFT", -RING_X, RING_Y)
+		ring:SetPoint("BOTTOMRIGHT", row.icon, "BOTTOMRIGHT", RING_X, -RING_Y)
+	else
+		row.coords = { 0.08, 0.92, 0.08, 0.92 }
+		row.icon:SetTexCoord(unpack(row.coords))
+		local edge = row:CreateTexture(nil, "BORDER")
+		edge:SetColorTexture(0, 0, 0, 1)
+		edge:SetPoint("TOPLEFT", row.icon, "TOPLEFT", -1, 1)
+		edge:SetPoint("BOTTOMRIGHT", row.icon, "BOTTOMRIGHT", 1, -1)
+	end
 	row.name = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 	row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 8, -1)
 	row.name:SetPoint("RIGHT", -6, 0)
@@ -230,20 +451,167 @@ local function MakeRow(i)
 	row.sub:SetPoint("RIGHT", -6, 0)
 	row.sub:SetJustifyH("LEFT")
 	row.sub:SetWordWrap(false)
-	row:SetScript("OnEnter", function() Choose(offset + i) end)
+	row:SetScript("OnEnter", function(self)
+		Choose(offset + i)
+	end)
 	row:SetScript("OnClick", function(self)
 		if IsShiftKeyDown() then
 			LinkInChat(self.find)
+		elseif self.find and self.find.kind == "zone" then
+			-- A zone's row searches that zone.
+			SearchFor(ns.InWord(self.find.name))
 		end
 		box:SetFocus()
 	end)
 	return row
 end
 
+-- Apply sets or lifts one filter in the text, as a button does, and searches.
+local function Apply(which, value)
+	local text = ns.SetFilter(box:GetText(), which, value)
+	box:SetText(text)
+	box:SetCursorPosition(#text)
+	Search()
+	startAt = 0
+	box:SetFocus()
+end
+
+-- Chip is a button of the filter row; SetActive lights it.
+local function Chip(parent, label, onClick, colour)
+	local chip = CreateFrame("Button", nil, parent, "BackdropTemplate")
+	chip:SetBackdrop(BACKDROP)
+	chip:SetHeight(22)
+	chip.text = chip:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	chip.text:SetPoint("CENTER")
+	chip.text:SetText(label)
+	if colour then
+		chip.text:SetTextColor(colour[1], colour[2], colour[3])
+	end
+	chip:SetWidth(chip.text:GetStringWidth() + 18)
+	function chip:SetActive(on)
+		self.active = on
+		self:SetBackdropColor(on and 0.25 or 0.1, on and 0.45 or 0.1, on and 0.8 or 0.12, on and 0.9 or 0.8)
+		self:SetBackdropBorderColor(on and 0.5 or 0.35, on and 0.7 or 0.35, on and 1 or 0.4, 0.9)
+	end
+	chip:SetActive(false)
+	chip:SetScript("OnClick", function(self) onClick(self) end)
+	return chip
+end
+
+local function MakeChips()
+	local row = Panel(nil, bar)
+	row:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -4)
+	row:SetSize(WIDTH + 6 + PREVIEW_WIDTH, CHIPS_HEIGHT) -- spans both columns, like the bar
+	row.kinds, row.qualities = {}, {}
+	local x = 6
+	local function Place(chip, gap)
+		chip:SetPoint("LEFT", row, "LEFT", x, 0)
+		x = x + chip:GetWidth() + (gap or 3)
+	end
+	for i, k in ipairs(KIND_CHIPS) do
+		local chip = Chip(row, k[2], function() Apply("kind", k[1]) end)
+		chip.value = k[1]
+		row.kinds[#row.kinds + 1] = chip
+		Place(chip, i == #KIND_CHIPS and 10 or 3)
+	end
+	for i, q in ipairs(QUALITY_CHIPS) do
+		local c = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q[1]]
+		local chip = Chip(row, "", function(self)
+			Apply("q", not self.active and q[2] or nil)
+		end)
+		chip:SetWidth(24)
+		chip.swatch = chip:CreateTexture(nil, "ARTWORK")
+		chip.swatch:SetSize(10, 10)
+		chip.swatch:SetPoint("CENTER")
+		chip.swatch:SetColorTexture(c and c.r or 1, c and c.g or 1, c and c.b or 1)
+		chip.value = q[1]
+		chip:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+			GameTooltip:SetText(q[2] .. " or better")
+			GameTooltip:Show()
+		end)
+		chip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		row.qualities[#row.qualities + 1] = chip
+		Place(chip, i == #QUALITY_CHIPS and 10 or 3)
+	end
+	row.near = Chip(row, "Near me", function(self)
+		local level = UnitLevel("player") or 1
+		Apply("lvl", not self.active and ("%d-%d"):format(math.max(1, level - 3), level + 3) or nil)
+	end)
+	Place(row.near)
+	row.here = Chip(row, "Here", function(self)
+		Apply("in", not self.active and ns.InWord(GetRealZoneText() or "") or nil)
+	end)
+	Place(row.here)
+	return row
+end
+
+-- One block of the preview: a SimpleHTML, as its names are links (a click
+-- shows that thing, Shift-click an item links it in chat, hovering an item
+-- shows it), and a right-aligned string for a list entry's number.
+local function OnLinkClick(_, link)
+	local kind, id = string.match(link, "^fsearch:(%a+):(%d+)$")
+	local query = string.match(link, "^fsearch:find:(.+)$")
+	if link == "fsearch:back" then
+		Back()
+	elseif query then
+		SearchFor((string.gsub(query, ",", " ")))
+	elseif kind then
+		id = tonumber(id)
+		if IsShiftKeyDown() and kind == "item" then
+			LinkInChat({ kind = kind, id = id })
+		else
+			Follow(kind, id)
+		end
+	end
+	box:SetFocus()
+end
+
+local function OnLinkEnter(self, link)
+	local id = string.match(link, "^fsearch:item:(%d+)$")
+	if id then
+		GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+		GameTooltip:SetItemByID(tonumber(id))
+		GameTooltip:Show()
+	end
+end
+
+local function OnBackButton(_, button)
+	if button == "Button4" then
+		Back()
+	end
+end
+
+function Block(i)
+	if blocks[i] then
+		return blocks[i]
+	end
+	local block = CreateFrame("Frame", nil, preview.content)
+	block:SetWidth(PREVIEW_WIDTH - 44)
+	block.html = CreateFrame("SimpleHTML", nil, block)
+	block.html:SetPoint("TOPLEFT")
+	block.html:SetFontObject("p", GameFontHighlightSmall)
+	block.html:SetJustifyH("p", "LEFT") -- the font object centres
+	block.html:SetSpacing("p", 2)
+	block.html:SetHyperlinksEnabled(true)
+	block.html:SetScript("OnHyperlinkClick", OnLinkClick)
+	block.html:SetScript("OnHyperlinkEnter", OnLinkEnter)
+	block.html:SetScript("OnHyperlinkLeave", function() GameTooltip:Hide() end)
+	block.html:SetScript("OnMouseUp", OnBackButton)
+	block.right = block:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	block.right:SetPoint("TOPRIGHT")
+	block.right:SetWidth(RIGHT_WIDTH)
+	block.right:SetJustifyH("RIGHT")
+	blocks[i] = block
+	return block
+end
+
 local function MakeBar()
 	bar = Panel("ForeverSearchBar", UIParent)
-	bar:SetSize(WIDTH, BAR_HEIGHT)
-	bar:SetPoint("TOP", UIParent, "TOP", -(PREVIEW_WIDTH + 6) / 2, -140)
+	-- The bar and the filter buttons span both columns; under them the finds
+	-- on the left, the page on the right.
+	bar:SetSize(WIDTH + 6 + PREVIEW_WIDTH, BAR_HEIGHT)
+	bar:SetPoint("TOP", UIParent, "TOP", 0, -140)
 	bar:SetFrameStrata("DIALOG")
 	bar:SetToplevel(true)
 	bar:EnableMouse(true)
@@ -287,9 +655,22 @@ local function MakeBar()
 		end
 	end)
 	box:SetScript("OnEscapePressed", Close)
+	-- Tab steps through the kinds (All, Items, Creatures, ...), Shift-Tab back.
+	box:SetScript("OnTabPressed", function()
+		local _, kinds = ns.Parse(box:GetText())
+		local now = 1
+		for i, k in ipairs(KIND_CHIPS) do
+			if k[1] == (kinds and kinds[1]) then
+				now = i
+			end
+		end
+		local step = IsShiftKeyDown() and -1 or 1
+		Apply("kind", KIND_CHIPS[(now - 1 + step) % #KIND_CHIPS + 1][1])
+	end)
 
+	chips = MakeChips()
 	list = Panel(nil, bar)
-	list:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -4)
+	list:SetPoint("TOPLEFT", chips, "BOTTOMLEFT", 0, -4)
 	list:SetWidth(WIDTH)
 	list:EnableMouseWheel(true)
 	list:SetScript("OnMouseWheel", function(_, delta)
@@ -308,21 +689,21 @@ local function MakeBar()
 	end
 
 	preview = Panel(nil, bar)
-	preview:SetPoint("TOPLEFT", bar, "TOPRIGHT", 6, 0)
-	preview:SetSize(PREVIEW_WIDTH, BAR_HEIGHT + 4 + ROWS * ROW + 12)
+	preview:SetPoint("TOPRIGHT", chips, "BOTTOMRIGHT", 0, -4)
+	preview:SetSize(PREVIEW_WIDTH, ROWS * ROW + 12 + FILTER_LINE)
 	preview:EnableMouse(true)
 	preview.scroll = CreateFrame("ScrollFrame", nil, preview, "UIPanelScrollFrameTemplate")
 	preview.scroll:SetPoint("TOPLEFT", 12, -12)
 	preview.scroll:SetPoint("BOTTOMRIGHT", -30, 12)
-	preview.child = CreateFrame("Frame", nil, preview.scroll)
-	preview.child:SetSize(PREVIEW_WIDTH - 44, 1)
-	preview.scroll:SetScrollChild(preview.child)
-	preview.text = preview.child:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-	preview.text:SetPoint("TOPLEFT")
-	preview.text:SetWidth(PREVIEW_WIDTH - 44)
-	preview.text:SetJustifyH("LEFT")
-	preview.text:SetJustifyV("TOP")
-	preview.text:SetSpacing(2)
+	preview.content = CreateFrame("Frame", nil, preview.scroll)
+	preview.content:SetSize(PREVIEW_WIDTH - 44, 1)
+	preview.scroll:SetScrollChild(preview.content)
+	preview:SetScript("OnMouseUp", function(_, button)
+		if button == "Button4" then
+			Back()
+		end
+		box:SetFocus()
+	end)
 	preview:Hide()
 
 	bar:SetScript("OnShow", function()
@@ -344,6 +725,7 @@ local function MakeBar()
 		box:SetText(text)
 		Search()
 		startAt = 0 -- reopening: no need to wait
+		bar:RegisterEvent("GLOBAL_MOUSE_DOWN")
 		box:SetFocus()
 		-- Typing replaces the words after the in:, not the in: itself.
 		box:SetCursorPosition(#text)
@@ -351,9 +733,23 @@ local function MakeBar()
 	end)
 	bar:SetScript("OnHide", function()
 		box:ClearFocus()
+		bar:UnregisterEvent("GLOBAL_MOUSE_DOWN")
 		job = nil
 		driver:Hide()
 	end)
+
+	-- A click outside the window gives the keyboard back to the game (Enter
+	-- opens chat), the bar staying open; a click on the window takes it again.
+	bar:SetScript("OnEvent", function()
+		if not (bar:IsMouseOver() or chips:IsMouseOver() or list:IsMouseOver() or preview:IsMouseOver()) then
+			box:ClearFocus()
+		end
+	end)
+	bar:SetScript("OnMouseDown", function() box:SetFocus() end)
+	for _, part in ipairs({ list, chips }) do
+		part:EnableMouse(true) -- a click between the rows or buttons stays here
+		part:SetScript("OnMouseDown", function() box:SetFocus() end)
+	end
 end
 
 local function Open(text)
@@ -387,10 +783,23 @@ end
 
 local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
-events:SetScript("OnEvent", function(self, _, name)
-	if name == ADDON then
+events:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+events:RegisterEvent("TOOLTIP_DATA_UPDATE")
+-- REDRAWS caps how often one page is drawn again for late tooltip data:
+-- drawing asks for the tooltip again, which may start a new lookup.
+local REDRAWS = 5
+events:SetScript("OnEvent", function(self, event, arg)
+	if event == "ADDON_LOADED" and arg == ADDON then
 		ForeverSearchDB = ForeverSearchDB or {}
 		self:UnregisterEvent("ADDON_LOADED")
+	elseif bar and bar:IsShown() and page and page.kind == "item" and (page.redraws or 0) < REDRAWS
+		and (event == "GET_ITEM_INFO_RECEIVED" and page.id == arg
+			or event == "TOOLTIP_DATA_UPDATE" and (arg == nil or arg == ns.tooltipData)) then
+		-- The item, or a part of its tooltip, came: the page again, where
+		-- it was scrolled to.
+		local redraws = (page.redraws or 0) + 1
+		ShowPage(page.kind, page.id, true)
+		page.redraws = redraws
 	end
 end)
 
