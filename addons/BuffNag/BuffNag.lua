@@ -65,7 +65,7 @@ local SEEDS = {
 	{ scope = "self", label = "Aura", auras = { 465, 7294, 19746, 19876, 19888, 19891, 20218 }, know = { 465, 7294 }, cast = { 465 } },
 	{ scope = "self", auras = { 25780 }, know = { 25780 }, cast = { 25780 }, default = false },
 	-- shaman
-	{ scope = "self", auras = { 324 }, know = { 324 }, cast = { 324 } },
+	{ scope = "self", auras = { 324, 408510 }, know = { 324, 408510 }, cast = { 324, 408510 } }, -- Lightning Shield, Water Shield (a talent in Forever)
 	-- warlock
 	{ scope = "self", label = "Demon Armor", auras = { 687, 706 }, know = { 687, 706 }, cast = { 706, 687 } },
 	-- warrior
