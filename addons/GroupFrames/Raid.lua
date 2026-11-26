@@ -103,6 +103,9 @@ local testCount -- its size
 ------------------------------------------------------------------------------
 
 local anchor = CreateFrame("Frame", "GroupFramesRaidAnchor", UIParent)
+-- LOW strata, under MEDIUM popups such as the totem flyout (fstack, user,
+-- 2026-11-26); set before any child, so the headers and buttons inherit it.
+anchor:SetFrameStrata("LOW")
 anchor:SetSize(5 * W + 4 * GAP, H)
 anchor:SetMovable(true)
 if ForeverSnap then ForeverSnap.Register(anchor) end -- snaps to the screen and our other frames
