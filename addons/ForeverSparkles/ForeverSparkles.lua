@@ -1,6 +1,7 @@
--- ForeverSparkles: a cluster of twinkling glints over the herb, ore vein or
--- quest object you are walking up to. Every kind has its own look, set on its
--- page under Options > AddOns > ForeverSparkles.
+-- ForeverSparkles: a cluster of twinkling glints over the herb, ore vein,
+-- quest object or lootable object (a chest) you are walking up to. Every
+-- kind has its own look, set on its page under Options > AddOns >
+-- ForeverSparkles.
 --
 -- How it finds things: the game's "interact key" targeting (soft targeting)
 -- picks the nearest thing you could interact with as the unit "softinteract"
@@ -23,8 +24,8 @@ local SQUASH = 0.7 -- the cluster is this much flatter than it is wide
 local FADE_IN = 0.3 -- seconds for a new sparkle to come up
 local RECHECK = 0.25 -- seconds between looks at the target, besides the events
 
-ns.ORDER = { "herb", "ore", "quest" }
-ns.TITLE = { herb = "Herbs", ore = "Ore veins", quest = "Quest objects" }
+ns.ORDER = { "herb", "ore", "quest", "loot" }
+ns.TITLE = { herb = "Herbs", ore = "Ore veins", quest = "Quest objects", loot = "Lootable objects" }
 
 ns.DEFAULTS = {
 	enabled = true,
@@ -44,14 +45,26 @@ ns.DEFAULTS = {
 -- height    from the nameplate to the middle of the cluster (pixels, up is positive)
 -- drift     pixels a second a glint floats up
 -- unusable  brightness left when the game shows its greyed-out cursor
+-- enabled   quest and lootable objects: on or off
+-- mode      herbs and ore: "auto" (only while you have the gathering
+--           profession of the kind), "on" or "off"
 -- Every kind starts out the same; its page is where it is made to differ.
-local function Look()
-	return {
-		enabled = true, color = "ffffdc5e", size = 34, spread = 46, count = 7,
+local function Look(switch)
+	local look = {
+		color = "ffffdc5e", size = 34, spread = 46, count = 7,
 		brightness = 1, speed = 1, life = 1, height = -40, drift = 10, unusable = 0.4,
 	}
+	for key, value in pairs(switch) do
+		look[key] = value
+	end
+	return look
 end
-ns.CATEGORY_DEFAULTS = { herb = Look(), ore = Look(), quest = Look() }
+ns.CATEGORY_DEFAULTS = {
+	herb = Look({ mode = "auto" }),
+	ore = Look({ mode = "auto" }),
+	quest = Look({ enabled = true }),
+	loot = Look({ enabled = true }),
+}
 
 -- Version 1 gave each kind a colour of its own, and herbs and ore a bigger
 -- look. What was never changed from those moves to the shared defaults.
@@ -127,12 +140,101 @@ local function Release(name)
 	end
 end
 
+------------------------------------------------------------------------------
+-- Gathering professions, for the herb and ore pages set to Automatic
+------------------------------------------------------------------------------
+
+-- Kind -> the profession's skill line (SkillLine table) and its English name.
+local PROFESSION = {
+	herb = { id = 182, name = "herbalism" },
+	ore = { id = 186, name = "mining" },
+}
+
+local function SkillLineMatches(line, profession)
+	if type(line) ~= "table" or line.isHeader or IsSecret(line.skillID) or IsSecret(line.name) then
+		return false
+	end
+	return line.skillID == profession.id or line.parentSkillLineID == profession.id
+		or (type(line.name) == "string" and line.name:lower() == profession.name)
+end
+
+-- Whether the character has the profession; nil when the client does not say.
+local function HasProfession(profession)
+	local info = C_SkillInfo
+	if info and info.GetNumSkillLines and info.GetSkillLineInfo then
+		if info.GetSkillLineInfoByID and SkillLineMatches(Safe(info.GetSkillLineInfoByID, profession.id), profession) then
+			return true
+		end
+		local count = Safe(info.GetNumSkillLines)
+		if type(count) ~= "number" then
+			return nil
+		end
+		for i = 1, count do
+			if SkillLineMatches(Safe(info.GetSkillLineInfo, i), profession) then
+				return true
+			end
+		end
+		return false
+	end
+	if GetNumSkillLines and GetSkillLineInfo then
+		local count = Safe(GetNumSkillLines)
+		if type(count) ~= "number" then
+			return nil
+		end
+		for i = 1, count do
+			local ok, name, isHeader = pcall(GetSkillLineInfo, i)
+			if ok and not isHeader and type(name) == "string" and not IsSecret(name) and name:lower() == profession.name then
+				return true
+			end
+		end
+		return false
+	end
+	return nil
+end
+
+-- Kind -> true/false/nil, read again when the skill lines change. Not in
+-- combat: weapon skill-ups change the skill lines mid-fight, and nothing
+-- there needs the answer; it is read once the fight is over.
+local known = {}
+local professionsStale = true
+
+-- Reads the professions when they may have changed and combat allows it.
+-- -> whether an answer changed
+local function ReadProfessions()
+	if not professionsStale or InCombatLockdown() then
+		return false
+	end
+	professionsStale = false
+	local changed = false
+	for kind, profession in pairs(PROFESSION) do
+		local has = HasProfession(profession)
+		if has ~= known[kind] then
+			known[kind], changed = has, true
+		end
+	end
+	return changed
+end
+
+-- Whether a kind sparkles. Automatic stays on when the client cannot tell
+-- which professions you have, rather than going dark without a word.
+local function KindOn(kind)
+	local look = db.categories[kind]
+	if look.mode == nil then
+		return look.enabled == true
+	end
+	if look.mode == "auto" then
+		return known[kind] ~= false
+	end
+	return look.mode == "on"
+end
+ns.KindOn = KindOn
+
 local function Active()
 	if not db.enabled then
 		return false
 	end
 	for _, category in ipairs(ns.ORDER) do
-		if db.categories[category].enabled then
+		if KindOn(category) then
 			return true
 		end
 	end
@@ -152,6 +254,26 @@ local CURSOR_KIND = {
 	campaignquest = "quest",
 	legendaryquest = "quest",
 	important = "quest",
+	-- The loot cursor: LootAll and Pickup are the client's cursor names,
+	-- Pick the Classic file. Not seen on an object in Forever: chests and
+	-- barrels show the interact cursor (2026-11-26). A locked chest (Lock,
+	-- PickLock) does not count.
+	lootall = "loot",
+	pickup = "loot",
+	pick = "loot",
+	-- Doors, chairs, chests and barrels alike: all of them sparkle, except
+	-- what NOT_LOOT names.
+	interact = "interact",
+}
+
+-- Objects with the interact cursor that hold no loot. Each entry is a word
+-- or phrase in lower case that the object's name (as /fsparkles shows it)
+-- holds as whole words: "chair" catches Wooden Chair and High Back Chair,
+-- not Chairman's Chest. Grown from what is seen sparkling in game.
+local NOT_LOOT = {
+	"chair", -- 17 names in ForeverData, none with loot (2026-11-26)
+	"bench", -- 6 names (Stone Bench, Subway Bench ...), none with loot
+	"stool", -- 2 names (Mechanic Stool, Night Elf Stool), none with loot
 }
 local CURSOR_FOLDERS = { "Interface\\Cursor\\", "Interface\\Cursor\\Crosshair\\" }
 
@@ -224,6 +346,23 @@ local function CursorKind(unit)
 	return nil, nil, file
 end
 
+-- Whether an interact object is on the list of those that hold no loot. A
+-- name the game does not give leaves it sparkling.
+local function NotLoot(unit)
+	local name = Safe(UnitName, unit)
+	if type(name) ~= "string" then
+		return false
+	end
+	local words = " " .. name:lower():gsub("[^%a']+", " ") .. " "
+	for _, phrase in ipairs(NOT_LOOT) do
+		if words:find(" " .. phrase .. " ", 1, true) then
+			return true
+		end
+	end
+	return false
+end
+ns.NOT_LOOT = NOT_LOOT
+
 -- category, usable; nil when the unit is nothing that sparkles.
 local function Classify(unit)
 	if Safe(UnitIsGameObject, unit) == true then
@@ -233,6 +372,9 @@ local function Classify(unit)
 		end
 		if kind == "quest" or Safe(C_QuestLog and C_QuestLog.UnitIsRelatedToActiveQuest, unit) == true then
 			return "quest", usable ~= false
+		end
+		if kind == "loot" or (kind == "interact" and not NotLoot(unit)) then
+			return "loot", usable
 		end
 		return nil
 	end
@@ -417,8 +559,7 @@ local function Evaluate()
 		return
 	end
 	local category, usable = Target()
-	local look = category and db.categories[category]
-	if not (look and look.enabled) then
+	if not (category and KindOn(category)) then
 		Take(GATE, 0)
 		Detach()
 		return
@@ -496,6 +637,14 @@ local function Status()
 			tostring(cursor),
 			category and (ns.TITLE[category] .. (usable and "" or " (greyed out)")) or "nothing that sparkles",
 			FindPlate() and "found" or "not there"))
+		if category then
+			local look = db.categories[category]
+			local why = look.mode == "auto"
+				and (", Automatic: %s %s"):format(PROFESSION[category].name, tostring(known[category]))
+				or ""
+			Print(("%s: %s (setting %s%s)."):format(ns.TITLE[category], KindOn(category) and "sparkles" or "off",
+				tostring(look.mode or look.enabled), why))
+		end
 	end
 	local names = { "SoftTargetInteract", "SoftTargetIconGameObject", "SoftTargetInteractRange", "SoftTargetInteractArc",
 		GATE, LOOT_EFFECT, OUTLINE[1] }
@@ -560,6 +709,9 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		-- only has the unit plate (name, empty health bar, level) to hang
 		-- the sparkle on, and the game's own loot sparkle is left for them.
 		db.categories.corpse = nil
+		-- Skinnable corpses were tried and dropped for the same reason: the
+		-- name and interact icon over a corpse are no plate addons can reach.
+		db.categories.skin = nil
 		for category, defaults in pairs(ns.CATEGORY_DEFAULTS) do
 			db.categories[category] = db.categories[category] or {}
 			Fill(db.categories[category], defaults)
@@ -573,7 +725,18 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 				end
 			end
 		end
-		db.version = 2
+		-- Version 3 turned the herb and ore checkboxes into Automatic /
+		-- Enabled / Disabled: ticked (as they came) becomes Automatic.
+		if (db.version or 1) < 3 then
+			for kind in pairs(PROFESSION) do
+				local look = db.categories[kind]
+				look.mode = look.enabled == false and "off" or "auto"
+			end
+		end
+		for kind in pairs(PROFESSION) do
+			db.categories[kind].enabled = nil
+		end
+		db.version = 3
 		SLASH_FOREVERSPARKLES1 = "/fsparkles"
 		SlashCmdList.FOREVERSPARKLES = Command
 		local ok, err = pcall(ns.RegisterSettings)
@@ -587,6 +750,7 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		self:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 		self:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 		self:RegisterEvent("CVAR_UPDATE")
+		self:RegisterEvent("SKILL_LINES_CHANGED")
 		-- Events can be missed (the cursor of a node changes when a skill
 		-- goes up, for one), so the target is looked at again now and then.
 		self:SetScript("OnUpdate", function(_, elapsed)
@@ -598,12 +762,25 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 		end)
 	elseif event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
 		-- Twice: settings kept on the server can arrive after login.
+		professionsStale = true
+		ReadProfessions()
 		Sync()
+	elseif event == "SKILL_LINES_CHANGED" then
+		-- Mostly a skill going up; only a profession learned or dropped
+		-- changes anything here.
+		professionsStale = true
+		if ReadProfessions() then
+			Sync()
+		end
 	elseif event == "PLAYER_REGEN_ENABLED" then
 		for name, value in pairs(pending) do
 			SetCVarValue(name, value)
 		end
-		Evaluate()
+		if ReadProfessions() then
+			Sync()
+		else
+			Evaluate()
+		end
 	elseif event == "NAME_PLATE_UNIT_REMOVED" then
 		if sparkle.plate and Safe(C_NamePlate.GetNamePlateForUnit, arg1) == sparkle.plate then
 			Detach()

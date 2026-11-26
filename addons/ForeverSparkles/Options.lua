@@ -10,6 +10,14 @@ local _, ns = ...
 -- button, beside the sliders.
 local PREVIEW_X, PREVIEW_Y = -95, -135
 
+-- The profession a kind's Automatic setting looks for.
+local PROFESSION_NAME = { herb = "Herbalism", ore = "Mining" }
+
+local TOOLTIP = {
+	loot = "Chests, barrels and the like. To the game they are no different from doors and chairs, "
+		.. "so everything you can use sparkles here except what the addon's list of objects without loot names.",
+}
+
 -- The sparkle of the page that is open, drawn in the options window itself.
 -- The addon's own frame, a child of the window so it shows and hides with
 -- it; it only asks the window which page is open.
@@ -111,7 +119,18 @@ function ns.RegisterSettings()
 		kindOfPage[page] = kind
 		local function id(key) return kind .. "_" .. key end
 
-		Checkbox(page, id("enabled"), "Sparkle", nil, look, "enabled", defaults.enabled, ns.Sync)
+		if defaults.mode then
+			local profession = PROFESSION_NAME[kind]
+			Settings.CreateDropdown(page, Proxy(page, id("mode"), Settings.VarType.String, "Sparkle", look, "mode", defaults.mode, ns.Sync), function()
+				local container = Settings.CreateControlTextContainer()
+				container:Add("auto", "Automatic")
+				container:Add("on", "Enabled")
+				container:Add("off", "Disabled")
+				return container:GetData()
+			end, ("Automatic sparkles only while you have %s."):format(profession))
+		else
+			Checkbox(page, id("enabled"), "Sparkle", TOOLTIP[kind], look, "enabled", defaults.enabled, ns.Sync)
+		end
 		if Settings.CreateColorSwatch then
 			Settings.CreateColorSwatch(page, Proxy(page, id("color"), Settings.VarType.String, "Colour", look, "color", defaults.color))
 		end

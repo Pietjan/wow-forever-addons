@@ -44,13 +44,14 @@ no-unpushed:
 audit:
 	@python3 -I scripts/check-lua.py
 
-## test: run the offline Lua tests (ForeverData's API, ForeverSearch's data side and its window, on real data; ForeverRecorder on a stand-in game)
+## test: run the offline Lua tests (ForeverData's API, ForeverSearch's data side and its window, on real data; ForeverRecorder and ForeverSparkles on a stand-in game)
 .PHONY: test
 test:
 	@lua5.1 scripts/foreverdata-test.lua real
 	@lua5.1 scripts/foreversearch-test.lua
 	@lua5.1 scripts/foreversearch-window-test.lua
 	@lua5.1 scripts/foreverrecorder-test.lua
+	@lua5.1 scripts/foreversparkles-test.lua
 
 # ==================================================================================== #
 # DEVELOPMENT

@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: ForeverSparkles
-## Notes: A sparkle over herbs, ore veins and quest objects as you come near, each kind with its own size, spread, number of glints, brightness, colour and pace. Can also keep the game's own loot sparkle on. /fsparkles
+## Notes: A sparkle over herbs, ore veins, quest objects and lootable objects such as chests as you come near, each kind with its own size, spread, number of glints, brightness, colour and pace. Can also keep the game's own loot sparkle on. /fsparkles
 ## Author: Pietjan
 ## Version: 1.3
 ## Dependencies: Blizzard_NamePlates
