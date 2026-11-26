@@ -18,7 +18,8 @@
 -- - the role icon centred on the edge's top-left corner, the first name (5
 --   letters) along the top edge, dispel-type icons at its right end;
 -- - dots at the bar's bottom right for your Renew and anyone's Power Word:
---   Shield and Fear Ward, and at the bottom left for a Weakened Soul you applied (Look of
+--   Shield and Fear Ward, and at the bottom left for a Weakened Soul you applied, or
+--   for a shaman one per element of your totems whose buff the member has (Look of
 --   the auras: the game's own aura containers, see Auras below);
 -- - "Dead" or "Offline" on the bar; a gold edge on your target;
 -- - out of range: faded. UnitInRange is secret; SetAlphaFromBoolean takes it.
@@ -159,6 +160,38 @@ local SHIELD = { 17, 592, 600, 3747, 6065, 6066, 10898, 10899, 10900, 10901, 116
 -- (SkillLineAbility, Holy, every race); 459699 is taught by no skill line.
 local FEAR_WARD = { 6346, 459699 }
 
+-- A shaman's totems, by element, as the buff each puts on group members:
+-- the totem's own aura spell (party/raid area aura, SpellEffect Effect 35
+-- or 65), found by name beside the "... Totem" summon spells of the shaman
+-- skill lines 373-375; the element is the summon's ImplicitTarget (41
+-- earth, 44 fire, 42 water, 43 air). Client tables 1.60.1.71139. Totems
+-- without such an aura (Searing, Magma, Stoneclaw, Earthbind, Tremor, the
+-- cleansing totems) light nothing. Order as the shaman's totem bar.
+local TOTEMS = {
+	{ key = "earth", spells = {
+		8076, 8162, 8163, 10441, 25362, -- Strength of Earth
+		8072, 8156, 8157, 10403, 10404, 10405, -- Stoneskin
+	} },
+	{ key = "fire", spells = {
+		8182, 10476, 10477, -- Frost Resistance
+		8230, 8250, 10521, 15036, -- Flametongue
+	} },
+	{ key = "water", spells = {
+		5677, 10491, 10493, 10494, 24853, -- Mana Spring
+		5672, 6371, 6372, 10460, 10461, -- Healing Stream
+		16191, 17355, 17360, 1325257, -- Mana Tide
+		8185, 10534, 10535, -- Fire Resistance
+	} },
+	{ key = "air", spells = {
+		8836, 10626, 25360, -- Grace of Air
+		8515, 10609, 10612, -- Windfury
+		15108, 15109, 15110, -- Windwall
+		10596, 10598, 10599, -- Nature Resistance
+		25909, -- Tranquil Air
+		8178, -- Grounding
+	} },
+}
+
 local OVER_ABSORB_ALPHA = 0.5 -- the over-shield glow at half strength (user: a bit too much)
 
 local COLOURS = {
@@ -171,6 +204,14 @@ local COLOURS = {
 	fearWard = { 1, 0.5, 0.12 }, -- orange, as its icon
 	weakened = { 0.88, 0.16, 0.16 },
 	forbearance = { 0.68, 0.3, 0.95 }, -- purple (user, 2026-11-23)
+	-- Totem elements as the game's totem bar colours its slot borders
+	-- (Interface\Buttons\UI-TotemBar, file 310727, 1.60.1.71139): the most
+	-- vivid quarter of each SLOT_OVERLAY_TCOORDS ring, averaged (user asked
+	-- for the game's colours, 2026-11-26).
+	earth = { 0.29, 0.55, 0.16 },
+	fire = { 0.71, 0.28, 0.13 },
+	water = { 0.22, 0.57, 0.71 },
+	air = { 0.51, 0.22, 0.90 },
 	gone = { 0.35, 0.35, 0.35 },
 }
 
@@ -428,6 +469,26 @@ local function CreateAuras(btn)
 			candidateFilters = { includeSpellIDs = Set(SHIELD) },
 			layout = DotLayout(),
 		})
+	end
+
+	if class == "SHAMAN" then
+		-- Your totems: a dot per element at the bottom left, each in its own
+		-- place (a slot, not a flowing group) so a gap says which element
+		-- is missing. "PLAYER" for yours only; that a totem's aura counts as
+		-- cast by you is not yet seen in game.
+		auras.totems = Container(btn.body, level)
+		for i, element in ipairs(TOTEMS) do
+			local x = DOT_X + (i - 1) * (DOT + DOT_GAP)
+			local paint = Dot(COLOURS[element.key])
+			auras.totems:AddAuraSlot("Totem" .. element.key, "HELPFUL|PLAYER", {
+				initializeFrame = function(button)
+					paint(button)
+					button:ClearAllPoints()
+					button:SetPoint("BOTTOMLEFT", btn.bar, "BOTTOMLEFT", x, DOT_Y)
+				end,
+				candidateFilters = { includeSpellIDs = Set(element.spells) },
+			})
+		end
 	end
 
 	-- The big defensive: one icon in the middle of the bar, on top of
@@ -1409,8 +1470,8 @@ ns.PARTY_DEFAULTS = DEFAULTS
 ------------------------------------------------------------------------------
 
 local PREVIEW = {
-	{ name = "Decayla", class = "PRIEST", role = "HEALER", health = 0.9, dots = { "shield", "renew" }, status = "ready" },
-	{ name = "Belle", class = "WARRIOR", role = "TANK", health = 0.62, dots = { "shield", "fearWard" }, weakened = true, target = true, big = 871, absorb = 0.18, aggro = 3 },
+	{ name = "Decayla", class = "PRIEST", role = "HEALER", health = 0.9, dots = { "shield", "renew" }, status = "ready", totems = { "earth", "water", "air" } },
+	{ name = "Belle", class = "WARRIOR", role = "TANK", health = 0.62, dots = { "shield", "fearWard" }, weakened = true, totems = { "earth", "fire", "water", "air" }, target = true, big = 871, absorb = 0.18, aggro = 3 },
 	{ name = "Fearonica", class = "WARLOCK", role = "DAMAGER", health = 0.35, dots = { "renew" }, dispel = { "Magic", "Curse" }, heals = { 0.2, 0.12 } },
 	{ name = "Arya", class = "HUNTER", role = "DAMAGER", health = 1, overAbsorb = true },
 	{ name = "Zulrin", class = "SHAMAN", role = "DAMAGER", health = 0, dead = true, status = "rez" },
@@ -1491,6 +1552,15 @@ function ns.PaintPreview(parent, data)
 	local mark = class == "PRIEST" and COLOURS.weakened or class == "PALADIN" and COLOURS.forbearance
 	if data.weakened and mark then
 		PaintedDot(frame, mark, DOT_X, DOT_Y, "BOTTOMLEFT")
+	end
+	if class == "SHAMAN" then
+		for i, element in ipairs(TOTEMS) do
+			for _, lit in ipairs(data.totems or {}) do
+				if lit == element.key then
+					PaintedDot(frame, COLOURS[lit], DOT_X + (i - 1) * (DOT + DOT_GAP), DOT_Y, "BOTTOMLEFT")
+				end
+			end
+		end
 	end
 	for i, dispelType in ipairs(data.dispel or {}) do
 		local icon = frame.top:CreateTexture(nil, "OVERLAY")
