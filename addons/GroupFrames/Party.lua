@@ -18,7 +18,7 @@
 -- - the role icon centred on the edge's top-left corner, the first name (5
 --   letters) along the top edge, dispel-type icons at its right end;
 -- - dots at the bar's bottom right for your Renew and anyone's Power Word:
---   Shield, and at the bottom left for a Weakened Soul you applied (Look of
+--   Shield and Fear Ward, and at the bottom left for a Weakened Soul you applied (Look of
 --   the auras: the game's own aura containers, see Auras below);
 -- - "Dead" or "Offline" on the bar; a gold edge on your target;
 -- - out of range: faded. UnitInRange is secret; SetAlphaFromBoolean takes it.
@@ -155,6 +155,9 @@ local RENEW = { 139, 890, 6074, 6075, 6076, 6077, 6078, 8362, 10927, 10928, 1092
 	1232734, 1236151, 1289450 }
 local SHIELD = { 17, 592, 600, 3747, 6065, 6066, 10898, 10899, 10900, 10901, 11647, 11835, 11974, 17139, 20697, 22187,
 	27607, 437930, 1226566, 1236154 }
+-- All "Fear Ward" (SpellName, 1.60.1.71139): 6346 is the priest spell
+-- (SkillLineAbility, Holy, every race); 459699 is taught by no skill line.
+local FEAR_WARD = { 6346, 459699 }
 
 local OVER_ABSORB_ALPHA = 0.5 -- the over-shield glow at half strength (user: a bit too much)
 
@@ -165,6 +168,7 @@ local COLOURS = {
 	absorb = { 0.55, 0.58, 1, 0.8 }, -- shields, after the heals: Blizzard's lavender blue (pale grey before, user)
 	renew = { 0.25, 0.88, 0.35 },
 	shield = { 1, 0.83, 0.29 },
+	fearWard = { 1, 0.5, 0.12 }, -- orange, as its icon
 	weakened = { 0.88, 0.16, 0.16 },
 	forbearance = { 0.68, 0.3, 0.95 }, -- purple (user, 2026-11-23)
 	gone = { 0.35, 0.35, 0.35 },
@@ -364,6 +368,14 @@ local function CreateAuras(btn)
 		maxFrameCount = 1,
 		initializeFrame = Dot(COLOURS.renew),
 		candidateFilters = { includeSpellIDs = Set(RENEW) },
+		layout = DotLayout(),
+	})
+	-- Anyone's Fear Ward, as anyone's shield: a helpful aura on a group
+	-- member may be picked by spell ID.
+	auras.dots:AddAuraGroup("FearWard", "HELPFUL", {
+		maxFrameCount = 1,
+		initializeFrame = Dot(COLOURS.fearWard),
+		candidateFilters = { includeSpellIDs = Set(FEAR_WARD) },
 		layout = DotLayout(),
 	})
 	auras.dots:SetPoint("BOTTOMRIGHT", btn.bar, "BOTTOMRIGHT", -DOT_X, DOT_Y)
@@ -1398,7 +1410,7 @@ ns.PARTY_DEFAULTS = DEFAULTS
 
 local PREVIEW = {
 	{ name = "Decayla", class = "PRIEST", role = "HEALER", health = 0.9, dots = { "shield", "renew" }, status = "ready" },
-	{ name = "Belle", class = "WARRIOR", role = "TANK", health = 0.62, dots = { "shield" }, weakened = true, target = true, big = 871, absorb = 0.18, aggro = 3 },
+	{ name = "Belle", class = "WARRIOR", role = "TANK", health = 0.62, dots = { "shield", "fearWard" }, weakened = true, target = true, big = 871, absorb = 0.18, aggro = 3 },
 	{ name = "Fearonica", class = "WARLOCK", role = "DAMAGER", health = 0.35, dots = { "renew" }, dispel = { "Magic", "Curse" }, heals = { 0.2, 0.12 } },
 	{ name = "Arya", class = "HUNTER", role = "DAMAGER", health = 1, overAbsorb = true },
 	{ name = "Zulrin", class = "SHAMAN", role = "DAMAGER", health = 0, dead = true, status = "rez" },
