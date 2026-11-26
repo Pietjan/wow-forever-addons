@@ -528,6 +528,17 @@ local function Fit(text, width)
 	return (ns.CutText(text, low))
 end
 
+-- The game's coin icons stand above the line in a page's SimpleHTML text
+-- (not in the lists' plain text): each is moved down COIN_DROP pixels.
+local COIN_DROP = 2
+local function LowerCoins(text)
+	return (string.gsub(text, "|T(Interface\\MoneyFrame\\UI%-%a+Icon)([^|]*)|t", function(path, args)
+		local h, w, x = string.match(args, "^:?(%-?%d*):?(%-?%d*):?(%-?%d*)")
+		h = h ~= "" and h or "0"
+		return ("|T%s:%s:%s:%s:%d|t"):format(path, h, w ~= "" and w or h, x ~= "" and x or "0", -COIN_DROP)
+	end))
+end
+
 function Render(lines, keepScroll)
 	-- A tooltip of something on the page (an item link under the mouse)
 	-- goes when another page comes: the mouse never leaves a link whose
@@ -558,7 +569,7 @@ function Render(lines, keepScroll)
 			text = Fit(text, width - 2)
 		end
 		block.html:SetWidth(width)
-		block.html:SetText(text)
+		block.html:SetText(LowerCoins(text))
 		local height = math.max(1, block.html:GetContentHeight())
 		block.html:SetHeight(height)
 		block.right:SetText(right or "")
@@ -723,6 +734,7 @@ local function DrawRows()
 				row.name:SetTextColor(QualityColour(find.quality))
 			end
 			row.sub:SetText(ns.Subtitle(find))
+			row.right:SetText(find.right or "")
 			row.selected:SetShown(offset + i == chosen)
 			row:Show()
 		else
@@ -893,9 +905,14 @@ local function MakeRow(i)
 		edge:SetPoint("TOPLEFT", row.icon, "TOPLEFT", -1, 1)
 		edge:SetPoint("BOTTOMRIGHT", row.icon, "BOTTOMRIGHT", 1, -1)
 	end
+	-- A find's chance of giving what was asked for (drops:silk-cloth), on
+	-- the right of its name.
+	row.right = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	row.right:SetPoint("TOPRIGHT", -8, -3)
+	row.right:SetJustifyH("RIGHT")
 	row.name = row:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 	row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 8, -1)
-	row.name:SetPoint("RIGHT", -6, 0)
+	row.name:SetPoint("RIGHT", row.right, "LEFT", -6, 0)
 	row.name:SetJustifyH("LEFT")
 	row.name:SetWordWrap(false)
 	row.sub = row:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")

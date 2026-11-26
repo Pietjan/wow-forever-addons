@@ -260,7 +260,7 @@ function UnitGUID() return "Player-1-00000001" end
 -- The addons ---------------------------------------------------------------------
 
 local data = {}
-for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched", "Levels", "Worth", "Recipes" }) do
+for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Levels", "Worth", "Recipes" }) do
 	assert(loadfile("addons/ForeverData/Data/" .. f .. ".lua"))("ForeverData", data)
 end
 assert(loadfile("addons/ForeverData/Core.lua"))("ForeverData", data)
@@ -326,6 +326,19 @@ local function LinkBlock(link)
 	end
 end
 
+-- A word that gives each find a chance shows it on the right of the find.
+Type("npc: drops:silk-cloth")
+Frames(200)
+check("a find's chance on its right", Find(function(w)
+	return w.kind == "FontString" and w:IsVisible() and type(w.text) == "string" and (w.text:find("^%d+%%$") or w.text == "<1%")
+		and w.parent and w.parent.find ~= nil
+end) ~= nil)
+Type("linen cloth")
+check("no chance for a plain search", Find(function(w)
+	return w.kind == "FontString" and w:IsVisible() and type(w.text) == "string" and w.text:find("^%d+%%$") ~= nil
+		and w.parent and w.parent.find ~= nil
+end) == nil)
+
 -- A search shows its finds and the first one's page.
 Type("linen cloth")
 check("search: the page of the first find", PageHas("Linen Cloth"), PageText():sub(1, 200))
@@ -367,7 +380,7 @@ end
 
 -- Prices on a page with the game's coin icons: Rough Arrow's vendors.
 Type("rough arrow")
-check("a vendor's price with coin icons", PageHas("10|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t"), PageText():sub(1, 300))
+check("a vendor's price with coin icons, lowered onto the line", PageHas("10|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:-2|t"), PageText():sub(1, 300))
 
 -- Reward tiles: Raptor Horns gives five Raptor Punch and a cloak, two to a
 -- row; Centaur Bracers lets choose one of three, and gives experience.

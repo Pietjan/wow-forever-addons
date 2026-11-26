@@ -615,6 +615,50 @@ local usedIn = cached(function(itemID)
 end)
 function FD.UsedIn(itemID) return usedIn(itemID) or EMPTY end
 
+-- How an item is made: rows {spell, name, skillLine, skill, reagents,
+-- patterns}: the recipe's spell and name, its profession, the skill it asks
+-- (nil unknown), reagents as {item, count} in the recipe's order, and the
+-- items that teach it (empty when only trainers do: FD.Trainers(spell)).
+-- Lowest skill first.
+local createdBy = cached(function(itemID)
+	local spells = ns.made and ns.made[itemID]
+	if not spells then
+		return nil
+	end
+	local rows = {}
+	for _, spell in ipairs(split(spells, ",")) do
+		spell = tonumber(spell)
+		local s = ns.recipes and ns.recipes[spell]
+		if s then
+			local f = split(s, "|")
+			local name = f[1]
+			if name == "" then
+				local it = item(itemID)
+				name = it and it.name or ""
+			end
+			local reagents, patterns = {}, {}
+			for _, reagent in ipairs(split(f[5] or "", ",")) do
+				local id, n = string.match(reagent, "^(%d+):(%d+)$")
+				if id then
+					reagents[#reagents + 1] = { item = tonumber(id), count = tonumber(n) }
+				end
+			end
+			for _, id in ipairs(split(f[6] or "", ",")) do
+				patterns[#patterns + 1] = tonumber(id)
+			end
+			rows[#rows + 1] = { spell = spell, name = name, skillLine = number(f[2]), skill = number(f[4]), reagents = reagents, patterns = patterns }
+		end
+	end
+	table.sort(rows, function(a, b)
+		if (a.skill or 0) ~= (b.skill or 0) then
+			return (a.skill or 0) < (b.skill or 0)
+		end
+		return a.spell < b.spell
+	end)
+	return rows
+end)
+function FD.CreatedBy(itemID) return createdBy(itemID) or EMPTY end
+
 -- Who sells an item: rows {npc, price, currency, stock, standing}. price
 -- in copper, or in currency when currency is set (3402 Merchant's Favor);
 -- stock nil for unlimited; standing the reputation asked (4 neutral .. 8
@@ -639,44 +683,12 @@ local SEARCHED = { "item", "npc", "object", "quest", "zone" }
 local SOURCE = { item = "items", npc = "npcs", object = "objects", quest = "quests", zone = "zones" }
 local index = {}
 
--- Names the client keeps for its own use, never meant to be seen: "[PH]
--- Hakkar'i Urn", "Doodad_BlackRockDoors01", "Webwood Creeper UNUSED",
--- "TEST WOLF", "zzOLDCodex of ...". Search leaves them out.
-local JUNK = {
-	"^%[", "^%(DNT%)", "%(OLD%)", "%(old%)", "^[Dd]oodad", "^G_", "^Monster %- ", "^zz", "^Not Used",
-	"UNUSED", "DEPRECATED", "REUSE", "PLACEHOLDER", "^TEST", "%f[%w]TEST%f[%W]", "GM can see",
-}
-local function junk(name)
-	for _, pattern in ipairs(JUNK) do
-		if string.find(name, pattern) then
-			return true
-		end
-	end
-	return false
-end
-
--- unsearchedSet is the set of a kind's IDs whose names search leaves out,
--- as the generator marked them (Data/Unsearched.lua); nil for data made
--- before it did, which junk() then checks name by name.
-local function unsearchedSet(kind)
-	local list = ns.unsearched and ns.unsearched[kind]
-	if not ns.unsearched then
-		return nil
-	end
-	local set = {}
-	for id in string.gmatch(list or "", "%d+") do
-		set[tonumber(id)] = true
-	end
-	return set
-end
-
 -- buildNames makes a kind's search list: {id, lower-case name, name, words
 -- in the name, lower-case title (creatures with one)}. With pause, it
 -- calls pause() every few hundred names, so a coroutine can spread the
 -- work over frames.
 local function buildNames(kind, pause)
 	local list = {}
-	local hidden = unsearchedSet(kind)
 	local n = 0
 	for id, s in pairs(ns[SOURCE[kind]] or EMPTY) do
 		n = n + 1
@@ -685,13 +697,10 @@ local function buildNames(kind, pause)
 		end
 		local bar = string.find(s, "|", 1, true)
 		local name = bar and string.sub(s, 1, bar - 1) or s
-		local skip
-		if hidden then
-			skip = hidden[id]
-		else
-			skip = junk(name)
-		end
-		if name ~= "" and not skip then
+		-- Names the client keeps for its own use ("[PH] Hakkar'i Urn",
+		-- "Hidden Belt (DNT)") are not in the data: the generator leaves
+		-- them out, and refuses data that holds one.
+		if name ~= "" then
 			local _, words = string.gsub(name, "%S+", "")
 			local title
 			if kind == "npc" and bar then

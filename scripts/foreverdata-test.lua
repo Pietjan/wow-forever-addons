@@ -37,8 +37,9 @@ local function fixture()
 		spawns = { n = { [2505] = "47:kokm;2257:" } },
 		vendors = { [4355] = "2399,1650,,1,6;256733,45,3402,," },
 		trainers = { [2385] = "2399,197,10,,50" },
-		recipes = { [10508] = "|165|8167|205|8167:12,2589:2", [10500] = "Scaly Thing|165|288924|180|8167:8", [10510] = "Enchant Turtle|333||205|8167:1", [10511] = "Aaa|333|||8167:3" },
+		recipes = { [10508] = "|165|8167|205|8167:12,2589:2", [10500] = "Scaly Thing|165|288924|180|8167:8", [10510] = "Enchant Turtle|333||205|8167:1", [10511] = "Aaa|333|||8167:3", [10512] = "|165|288824|150|2589:4,8167:1|5,6" },
 		uses = { [8167] = "10508,10510,10500,10511", [2589] = "10508" },
+		made = { [288824] = "10500,10512" },
 	}
 	load({ "Core.lua" }, ns)
 	return ForeverData
@@ -70,6 +71,12 @@ check("used in: a name of its own", used[2].name == "Scaly Thing" and used[2].it
 check("used in: the made item's name", used[4].name == "Turtle Scale" and used[4].item == 8167 and used[4].count == 12)
 check("used in: an enchantment makes none", used[3].item == nil and used[3].name == "Enchant Turtle" and used[3].skillLine == 333)
 check("used in: another reagent of it, none", FD.UsedIn(2589)[1].count == 2 and #FD.UsedIn(1) == 0)
+local made = FD.CreatedBy(288824)
+check("created by: lowest skill first, the item's name for a nameless recipe", #made == 2 and made[1].spell == 10512 and made[1].skill == 150
+	and made[1].name == "Arcanist Leggings" and made[2].name == "Scaly Thing" and made[2].skillLine == 165, made[1] and made[1].name)
+check("created by: reagents in order, patterns", made[1].reagents[1].item == 2589 and made[1].reagents[1].count == 4 and made[1].reagents[2].item == 8167
+	and #made[1].patterns == 2 and made[1].patterns[2] == 6 and #made[2].patterns == 0)
+check("created by: nothing", #FD.CreatedBy(8167) == 0)
 local drops = FD.Drops(8167)
 check("drops", #drops == 2 and drops[1].kind == "npc" and drops[1].id == 2505 and drops[2].chance == 0.679)
 check("drops amounts", drops[1].high == nil and drops[2].low == 1 and drops[2].high == 2 and FD.Drops(2770)[1].high == 3)
@@ -200,7 +207,7 @@ check("instances: a dungeon, a zone; no raid, none open yet", FD.Zone(2677) == n
 do
 	-- World drops: an item given everywhere, rarely, is no zone's loot.
 	local data = {}
-	for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched", "Levels", "Worth", "Recipes" }) do
+	for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Levels", "Worth", "Recipes" }) do
 		assert(loadfile("addons/ForeverData/Data/" .. f .. ".lua"))("ForeverData", data)
 	end
 	assert(loadfile("addons/ForeverData/Core.lua"))("ForeverData", data)

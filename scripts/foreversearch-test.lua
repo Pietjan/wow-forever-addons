@@ -10,7 +10,7 @@ local function check(name, ok, detail)
 end
 
 local data = {}
-for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Unsearched", "Levels", "Worth", "Recipes" }) do
+for _, f in ipairs({ "Meta", "Items", "Npcs", "Objects", "Quests", "Zones", "Loot", "Spawns", "Vendors", "Trainers", "Levels", "Worth", "Recipes" }) do
 	assert(loadfile("addons/ForeverData/Data/" .. f .. ".lua"))("ForeverData", data)
 end
 assert(loadfile("addons/ForeverData/Core.lua"))("ForeverData", data)
@@ -114,12 +114,15 @@ check("triggers are not shipped", (function()
 end)())
 
 lines = ns.Details("npc", 2505)
-check("npc: level and neutral", has(lines, "level 49-50") and has(lines, "neutral"), lines[1])
+check("npc: level, no reaction in words (the crest shows it)", has(lines, "level 49-50") and not has(lines, "neutral"), joined(lines))
 check("npc: where", has(lines, "Where: The Hinterlands ("), joined(lines))
 check("npc: gives, by way of getting", has(lines, "Drops (") and has(lines, "Skinning (") and has(lines, "Turtle Scale 1-2 | "))
 
 lines = ns.Details("npc", 54)
-check("a vendor: by side", has(lines, "<Weaponsmith>") and has(lines, "friendly to Alliance, hostile to Horde"), lines[1])
+check("a vendor: no sides in words", not has(lines, "friendly") and not has(lines, "hostile"), joined(lines))
+check("the title on its own line, first, no brackets", lines[1] == "Weaponsmith" and not has(lines, "<"), joined(lines))
+check("the title in a list entry, no brackets", ns.Subtitle({ kind = "npc", id = 54, ids = { 54 } }):find(" · Weaponsmith · ", 1, true) ~= nil
+	and not ns.Subtitle({ kind = "npc", id = 54, ids = { 54 } }):find("<", 1, true), ns.Subtitle({ kind = "npc", id = 54, ids = { 54 } }))
 
 lines = ns.Details("object", 1731)
 check("object: where and contains", has(lines, "Where:") and has(lines, "Contains (") and has(lines, "Copper Ore | "), joined(lines))
@@ -442,6 +445,29 @@ do
 	for _, r in ipairs(ForeverData.Loot("npc", 4286)) do if r.item == 4306 then silk = r end end
 	check("amounts: a Scarlet Soldier's silk, really", silk and silk.low and silk.high > 1, silk and silk.high)
 end
+-- How an item is made: each recipe, its reagents, what teaches it.
+do
+	local function created(id)
+		local out, on = {}, false
+		for _, l in ipairs(ns.Details("item", id)) do
+			local t = ns.Unlink(lineText(l))
+			if t == "Created by:" then on = true elseif on and t == "" then break end
+			if on then out[#out + 1] = t end
+		end
+		return table.concat(out, "\n")
+	end
+	check("created by: Barbaric Bracers, by its pattern", created(18948) == "Created by:\n  Leatherworking | 130\n    8 Heavy Leather\n    2 Cured Heavy Hide\n"
+		.. "    1 Raptor Hide\n    4 Small Lustrous Pearl\n    4 Large Fang\n    Learned from Pattern: Barbaric Bracers", created(18948))
+	check("created by: nothing for a drop", created(8167) == "", created(8167))
+	local real = ForeverData.CreatedBy
+	ForeverData.CreatedBy = function()
+		return { { spell = 2385, name = "Old Name", skillLine = 197, skill = 10, reagents = { { item = 2589, count = 1 } }, patterns = { 8167 } } }
+	end
+	check("created by: a recipe of another name, a pattern or a trainer", created(18948) == "Created by:\n  Tailoring · Old Name | 10\n    1 Linen Cloth\n"
+		.. "    Learned from Turtle Scale or a trainer", created(18948))
+	ForeverData.CreatedBy = real
+end
+
 -- What a reagent is used in: each recipe when they are few, else the
 -- professions; uses: finds what they make.
 do
@@ -558,6 +584,97 @@ check("creature page: and N more drops searches from:", searchLink(lines, "and 2
 lines = ns.Details("npc", 4558)
 check("vendor page: and N more sold searches from:", searchLink(lines, "and 24 more") == "from:lauren-newcomb", joined(lines))
 check("from: a vendor finds all it sells", #ns.Results("from:lauren-newcomb", 100) == 39, #ns.Results("from:lauren-newcomb", 100))
+
+-- The words about an item and about a quest giver, and the pages' "and N
+-- more" lines that search them: each finds as many as its list counts
+-- (quests of one name are one find, so their ids are counted).
+local function heading(lines, title)
+	for _, l in ipairs(lines) do
+		local n = ns.Unlink(lineText(l)):match("^" .. title .. " %((%d+)%):$")
+		if n then return tonumber(n) end
+	end
+end
+local function finds(query)
+	local n = 0
+	for _, r in ipairs(ns.Results((query:gsub(",", " ")), 2000)) do n = n + #(r.ids or { r.id }) end
+	return n, #ns.Results((query:gsub(",", " ")), 2000)
+end
+local function moreLink(lines, title)
+	local on = false
+	for _, l in ipairs(lines) do
+		local t = lineText(l)
+		if ns.Unlink(t):find("^" .. title .. " %(") then on = true elseif on and ns.Unlink(t) == "" then return nil end
+		if on and ns.Unlink(t):find("^  and %d+ more") then return t:match("|Hfsearch:find:([^|]*)|h") or false end
+	end
+end
+lines = ns.Details("item", 2589)
+local link = moreLink(lines, "Drops from")
+check("drops: Linen Cloth's droppers link", link == "npc:,drops:linen-cloth", link)
+check("drops: as many as the page lists", select(2, finds(link or "")) == heading(lines, "Drops from"), select(2, finds(link or "")))
+check("drops: only creatures that drop it", all(ns.Results("drops:linen-cloth", 50), function(r)
+	if r.kind ~= "npc" then return false end
+	for _, d in ipairs(ForeverData.Drops(2589)) do if d.kind == "npc" and d.id == r.id and d.method == "drop" then return true end end
+	return false
+end))
+check("drops: says what it read", ns.Describe("drops:linen-cloth") == "dropping Linen Cloth", ns.Describe("drops:linen-cloth"))
+lines = ns.Details("item", 2770)
+link = moreLink(lines, "Found in")
+check("contains: Copper Ore's veins and lockboxes link", link == "contains:copper-ore", link)
+check("contains: as many as the page lists, items holding it too", select(2, finds(link or "")) == heading(lines, "Found in")
+	and contains(ns.Results("contains:copper-ore", 50), 1731), select(2, finds(link or "")))
+lines = ns.Details("item", 2512)
+link = moreLink(lines, "Sold by")
+check("sells: Rough Arrow's vendors link", link == "npc:,sells:rough-arrow", link)
+check("sells: as many as the page lists", select(2, finds(link or "")) == heading(lines, "Sold by"), select(2, finds(link or "")))
+lines = ns.Details("item", 2318)
+check("skinning: no word for it, the rest in plain text", moreLink(lines, "Skinned from") == false, moreLink(lines, "Skinned from"))
+lines = ns.Details("npc", 4949)
+link = moreLink(lines, "Starts quests")
+check("starts: Thrall's quests link", link == "quest:,starts:thrall", link)
+check("starts: as many as the page lists", finds(link or "") == heading(lines, "Starts quests"), finds(link or ""))
+link = moreLink(lines, "Ends quests")
+check("ends: as many as the page lists", link == "quest:,ends:thrall" and finds(link) == heading(lines, "Ends quests"), link)
+check("starts: says what it read", ns.Describe("starts:thrall") == "quests started by Thrall", ns.Describe("starts:thrall"))
+lines = ns.Details("item", 4306)
+link = moreLink(lines, "Needed for quests")
+check("needs: Silk Cloth's quests link", link == "quest:,needs:silk-cloth" and finds(link) == heading(lines, "Needed for quests"), link)
+check("needs: the exact name, though no quest needs it", ns.Describe("needs:turtle-scale") == "quests needing Turtle Scale"
+	and #ns.Results("needs:turtle-scale", 10) == 0, ns.Describe("needs:turtle-scale"))
+check("rewards: the quest that gives it", (function()
+	local word = ns.ItemWord("rewards", ForeverData.Item(4928).name)
+	for _, row in ipairs(ForeverData.QuestsOf("item", 4928)) do
+		if row.role == "reward" and not contains(ns.Results(word, 10), row.quest) then return false end
+	end
+	return #ns.Results(word, 10) >= 1 and ns.Describe(word) == "quests rewarding " .. ForeverData.Item(4928).name
+end)(), ns.Describe(ns.ItemWord("rewards", ForeverData.Item(4928).name)))
+check("an item word keeps its apostrophe", ns.ItemWord("drops", "Spider's Silk") == "drops:spider's-silk"
+	and ns.Describe("drops:spider's-silk") == "dropping Spider's Silk", ns.Describe("drops:spider's-silk"))
+check("a giver word drops it, as from: does", ns.GiverWord("starts", "Gri'lek") == "starts:grilek")
+-- drops: and contains: give each find its chance: shown on the right, and
+-- with no other words the order, highest first, all of them.
+do
+	local rows = ns.Results("npc: drops:silk-cloth", 1000)
+	local sorted, shown = #rows > 100, true
+	for i, r in ipairs(rows) do
+		if i > 1 and (r.chance or -1) > (rows[i - 1].chance or -1) then sorted = false end
+		shown = shown and r.right ~= nil and r.right:find("%%$") ~= nil
+	end
+	check("drops: highest chance first", sorted, rows[1] and rows[1].name)
+	check("drops: each find's chance on the right", shown, rows[1] and rows[1].right)
+	local best = 0
+	for _, d in ipairs(ForeverData.Drops(4306)) do
+		if d.kind == "npc" and d.method == "drop" then best = math.max(best, d.chance or 0) end
+	end
+	check("drops: the first is the likeliest", rows[1] and rows[1].chance == best, rows[1] and rows[1].chance)
+	check("drops: the likeliest of all, not of the search's first 30", (ns.Results("npc: drops:silk-cloth", 30)[1] or {}).chance == best,
+		(ns.Results("npc: drops:silk-cloth", 30)[1] or {}).chance)
+	check("drops: words keep their order, the chance still shown", (function()
+		local r = ns.Results("drops:silk-cloth defias", 30)
+		return #r > 0 and r[1].right ~= nil
+	end)())
+	check("contains: by chance too", (ns.Results("contains:copper-ore", 50)[1] or {}).right ~= nil)
+	check("sells: no chance", (ns.Results("sells:rough-arrow", 50)[1] or {}).right == nil)
+end
 
 found = ns.Results("is:rare in:the-hinterlands", 100)
 check("is:rare: rare creatures there", all(found, function(r)
@@ -894,14 +1011,14 @@ check("waypoint: without TomTom the game's pin", ns.SetWaypoint("npc", 3165, 14,
 check("waypoint: none for a zone without a map", not ns.SetWaypoint("npc", 3165, 999999, 50, 50))
 UiMapPoint = nil
 
--- The question behind the item: the lead line and what comes first, as a
+-- The question behind the item: what comes first, and no lead line, as a
 -- level-12 Horde player at Razor Hill.
 UnitLevel = function() return 12 end
 UnitFactionGroup = function() return "Horde" end
 local function lead(item)
 	for _, l in ipairs(ns.Details("item", item)) do
 		local t = ns.Unlink(lineText(l))
-		if t:find("^Buy:") or t:find("^For:") or t:find("^Farm:") or t:find("^Get it:") then return t end
+		if t:find("^Buy:") or t:find("^For:") or t:find("^From:") or t:find("^Farm:") or t:find("^Get it:") then return t end
 	end
 end
 local function before(item, a, b)
@@ -913,14 +1030,12 @@ local function before(item, a, b)
 	end
 	return ia ~= nil and (ib == nil or ia < ib)
 end
-check("ammo: buy it from the nearest vendor", (lead(2512) or ""):find("^Buy: Ghrawt · Durotar$"), lead(2512))
+for _, item in ipairs({ 2512, 2589, 2770, 5203, 2488, 4928, 18948 }) do
+	check("no lead line: " .. item, lead(item) == nil, lead(item))
+end
 check("ammo: vendors before drops", before(2512, "Sold by (", "Drops from ("))
-check("cloth: farm the nearest common creature", (lead(2589) or ""):find("^Farm: .- · Durotar$"), lead(2589))
-check("ore: farm the nearest vein, veins listed first", (lead(2770) or ""):find("^Farm: Copper Vein .- · Durotar$") and before(2770, "Found in (", "Drops from ("), lead(2770))
-check("quest item: the quest it is for", lead(5203) == "For: The Hunter's Way", lead(5203))
+check("ore: veins listed first", before(2770, "Found in (", "Drops from ("))
 check("quest item: the quest before where it drops", before(5203, "Needed for quests (", "Drops from ("))
-check("gear sold: buy it", (lead(2488) or ""):find("^Buy: Uhgar · "), lead(2488))
-check("gear rewarded: the quest", lead(4928) == "Get it: reward from From The Wreckage....", lead(4928))
 UnitLevel, UnitFactionGroup = nil, nil
 
 check("sold by: no nearest without a position", (function()

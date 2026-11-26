@@ -128,19 +128,6 @@ function ns.NameOf(kind, id)
 	return thing and thing.name or (kind .. " " .. tostring(id))
 end
 
--- How a creature takes players, in a few words: "hostile", "neutral",
--- "friendly to both", or the two sides when they differ.
-local function Reaction(n)
-	local a, h = n.alliance, n.horde
-	if not a and not h then
-		return nil
-	end
-	if a == h then
-		return a == "friendly" and "friendly to both" or a
-	end
-	return ("%s to Alliance, %s to Horde"):format(a or "unknown", h or "unknown")
-end
-
 -- Link wraps a thing's name as a link the preview follows:
 -- |Hfsearch:npc:2505|h...|h, coloured by item quality or as a place.
 local QUALITY_HEX = { [0] = "9d9d9d", "ffffff", "1eff00", "0070dd", "a335ee", "ff8000" }
@@ -776,6 +763,155 @@ local function UsesWord(name, skill)
 	return skill and (word .. "/" .. string.gsub(string.lower(skill), "%s+", "-")) or word
 end
 
+-- The words about one item, and what they find: drops:<item> the creatures
+-- that drop it (not skin or pickpocket it), contains:<item> the objects
+-- and items (lockboxes) it is found in, sells:<item> the vendors of it, needs:<item> and
+-- rewards:<item> the quests it is needed for or given by. The exact name
+-- wins, even with none; failing that, the best match that has any. ids
+-- maps "<kind><id>" to the chance it gives the item (drops, contains), or
+-- true; with a chance the finds are ordered by it and show it.
+local ITEM_WORD = {
+	drops = { kinds = { "npc" }, label = "dropping %s", none = "drops: no creature drops that", ids = function(item)
+		local out = {}
+		for _, d in ipairs(FD.Drops(item, Pause)) do
+			if d.kind == "npc" and d.method == "drop" then
+				local key = "npc" .. d.id
+				out[key] = math.max(type(out[key]) == "number" and out[key] or 0, d.chance or 0)
+			end
+		end
+		return out
+	end },
+	contains = { kinds = { "object", "item" }, label = "containing %s", none = "contains: nothing holds that", ids = function(item)
+		local out = {}
+		for _, d in ipairs(FD.Drops(item, Pause)) do
+			if (d.kind == "object" or d.kind == "item") and d.method == "contained" then
+				local key = d.kind .. d.id
+				out[key] = math.max(type(out[key]) == "number" and out[key] or 0, d.chance or 0)
+			end
+		end
+		return out
+	end },
+	sells = { kinds = { "npc" }, label = "selling %s", none = "sells: no vendor sells that", ids = function(item)
+		local out = {}
+		for _, v in ipairs(FD.Vendors(item)) do
+			out["npc" .. v.npc] = true
+		end
+		return out
+	end },
+}
+local function QuestsWith(role)
+	return function(item)
+		local out = {}
+		for _, row in ipairs(FD.QuestsOf("item", item)) do
+			if row.role == role then
+				out["quest" .. row.quest] = true
+			end
+		end
+		return out
+	end
+end
+ITEM_WORD.needs = { kinds = { "quest" }, label = "quests needing %s", none = "needs: no quest needs that", ids = QuestsWith("objective") }
+ITEM_WORD.rewards = { kinds = { "quest" }, label = "quests rewarding %s", none = "rewards: no quest gives that", ids = QuestsWith("reward") }
+
+local itemWordCache = {}
+local function ItemWordFilter(key, word)
+	local cacheKey = key .. ":" .. word
+	if itemWordCache[cacheKey] then
+		return itemWordCache[cacheKey]
+	end
+	local spec = ITEM_WORD[key]
+	local name = string.gsub(word, "%-", " ")
+	local chosen, found
+	for _, h in ipairs(FD.Search(name, 50, { "item" }, { pause = Pause })) do
+		local ids = spec.ids(h.id)
+		if Bare(h.name) == Bare(name) then
+			chosen, found = h, ids
+			break
+		end
+		if not chosen and next(ids) then
+			chosen, found = h, ids
+		end
+	end
+	local f = {
+		kinds = spec.kinds,
+		test = function(kind, id) return found ~= nil and found[kind .. id] ~= nil end,
+		label = chosen and spec.label:format(chosen.name) or spec.none,
+	}
+	if key == "drops" or key == "contains" then
+		f.chance = function(kind, id)
+			local c = found and found[kind .. id]
+			return type(c) == "number" and c or nil
+		end
+	end
+	itemWordCache[cacheKey] = f
+	return f
+end
+
+-- starts:<name> and ends:<name>: the quests creatures or objects of that
+-- name start or end. The exact name wins (those of it that start or end
+-- any); failing that, the best match that does.
+local giverCache = {}
+local function GiverFilter(role, word)
+	local cacheKey = role .. ":" .. word
+	if giverCache[cacheKey] then
+		return giverCache[cacheKey]
+	end
+	local name = string.gsub(word, "%-", " ")
+	local function Of(h)
+		local out
+		for _, id in ipairs(h.ids) do
+			for _, row in ipairs(FD.QuestsOf(h.kind, id)) do
+				if row.role == role then
+					out = out or {}
+					out[row.quest] = true
+				end
+			end
+		end
+		return out
+	end
+	local exact, best = {}, nil
+	for _, h in ipairs(FD.Search(name, 50, { "npc", "object" }, { distinct = true, pause = Pause })) do
+		local quests = Of(h)
+		if quests then
+			if Bare(h.name) == Bare(name) then
+				exact[#exact + 1] = { name = h.name, quests = quests }
+			elseif not best then
+				best = { name = h.name, quests = quests }
+			end
+		end
+	end
+	if #exact == 0 and best then
+		exact[1] = best
+	end
+	local quests, names = {}, {}
+	for _, e in ipairs(exact) do
+		if names[#names] ~= e.name then
+			names[#names + 1] = e.name
+		end
+		for q in pairs(e.quests) do
+			quests[q] = true
+		end
+	end
+	local f = {
+		kinds = { "quest" },
+		test = function(kind, id) return kind == "quest" and quests[id] == true end,
+		label = #names > 0 and (("quests %s %s"):format(role == "start" and "started by" or "ended by", table.concat(names, ", ")))
+			or (role == "start" and "starts:" or "ends:") .. " no creature or object of that name",
+	}
+	giverCache[cacheKey] = f
+	return f
+end
+
+-- ItemWord writes a filter word about an item ("drops:linen-cloth"); its
+-- apostrophe stays, as in uses:. GiverWord one about a creature or object,
+-- as from: does ("starts:thrall").
+function ns.ItemWord(key, name)
+	return key .. ":" .. string.gsub(string.lower(name), "%s+", "-")
+end
+function ns.GiverWord(key, name)
+	return key .. ":" .. string.gsub(Bare(name), "%s+", "-")
+end
+
 -- type:<word>: items of a type whose name has a word starting with it, as
 -- the game names types: type:sword is One-Handed Swords and Two-Handed
 -- Swords, type:recipe every recipe.
@@ -981,10 +1117,17 @@ local function NewFilter(key, value)
 		return RaceFilter(value)
 	elseif key == "class" then
 		return ClassFilter(value)
+	elseif ITEM_WORD[key] then
+		return ItemWordFilter(key, value)
+	elseif key == "starts" or key == "ends" then
+		return GiverFilter(key == "starts" and "start" or "end", value)
 	end
 	return SkillFilter(value)
 end
-local NEW_KEY = { from = true, uses = true, type = true, is = true, class = true, skill = true, race = true }
+local NEW_KEY = {
+	from = true, uses = true, type = true, is = true, class = true, skill = true, race = true,
+	drops = true, contains = true, sells = true, needs = true, rewards = true, starts = true, ends = true,
+}
 
 -- side:<word>: whose things to find. Without it, a search leaves out the
 -- other side's: its quests, and the people only it is friendly to.
@@ -1388,6 +1531,18 @@ function ns.Results(typed, limit, options)
 	end
 	filters.distinct = true
 	filters.pause = Pause
+	-- A word that gives each find a chance (drops:, contains:): the finds
+	-- show it, and with no other words come by it, highest first, all of
+	-- them (not the search's first so many).
+	local chance
+	for _, f in ipairs(filters.tests or {}) do
+		chance = chance or f.chance
+	end
+	local byChance = chance and not string.find(text, "%S")
+	local wanted = limit or 30
+	if byChance then
+		limit = math.max(wanted, 5000)
+	end
 	local out = {}
 	local searchKinds = filters.searchKinds
 	filters.searchKinds = nil
@@ -1481,7 +1636,28 @@ function ns.Results(typed, limit, options)
 			return a.name < b.name
 		end)
 	end
-	if filters.grouped then
+	if chance then
+		for _, row in ipairs(out) do
+			for _, id in ipairs(row.ids or { row.id }) do
+				local c = chance(row.kind, id)
+				if c and (not row.chance or c > row.chance) then
+					row.chance = c
+				end
+			end
+			row.right = row.chance and Percent(row.chance) or nil
+		end
+	end
+	if byChance then
+		table.sort(out, function(a, b)
+			if (a.chance or -1) ~= (b.chance or -1) then
+				return (a.chance or -1) > (b.chance or -1)
+			end
+			return a.name < b.name
+		end)
+		for i = #out, wanted + 1, -1 do
+			out[i] = nil
+		end
+	elseif filters.grouped then
 		out = GroupFinds(out)
 	end
 	return out
@@ -1525,7 +1701,7 @@ function ns.Subtitle(row)
 			parts[#parts + 1] = n.minLevel == n.maxLevel and ("level " .. n.minLevel) or ("level %d-%d"):format(n.minLevel, n.maxLevel or n.minLevel)
 		end
 		if n and n.title then
-			parts[#parts + 1] = "<" .. n.title .. ">"
+			parts[#parts + 1] = n.title
 		end
 		parts[#parts + 1] = MainZone("npc", row.id)
 	elseif row.kind == "object" then
@@ -1572,6 +1748,8 @@ local GIVES_HEADING = {
 	contained = "Contains", fishing = "Fishing", disenchanting = "Disenchanting",
 }
 local PER_METHOD = 8
+-- The words that find the rest of an item's sources, by way of getting.
+local SOURCE_WORD = { drop = { "npc: ", "drops" }, contained = { "", "contains" } }
 
 -- Amount says in grey how many come at once, when it is more than one:
 -- " 1-2", " 3".
@@ -1584,7 +1762,8 @@ end
 
 -- Grouped writes rows by way of getting, likeliest first (or by opts.order),
 -- at most PER_METHOD each; label names a row's other side, opts.suffix adds
--- to it after (where it is).
+-- to it after (where it is). more is the search the rest are found by, or
+-- a function of the way of getting that gives it (nil for none).
 local function Grouped(lines, rows, headings, label, more, opts)
 	local byMethod = {}
 	for _, row in ipairs(rows) do
@@ -1614,8 +1793,12 @@ local function Grouped(lines, rows, headings, label, more, opts)
 			for i = 1, math.min(#list, PER_METHOD) do
 				lines[#lines + 1] = { "  " .. label(list[i]) .. (opts and opts.suffix and opts.suffix(list[i]) or ""), Chance(list[i]) }
 			end
+			local query = more
+			if type(more) == "function" then
+				query = more(method)
+			end
 			if #list > PER_METHOD then
-				lines[#lines + 1] = more and More(#list - PER_METHOD, more)
+				lines[#lines + 1] = query and More(#list - PER_METHOD, query)
 					or GREY .. ("  and %d more|r"):format(#list - PER_METHOD)
 			end
 		end
@@ -1758,6 +1941,37 @@ local function UsedLines(id, lines)
 	end
 end
 
+-- How an item is made: each recipe's profession and skill, its reagents
+-- with how many, and what teaches it (patterns, linked, or a trainer).
+local function CreatedLines(id, lines)
+	local rows = FD.CreatedBy and FD.CreatedBy(id) or {}
+	if #rows == 0 then
+		return
+	end
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = GOLD .. "Created by:|r"
+	for _, row in ipairs(rows) do
+		local what = FD.SkillName(row.skillLine) or "Crafting"
+		if row.name ~= "" and row.name ~= ns.NameOf("item", id) then
+			what = what .. GREY .. " · " .. row.name .. "|r"
+		end
+		lines[#lines + 1] = { "  " .. what, row.skill and tostring(row.skill) or "" }
+		for _, r in ipairs(row.reagents) do
+			lines[#lines + 1] = "    " .. r.count .. " " .. ns.Link("item", r.item)
+		end
+		local from = {}
+		for _, pattern in ipairs(row.patterns) do
+			from[#from + 1] = ns.Link("item", pattern)
+		end
+		if #FD.Trainers(row.spell) > 0 then
+			from[#from + 1] = "a trainer"
+		end
+		if #from > 0 then
+			lines[#lines + 1] = "    " .. GREY .. "Learned from|r " .. table.concat(from, GREY .. " or |r")
+		end
+	end
+end
+
 local QuestLines, ByLevel, ItemWays, WaysLines, RewardLines -- below
 local function ItemLines(id, lines)
 	local item = FD.Item(id)
@@ -1799,6 +2013,7 @@ local function ItemLines(id, lines)
 		lines[#lines + 1] = GOLD .. "You own:|r " .. total .. " (" .. table.concat(who, ", ") .. ")"
 	end
 
+	CreatedLines(id, lines)
 	-- How to get it: built once, and kept a moment for the page's redraws
 	-- as the item's tooltip comes in (Linen Cloth's took 30 ms).
 	for _, line in ipairs(ItemWays(id)) do
@@ -1823,9 +2038,8 @@ function ItemWays(id)
 end
 
 function WaysLines(id, lines)
-	-- The question behind the item: what it is for decides what the page
-	-- leads with ("Buy:", "For:", "Farm:", "Get it:") and the order of the
-	-- ways of getting it after.
+	-- The question behind the item: what it is for decides the order of
+	-- the ways of getting it.
 	local purpose = Purpose(id)
 	local continent, at = PlayerWorld()
 	local level = UnitLevel and tonumber(UnitLevel("player"))
@@ -1972,44 +2186,15 @@ function WaysLines(id, lines)
 		table.sort(list, ByLevel)
 	end
 
-	-- The lead.
+	-- The likeliest source, whose way of getting it comes first.
 	local best
 	for _, d in ipairs(sources) do
 		if d.method ~= "disenchanting" and (not best or sourceOrder(d, best)) then
 			best = d
 		end
 	end
-	local function BestSource()
-		return ns.Link(best.kind, best.id) .. " " .. Chance(best) .. SourceWhere(best)
-	end
-	local lead = {}
-	if purpose == "quest" and quests.objective then
-		lead[#lead + 1] = GOLD .. "For:|r " .. ns.Link("quest", quests.objective[1])
-		if best then
-			lead[#lead + 1] = GOLD .. "From:|r " .. BestSource()
-		end
-	elseif (purpose == "buy" or purpose == "material" or purpose == "gear") and vendors[1]
-		and not (purpose == "gear" and quests.reward) then
-		lead[#lead + 1] = GOLD .. "Buy:|r " .. VendorLine(vendors[1])
-	elseif purpose == "gear" and quests.reward then
-		lead[#lead + 1] = GOLD .. "Get it:|r reward from " .. ns.Link("quest", quests.reward[1])
-	elseif (purpose == "material" or purpose == "gear" or purpose == "buy" or purpose == "quest") and best then
-		local item = FD.Item(id)
-		local label = purpose == "material" and "Farm:" or "Get it:"
-		if purpose == "gear" and item and item.widespread then
-			lead[#lead + 1] = GOLD .. label .. "|r world drop; likeliest " .. BestSource()
-		else
-			lead[#lead + 1] = GOLD .. label .. "|r " .. BestSource()
-		end
-	end
-	if #lead > 0 then
-		lines[#lines + 1] = ""
-		for _, l in ipairs(lead) do
-			lines[#lines + 1] = l
-		end
-	end
 
-	-- The way of getting it the lead names comes first (Copper Ore: the
+	-- The likeliest source's way of getting it comes first (Copper Ore: the
 	-- veins it is found in before the creatures that carry some).
 	local methods = METHODS
 	if best then
@@ -2023,9 +2208,12 @@ function WaysLines(id, lines)
 
 	-- The ways of getting it, in the purpose's order.
 	local function Drops()
+		local name = ns.NameOf("item", id)
 		Grouped(lines, sources, FROM_HEADING, function(d)
 			return ns.Link(d.kind, d.id)
-		end, nil, { order = sourceOrder, suffix = function(d) return Amount(d) .. SourceWhere(d) end, methods = methods, key = function(d) return d.key end })
+		end, function(method)
+			return SOURCE_WORD[method] and (SOURCE_WORD[method][1] .. ns.ItemWord(SOURCE_WORD[method][2], name))
+		end, { order = sourceOrder, suffix = function(d) return Amount(d) .. SourceWhere(d) end, methods = methods, key = function(d) return d.key end })
 	end
 	local function Sold()
 		if #vendors == 0 then
@@ -2037,7 +2225,7 @@ function WaysLines(id, lines)
 			lines[#lines + 1] = "  " .. VendorLine(vendors[i])
 		end
 		if #vendors > PER_METHOD then
-			lines[#lines + 1] = GREY .. ("  and %d more%s|r"):format(#vendors - PER_METHOD, continent and ", further off" or "")
+			lines[#lines + 1] = More(#vendors - PER_METHOD, "npc: " .. ns.ItemWord("sells", ns.NameOf("item", id)))
 		end
 	end
 	local function Quests()
@@ -2306,6 +2494,12 @@ local QUEST_HEADING = {
 	item = { start = "Starts a quest", objective = "Needed for quests", reward = "Reward from quests" },
 }
 local QUESTS_SHOWN = 10
+-- The words that find the rest of a quest list.
+local QUEST_WORD = {
+	npc = { start = "starts", ["end"] = "ends" },
+	object = { start = "starts", ["end"] = "ends" },
+	item = { objective = "needs", reward = "rewards" },
+}
 function QuestLines(lines, kind, id)
 	local byRole = {}
 	for _, row in ipairs(FD.QuestsOf(kind, id)) do
@@ -2324,7 +2518,9 @@ function QuestLines(lines, kind, id)
 				lines[#lines + 1] = QuestEntry(list[i])
 			end
 			if #list > QUESTS_SHOWN then
-				lines[#lines + 1] = GREY .. ("  and %d more|r"):format(#list - QUESTS_SHOWN)
+				local word = QUEST_WORD[kind] and QUEST_WORD[kind][role]
+				lines[#lines + 1] = word and More(#list - QUESTS_SHOWN, "quest: " .. (kind == "item" and ns.ItemWord or ns.GiverWord)(word, ns.NameOf(kind, id)))
+					or GREY .. ("  and %d more|r"):format(#list - QUESTS_SHOWN)
 			end
 		end
 	end
@@ -2787,10 +2983,10 @@ function ns.Details(kind, id, typed)
 	elseif kind == "npc" then
 		local n = FD.Npc(id)
 		if n then
-			local facts = {}
 			if n.title then
-				facts[#facts + 1] = "<" .. n.title .. ">"
+				lines[#lines + 1] = n.title
 			end
+			local facts = {}
 			if n.minLevel then
 				facts[#facts + 1] = n.minLevel == n.maxLevel and ("level " .. n.minLevel) or ("level %d-%d"):format(n.minLevel, n.maxLevel or n.minLevel)
 			end
@@ -2799,11 +2995,9 @@ function ns.Details(kind, id, typed)
 				local zone = MainZone("npc", id)
 				facts[#facts + 1] = ns.FindLink("npc: is:" .. RANK_WORD[n.rank] .. (zone and (" " .. ns.InWord(zone)) or ""), RANK_LABEL[n.rank])
 			end
-			local reaction = Reaction(n)
-			if reaction then
-				facts[#facts + 1] = reaction
+			if #facts > 0 then
+				lines[#lines + 1] = table.concat(facts, ", ")
 			end
-			lines[#lines + 1] = table.concat(facts, ", ")
 		end
 		local where = Places("npc", id)
 		if where ~= "" then

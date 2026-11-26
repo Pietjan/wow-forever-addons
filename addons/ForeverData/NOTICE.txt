@@ -25,6 +25,10 @@ author's offline database) from these sources:
   trainer costs.
 - QuestieDB (https://github.com/Questie/QuestieDB): spawns, drops and
   quests. GPL-3.0.
+- VMaNGOS (https://github.com/vmangos/core): where creatures and objects
+  stand that no other source places, kept by hand in wow-forever-data's
+  data/positions.tsv. Copyright (C) the VMaNGOS project and its
+  contributors, GPL-2.0 or later.
 - The WoW Forever client: names and numbers from the game's own tables.
   World of Warcraft, WoW Forever and their names are trademarks or property
   of Blizzard Entertainment, Inc. ForeverData is not affiliated with or
