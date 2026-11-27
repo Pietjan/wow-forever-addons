@@ -1,25 +1,30 @@
--- UpgradeFinder, the window: the upgrades slot by slot, the best five of
--- each, best first. /upgrades (or /upgradefinder) shows or hides it.
+-- ForeverUpgrades, the window: the upgrades slot by slot, the best five of
+-- each, best first. /upgrades shows or hides it.
 --
 --   a slot's name   lists all of that slot's upgrades, or the best five again
 --   an item         its tooltip, with every known way to get it;
 --                   Shift-click links it in chat
 --   the checkbox    also lists items with no known source
---   a role button   scores as that role: the list, and UpgradeArrow's
---                   arrows and tooltips with it. Automatic follows your
---                   group again. A class with one role has no buttons.
---   Weights         opens a pane beside the window with the weights of
---                   the role scored for, one line per stat. Drag a
---                   slider or click its arrows for one step. A slider
---                   stops where weights usually do; a higher one, set
---                   with /upgradearrow or on the options pages, shows
+--   the spec menu   scores with that spec: the list, and the arrows
+--                   and tooltips with it. Automatic follows your
+--                   group again, with the spec last picked for its role.
+--   Weights         opens a pane beside the window with the spec scored
+--                   with: its role, and its weights, one line per stat.
+--                   Drag a slider or click its arrows for one step. A
+--                   slider stops where weights usually do; a higher one,
+--                   set with /upgradearrow or on the options pages, shows
 --                   as its number with the slider at its end. A green
---                   number is a weight you changed, Defaults puts the
---                   class's own back. They are UpgradeArrow's weights:
---                   its arrows and tooltips change with them.
+--                   number is a weight you changed, Defaults puts back
+--                   those of the class's own spec it was made from. New
+--                   makes a copy to score with, Rename and Delete do what
+--                   they say; a role's only spec cannot be deleted or
+--                   moved. Specs are the arrows' too, shared by your
+--                   characters of the class: its arrows and tooltips
+--                   change with them.
 --
--- The number is how many points the item scores above what you wear, in
--- UpgradeArrow's points; "empty slot" where you wear nothing. The rows
+-- The number is how many points the item scores above what you wear (or
+-- the equipment set attached to the spec), in the arrows' points; "empty
+-- slot" where there is nothing. The rows
 -- are made once and filled in again on every change.
 
 local ADDON, ns = ...
@@ -28,10 +33,14 @@ local WIDTH, HEIGHT = 640, 520
 local ROW = 20
 local ROLE_TOP = 28 -- the line with the role, under the title
 local LIST_TOP, LIST_BOTTOM = 54, 40
-local ROLE_BUTTON = 76 -- wide; the Weights button too
+local ROLE_BUTTON = 76 -- wide: the Weights button, and the pane's buttons
+local SPEC_MENU = 190 -- the spec menu, wide
+local ROLE_MENU = 140 -- the pane's role menu, wide
 local PANE = 370 -- the weights pane, wide
 local SLIDER = 150 -- a weight's slider with its step arrows, wide
-local WEIGHTS_TOP = 30 -- its first line, under its title
+local ROLE_LINE = 30 -- the pane's role line, under its title
+local SET_LINE = 28 -- the pane's set line, under the role line
+local WEIGHTS_TOP = 58 + SET_LINE -- its first weight, under the set line
 local WEIGHT_ROW = 20
 local BEST = 5 -- per slot, until its name is clicked
 local WAYS_IN_TIP = 8
@@ -73,7 +82,7 @@ end
 local function Status()
 	local progress = ns.progress
 	if not ns.Ready() then
-		return "Needs UpgradeArrow and QuestieDB."
+		return "Needs QuestieDB, for where gear comes from."
 	elseif ns.phase == "scan" then
 		return ("Reading the item list: %d%%"):format(progress.of > 0 and progress.at / progress.of * 100 or 0)
 	elseif ns.phase == "load" then
@@ -81,7 +90,8 @@ local function Status()
 	elseif ns.phase ~= "done" then
 		return ""
 	end
-	local text = upgrades == 0 and "Nothing you could get now beats what you wear."
+	local _, setName = UpgradeArrow.SpecSet()
+	local text = upgrades == 0 and ("Nothing you could get now beats %s."):format(setName and ("your set " .. setName) or "what you wear")
 		or ("%s in %s."):format(Count(upgrades, "upgrade"), Count(slots, "slot"))
 	if progress.silent > 0 then
 		text = text .. (" %s did not answer."):format(Count(progress.silent, "item"))
@@ -270,14 +280,47 @@ local function MakeWeightLine(pane, index, weight)
 	return line
 end
 
--- The weights of the role scored for; the pane's title names the role.
+-- The spec scored with, as UpgradeArrow.Specs lists it.
+local function Current()
+	local id = UpgradeArrow.Spec()
+	for _, entry in ipairs(UpgradeArrow.Specs()) do
+		if entry.id == id then
+			return entry
+		end
+	end
+end
+
+-- What a menu shows, as one string: when it changes, the menu is made again.
+local function Signature()
+	local id, _, _, _, fixed = UpgradeArrow.Spec()
+	local parts = { tostring(id), tostring(fixed), tostring((UpgradeArrow.SpecSet())) }
+	for _, set in ipairs(UpgradeArrow.Sets()) do
+		parts[#parts + 1] = set.id .. "=" .. set.name
+	end
+	for _, entry in ipairs(UpgradeArrow.Specs()) do
+		parts[#parts + 1] = entry.id .. "=" .. entry.name .. "/" .. entry.role
+	end
+	return table.concat(parts, ";")
+end
+
+-- The spec scored with: the pane's title, its role, and its weights.
 local function DrawWeights()
 	local pane = window.weights
 	if not (pane and pane:IsShown()) then
 		return
 	end
-	local _, name = UpgradeArrow.Role()
-	pane.TitleContainer.TitleText:SetText((name or "?") .. " weights")
+	local entry = Current()
+	pane.TitleContainer.TitleText:SetText((entry and entry.name or "?") .. " weights")
+	local signature = Signature()
+	if pane.roleMenu and pane.drawn ~= signature then
+		pane.drawn = signature
+		pane.roleMenu:GenerateMenu()
+		pane.setMenu:GenerateMenu()
+		-- A role's only spec stays where it is; so does any spec of a class
+		-- with one role.
+		pane.roleMenu:SetEnabled(entry ~= nil and not entry.only and #UpgradeArrow.Roles() > 1)
+	end
+	pane.delete:SetEnabled(entry ~= nil and not entry.only)
 	for i, weight in ipairs(UpgradeArrow.Weights()) do
 		local line = pane.lines[i] or MakeWeightLine(pane, i, weight)
 		line.weight = weight
@@ -301,9 +344,105 @@ end
 
 local ShowPane
 
+-- Naming a spec, new or renamed, and deleting one: the game's popups. Only
+-- our entries are added to StaticPopupDialogs: assigning the table itself
+-- would mark it as ours, and block the game's popups that lead to a
+-- protected action.
+
+local function Typed(dialog)
+	local box = dialog.GetEditBox and dialog:GetEditBox() or dialog.editBox
+	return box and box:GetText() or ""
+end
+
+local function Refused(err)
+	print("|cff40c040ForeverUpgrades|r: " .. tostring(err) .. ".")
+end
+
+-- data: { id = (the spec renamed), name = (its name) }, or {} for a new
+-- one. True keeps the popup open: the name was refused.
+local function Named(dialog, data)
+	local ok, err
+	if data and data.id then
+		ok, err = UpgradeArrow.RenameSpec(data.id, Typed(dialog))
+	else
+		ok, err = UpgradeArrow.NewSpec(Typed(dialog))
+	end
+	if not ok then
+		Refused(err)
+		return true
+	end
+	Draw()
+end
+
+StaticPopupDialogs.FOREVERUPGRADES_SPEC_NAME = {
+	text = "%s",
+	button1 = OKAY or "Okay",
+	button2 = CANCEL or "Cancel",
+	hasEditBox = true,
+	maxLetters = 24,
+	OnShow = function(dialog, data)
+		local box = dialog.GetEditBox and dialog:GetEditBox() or dialog.editBox
+		if box then
+			box:SetText(data and data.name or "")
+			box:HighlightText()
+		end
+	end,
+	OnAccept = Named,
+	EditBoxOnEnterPressed = function(box, data)
+		local dialog = box:GetParent()
+		if not Named(dialog, data) then
+			dialog:Hide()
+		end
+	end,
+	EditBoxOnEscapePressed = function(box)
+		box:GetParent():Hide()
+	end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	preferredIndex = 3,
+}
+
+StaticPopupDialogs.FOREVERUPGRADES_SPEC_DELETE = {
+	text = "Delete the spec %s? It is gone for all your characters of this class.",
+	button1 = DELETE or "Delete",
+	button2 = CANCEL or "Cancel",
+	OnAccept = function(_, data)
+		local ok, err = UpgradeArrow.DeleteSpec(data.id)
+		if not ok then
+			Refused(err)
+		end
+		Draw()
+	end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	preferredIndex = 3,
+}
+
+local function PaneButton(pane, text, right, onClick, tip)
+	local button = CreateFrame("Button", nil, pane, "UIPanelButtonTemplate")
+	button:SetSize(ROLE_BUTTON, 22)
+	button:SetPoint("BOTTOMRIGHT", -12 - right * (ROLE_BUTTON + 4), 12)
+	button:SetText(text)
+	button:SetScript("OnClick", onClick)
+	button:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:AddLine(text, 1, 1, 1)
+		GameTooltip:AddLine(tip(), 1, 0.82, 0, true)
+		GameTooltip:Show()
+	end)
+	button:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	-- A disabled button still shows why.
+	if button.SetMotionScriptsWhileDisabled then
+		button:SetMotionScriptsWhileDisabled(true)
+	end
+	return button
+end
+
 local function MakePane()
 	local pane = CreateFrame("Frame", nil, window, "DefaultPanelTemplate")
-	pane:SetSize(PANE, HEIGHT)
+	pane:SetSize(PANE, HEIGHT + SET_LINE)
 	pane:SetPoint("TOPLEFT", window, "TOPRIGHT", -2, 0)
 	pane:EnableMouse(true)
 	pane:Hide()
@@ -313,15 +452,92 @@ local function MakePane()
 	close:SetPoint("TOPRIGHT", 1, 1)
 	close:SetScript("OnClick", function() ShowPane(false) end)
 
-	local defaults = CreateFrame("Button", nil, pane, "UIPanelButtonTemplate")
-	defaults:SetSize(ROLE_BUTTON, 22)
-	defaults:SetPoint("BOTTOMRIGHT", -12, 12)
-	defaults:SetText("Defaults")
-	defaults:SetScript("OnClick", function()
+	-- The spec's role.
+	local label = pane:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+	label:SetPoint("TOPLEFT", 14, -ROLE_LINE - 5)
+	label:SetText("Role")
+	local menu = CreateFrame("DropdownButton", nil, pane, "WowStyle1DropdownTemplate")
+	menu:SetWidth(ROLE_MENU)
+	menu:SetPoint("LEFT", label, "RIGHT", 10, 0)
+	menu:SetupMenu(function(_, root)
+		local entry = Current()
+		for _, role in ipairs(UpgradeArrow.Roles()) do
+			root:CreateRadio(role.name, function() return entry and entry.role == role.key end, function()
+				local ok, err = UpgradeArrow.SetSpecRole(entry.id, role.key)
+				if not ok then
+					Refused(err)
+				end
+				Draw()
+			end)
+		end
+	end)
+	pane.roleMenu = menu
+	local hint = pane:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+	hint:SetPoint("LEFT", menu, "RIGHT", 10, 0)
+	hint:SetPoint("RIGHT", -12, 0)
+	hint:SetJustifyH("LEFT")
+	hint:SetText("Shared by the class")
+
+	-- What items are compared with: what you wear, or one of this
+	-- character's equipment sets.
+	local setLabel = pane:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+	setLabel:SetPoint("TOPLEFT", 14, -ROLE_LINE - SET_LINE - 5)
+	setLabel:SetText("Against")
+	local setMenu = CreateFrame("DropdownButton", nil, pane, "WowStyle1DropdownTemplate")
+	setMenu:SetWidth(ROLE_MENU)
+	setMenu:SetPoint("LEFT", setLabel, "RIGHT", 10, 0)
+	setMenu:SetupMenu(function(_, root)
+		local entry = Current()
+		local function Pick(setID)
+			return function()
+				local ok, err = UpgradeArrow.SetSpecSet(entry.id, setID)
+				if not ok then
+					Refused(err)
+				end
+				Draw()
+			end
+		end
+		root:CreateRadio("What you wear", function() return UpgradeArrow.SpecSet(entry.id) == nil end, Pick(nil))
+		for _, set in ipairs(UpgradeArrow.Sets()) do
+			root:CreateRadio(set.name, function() return UpgradeArrow.SpecSet(entry.id) == set.id end, Pick(set.id))
+		end
+	end)
+	pane.setMenu = setMenu
+	local setHint = pane:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+	setHint:SetPoint("LEFT", setMenu, "RIGHT", 10, 0)
+	setHint:SetPoint("RIGHT", -12, 0)
+	setHint:SetJustifyH("LEFT")
+	setHint:SetText("Equipment set, this character")
+
+	pane.defaults = PaneButton(pane, "Defaults", 0, function()
 		UpgradeArrow.ResetWeights() -- comes back through UpgradeArrow.OnChange
 		Draw()
+	end, function()
+		local entry = Current()
+		return ("The weights of %s again."):format(entry and entry.base or "the class's own spec")
 	end)
-	pane.defaults = defaults
+	pane.delete = PaneButton(pane, "Delete", 1, function()
+		local entry = Current()
+		if entry then
+			StaticPopup_Show("FOREVERUPGRADES_SPEC_DELETE", entry.name, nil, { id = entry.id })
+		end
+	end, function()
+		local entry = Current()
+		if entry and entry.only then
+			return ("%s is the only %s spec, and cannot be deleted."):format(entry.name, entry.roleName:lower())
+		end
+		return "Deletes this spec, for all your characters of the class."
+	end)
+	pane.rename = PaneButton(pane, "Rename", 2, function()
+		local entry = Current()
+		if entry then
+			StaticPopup_Show("FOREVERUPGRADES_SPEC_NAME", "A new name for " .. entry.name .. ":", nil, { id = entry.id, name = entry.name })
+		end
+	end, function() return "A new name for this spec." end)
+	pane.new = PaneButton(pane, "New", 3, function()
+		local entry = Current()
+		StaticPopup_Show("FOREVERUPGRADES_SPEC_NAME", "A name for the new spec, a copy of " .. (entry and entry.name or "this one") .. ":", nil, {})
+	end, function() return "A copy of this spec, with its role and weights, to score with from then on." end)
 
 	window.weights = pane
 	return pane
@@ -340,44 +556,48 @@ function ShowPane(show)
 	Draw()
 end
 
--- The role line -----------------------------------------------------------------
+-- The spec line -----------------------------------------------------------------
 
--- The role UpgradeArrow scores for, and which button that is.
+-- The spec UpgradeArrow scores with, and the menu's choice.
 local function DrawRole()
-	local key, name, fixed = UpgradeArrow.Role()
-	window.scoring:SetText(("Scoring as |cffffffff%s|r%s"):format(name or "?", fixed and "" or " (automatic)"))
-	for _, button in ipairs(window.roles) do
-		if button.role == (fixed and key) then
-			button:LockHighlight()
-		else
-			button:UnlockHighlight()
-		end
+	local _, name, _, roleName, fixed = UpgradeArrow.Spec()
+	local text = name == roleName and name or (name .. " (" .. roleName .. ")")
+	local _, setName = UpgradeArrow.SpecSet()
+	window.scoring:SetText(("Scoring as |cffffffff%s|r%s%s"):format(text, fixed and "" or " (automatic)",
+		setName and (", against set |cffffffff" .. setName .. "|r") or ""))
+	local signature = Signature()
+	if window.specMenu and window.specDrawn ~= signature then
+		window.specDrawn = signature
+		window.specMenu:GenerateMenu()
 	end
 end
 
--- button.role: a role's key, or false for automatic.
-local function RoleClick(self)
-	local key, _, fixed = UpgradeArrow.Role()
-	if self.role == (fixed and key) then
-		return -- it is that already
-	end
-	UpgradeArrow.SetRole(self.role or nil) -- comes back through UpgradeArrow.OnChange
+local function SpecPicked(id)
+	UpgradeArrow.SetSpec(id or nil) -- comes back through UpgradeArrow.OnChange
 	Draw()
 end
 
-local function RoleTooltip(self)
-	GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-	GameTooltip:AddLine(self.role and ("Score as " .. self:GetText():lower()) or "Follow your group", 1, 1, 1)
-	GameTooltip:AddLine(self.role and "Until you pick another." or "Your role in the group, else the role ticked in the group finder, else damage.", 1, 0.82, 0, true)
-	GameTooltip:AddLine("UpgradeArrow's arrows and tooltips change with it.", 0.6, 0.6, 0.6, true)
-	GameTooltip:Show()
+-- Automatic, then the specs under their role's name.
+local function SpecMenu(_, root)
+	local _, _, _, _, fixed = UpgradeArrow.Spec()
+	local picked = fixed and UpgradeArrow.Spec()
+	root:CreateRadio("Automatic", function() return not picked end, SpecPicked, false)
+	local heading
+	for _, entry in ipairs(UpgradeArrow.Specs()) do
+		if entry.roleName ~= heading then
+			heading = entry.roleName
+			if root.CreateTitle then
+				root:CreateTitle(heading)
+			end
+		end
+		root:CreateRadio(entry.name, function() return picked == entry.id end, SpecPicked, entry.id)
+	end
 end
 
 local function MakeRoles()
 	window.scoring = window:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 	window.scoring:SetPoint("TOPLEFT", 12, -ROLE_TOP - 4)
 	window.scoring:SetJustifyH("LEFT")
-	window.roles = {}
 
 	local weights = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
 	weights:SetSize(ROLE_BUTTON, 22)
@@ -388,26 +608,22 @@ local function MakeRoles()
 	end)
 	window.weightsButton = weights
 
-	local roles = UpgradeArrow.Roles()
-	if #roles < 2 then
-		return -- nothing to pick
-	end
-	local choices = { { key = false, name = "Automatic" } }
-	for _, role in ipairs(roles) do
-		choices[#choices + 1] = role
-	end
-	for i, choice in ipairs(choices) do
-		local button = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
-		button:SetSize(ROLE_BUTTON, 22)
-		-- Left of the Weights button, with a gap.
-		button:SetPoint("TOPRIGHT", -14 - (ROLE_BUTTON + 10) - (#choices - i) * (ROLE_BUTTON + 2), -ROLE_TOP)
-		button:SetText(choice.name)
-		button.role = choice.key
-		button:SetScript("OnClick", RoleClick)
-		button:SetScript("OnEnter", RoleTooltip)
-		button:SetScript("OnLeave", function() GameTooltip:Hide() end)
-		window.roles[i] = button
-	end
+	-- Left of the Weights button, with a gap.
+	local menu = CreateFrame("DropdownButton", nil, window, "WowStyle1DropdownTemplate")
+	menu:SetWidth(SPEC_MENU)
+	menu:SetPoint("RIGHT", weights, "LEFT", -10, 0)
+	menu:SetupMenu(SpecMenu)
+	-- Hooked: the template has its own OnEnter and OnLeave.
+	menu:HookScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+		GameTooltip:AddLine("Score with", 1, 1, 1)
+		GameTooltip:AddLine("A spec, until you pick another; or Automatic: your role in the group, else the role ticked in the group finder, "
+			.. "else damage, each with the spec last picked for it.", 1, 0.82, 0, true)
+		GameTooltip:AddLine("The upgrade arrows and tooltips change with it.", 0.6, 0.6, 0.6, true)
+		GameTooltip:Show()
+	end)
+	menu:HookScript("OnLeave", function() GameTooltip:Hide() end)
+	window.specMenu = menu
 end
 
 function Draw()
@@ -442,7 +658,7 @@ function Draw()
 end
 
 local function MakeWindow()
-	window = CreateFrame("Frame", "UpgradeFinderFrame", UIParent, "DefaultPanelTemplate")
+	window = CreateFrame("Frame", "ForeverUpgradesFrame", UIParent, "DefaultPanelTemplate")
 	window:SetSize(WIDTH, HEIGHT)
 	window:SetFrameStrata("MEDIUM")
 	window:SetToplevel(true)
@@ -466,7 +682,7 @@ local function MakeWindow()
 	window:Hide()
 	window.TitleContainer.TitleText:SetText(ADDON)
 	if type(UISpecialFrames) == "table" then
-		tinsert(UISpecialFrames, "UpgradeFinderFrame") -- Escape closes it
+		tinsert(UISpecialFrames, "ForeverUpgradesFrame") -- Escape closes it
 	end
 
 	local close = CreateFrame("Button", nil, window, "UIPanelCloseButton")
@@ -520,9 +736,8 @@ function ns.Changed()
 	end
 end
 
-SLASH_UPGRADEFINDER1 = "/upgrades"
-SLASH_UPGRADEFINDER2 = "/upgradefinder"
-SlashCmdList.UPGRADEFINDER = function()
+SLASH_FOREVERUPGRADES1 = "/upgrades"
+SlashCmdList.FOREVERUPGRADES = function()
 	if not ns.db then
 		return
 	end

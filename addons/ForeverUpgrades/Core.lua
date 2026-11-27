@@ -1,5 +1,5 @@
--- UpgradeFinder: every piece of gear that would be an upgrade, slot by
--- slot, with where it comes from. /upgrades opens the list.
+-- ForeverUpgrades, the list: every piece of gear that would be an upgrade,
+-- slot by slot, with where it comes from. /upgrades opens it.
 --
 -- This file is the workings; Window.lua draws them.
 --
@@ -11,8 +11,9 @@
 --   item by item: half of the gear is not in the client's files and only
 --   the running game knows it. That takes a while the first time in a
 --   session.
--- - Whether it is an upgrade, and by how much, is UpgradeArrow's answer:
---   the same weights and the same comparison with what you wear.
+-- - Whether it is an upgrade, and by how much, is Arrow.lua's answer
+--   (UpgradeArrow.Evaluate): the same spec and the same comparison with
+--   what you wear as the arrows.
 --
 -- Listed is what you could get now: an item you can equip at your level,
 -- from a quest you can still do (your race and class, its level reached,
@@ -604,6 +605,10 @@ end
 
 -- UpgradeArrow says something changed, and what kind of thing.
 local function ArrowChanged(reason)
+	if reason == "names" or reason == "others" then
+		ns.Changed() -- a spec's name or role, or another spec's set: the scores are as they were
+		return
+	end
 	local stale = LookAtGear()
 	if reason == "skills" then
 		skillEpoch = skillEpoch + 1
@@ -662,22 +667,19 @@ events:SetScript("OnEvent", function(self, event, name)
 			return
 		end
 		self:UnregisterEvent("ADDON_LOADED")
-		UpgradeFinderDB = UpgradeFinderDB or {}
-		db = UpgradeFinderDB
+		-- The window's settings, in the addon's one saved table; Arrow.lua
+		-- keeps the specs beside them.
+		ForeverUpgradesDB = type(ForeverUpgradesDB) == "table" and ForeverUpgradesDB or {}
+		ForeverUpgradesDB.window = type(ForeverUpgradesDB.window) == "table" and ForeverUpgradesDB.window or {}
+		db = ForeverUpgradesDB.window
 		ns.db = db
-		if not (UpgradeArrow and UpgradeArrow.Evaluate and UpgradeArrow.OnChange and UpgradeArrow.Role
-			and UpgradeArrow.Roles and UpgradeArrow.SetRole and UpgradeArrow.Weights and UpgradeArrow.SetWeight
-			and UpgradeArrow.ResetWeights) then
-			print("|cff40c040UpgradeFinder|r: needs a newer UpgradeArrow.")
-			return
-		end
+		-- Without QuestieDB the arrows still work; the window says what it needs.
 		if not (LibQuestieDB and ItemDB and QuestDB and NpcDB and ObjectDB) then
-			print("|cff40c040UpgradeFinder|r: QuestieDB is not loaded.")
 			return
 		end
 		local ok, message = LibQuestieDB.RequireContract(CONTRACT)
 		if not ok then
-			print("|cff40c040UpgradeFinder|r: " .. tostring(message))
+			print("|cff40c040ForeverUpgrades|r: " .. tostring(message))
 			return
 		end
 		ready = true

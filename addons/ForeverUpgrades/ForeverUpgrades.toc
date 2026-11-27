@@ -1,0 +1,13 @@
+## Interface: 16001
+## Title: ForeverUpgrades
+## Notes: Pawn lite: a green arrow on items that would be an upgrade for your class and spec, in Baganator's bags, quest rewards, vendor windows and LootRolls bars, and /upgrades: the gear that would be an upgrade, slot by slot, with where each piece comes from (quest, drop, vendor, chest or profession; needs QuestieDB). Specs with their own weights, shared per class. /upgradearrow
+## Author: Pietjan
+## Version: 1.0
+## OptionalDeps: Baganator, QuestieDB, ForeverSnap
+## SavedVariables: ForeverUpgradesDB
+
+Arrow.lua
+Data.lua
+Ignore.lua
+Core.lua
+Window.lua

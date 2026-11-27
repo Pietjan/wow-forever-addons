@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write addons/UpgradeFinder/Data.lua: the gear that professions make.
+"""Write addons/ForeverUpgrades/Data.lua: the gear that professions make.
 
     upgrade-finder-data.py [guide dir]     default ~/src/github.com/pietjan/wow-profession-guide
 
@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "addons" / "UpgradeFinder" / "Data.lua"
+OUT = ROOT / "addons" / "ForeverUpgrades" / "Data.lua"
 PROFESSIONS = 11  # SkillLine.CategoryID
 CREATE_ITEM = "24"  # SpellEffect.Effect
 GEAR = ("2", "4")  # Item.ClassID: weapon, armor

@@ -22,6 +22,7 @@ Downloads, one zip per addon: https://pietjan.github.io/wow-forever-addons/
 | ForeverQuests | Quest log and tracking tweaks. Spawn dots for tracked quests on the map and minimap instead of the quest areas and in-progress icons. /fq |
 | ForeverPlates | Nameplate tweaks, each one on or off: friendly players show just the name (your font, size and position); enemy bars coloured by your threat, and your threat as a number beside them; who each enemy is targeting under its bar, YOU when it is you; a quest mark on enemies you still need; the level box hidden if you like. /fplates |
 | ForeverSparkles | A sparkle over herbs, ore veins, quest objects and lootable objects such as chests as you come near. Each kind has its own page of sliders: glint size, spread, number of glints, brightness, colour, pace, lifetime, height and drift. Can also keep the game's own loot sparkle on. /fsparkles |
+| ForeverUpgrades | Pawn lite: a green arrow on items that would be an upgrade for your class and spec, in Baganator's bags, quest rewards, vendor windows and LootRolls bars, and /upgrades: the gear that would be an upgrade, slot by slot, with where each piece comes from (quest, drop, vendor, chest or profession; needs QuestieDB). Specs with their own weights, shared per class. /upgradearrow |
 | GroupDebuffs | The debuffs your group's classes should keep on the target, as a column or row of icons: dim while missing, lit with its timer while it is on. Options > AddOns, or /groupdebuffs |
 | HealerMana | The mana of your group's healers as a column of rows: class icon, name, percentage (or dead or offline), and an icon while drinking, innervated or soulstoned. /healermana to move it. |
 | LootFeed | A short list of what you just picked up: items with how many you now carry, money, reputation, experience and honor, and what your group loots. Each line fades after a few seconds. /lootfeed |
@@ -32,8 +33,6 @@ Downloads, one zip per addon: https://pietjan.github.io/wow-forever-addons/
 | TargetDebuffs | The debuffs you put on your target as a free-standing row of icons that the mouse passes through. /targetdebuffs to move it. |
 | ToastAnchor | Puts the game's alert popups (loot you won, achievements and the like) where you want them. /toastanchor |
 | TrackSwap | Alternates minimap tracking between Find Herbs and Find Minerals every few seconds, so both kinds of node show up. /ts |
-| UpgradeArrow | Pawn lite: a green arrow on items that would be an upgrade for your class and role, in Baganator's bags, quest rewards and LootRolls bars. /upgradearrow |
-| UpgradeFinder | A list of the gear that would be an upgrade for you, slot by slot, with where each piece comes from: quest, drop, vendor, chest or profession. Scored by UpgradeArrow, sources from QuestieDB. /upgrades |
 
 Some of them build on other addons (QuestieDB, Auctionator, Baganator, the
 Cooldown Manager); each addon's `.toc` names what it needs or can use.
@@ -72,9 +71,9 @@ the names in them are stand-ins.
 
 <img src="docs/mockups/selladvice-tooltip.png" width="672" alt="SellAdvice mock-up">
 
-**UpgradeArrow.** The green arrow on two items in a row of bag slots.
+**ForeverUpgrades.** The green arrow on two items in a row of bag slots.
 
-<img src="docs/mockups/upgradearrow-bag-items.png" width="371" alt="UpgradeArrow mock-up">
+<img src="docs/mockups/foreverupgrades-bag-items.png" width="371" alt="ForeverUpgrades mock-up">
 
 **LootRolls.** Three roll bars with how many chose need, greed and pass.
 
@@ -122,5 +121,5 @@ ForeverDB.net's attribution term (its LICENSE.txt and NOTICE.txt): credit
 
 `scripts/` holds the generators for files that are committed:
 `sell-advice-data.py` (SellAdvice's `Data.lua`), `upgrade-finder-data.py`
-(UpgradeFinder's `Data.lua`), `make-dot-tga.py` (ForeverQuests' `dot.tga`)
+(ForeverUpgrades' `Data.lua`), `make-dot-tga.py` (ForeverQuests' `dot.tga`)
 and `icon_sheets.py` (SimpleRaidTargetIcons' icon sheets).

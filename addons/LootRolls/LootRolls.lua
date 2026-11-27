@@ -383,7 +383,7 @@ local function CreateRow()
 	icon.border:SetPoint("CENTER")
 	icon.count = icon:CreateFontString(nil, "OVERLAY", Font("NumberFontNormal", "GameFontHighlight"))
 	icon.count:SetPoint("BOTTOMRIGHT", -3, 2)
-	-- UpgradeArrow's green arrow when the item is an upgrade for you.
+	-- ForeverUpgrades' green arrow when the item is an upgrade for you.
 	if UpgradeArrow and UpgradeArrow.CreateArrow then
 		icon.upgrade = UpgradeArrow.CreateArrow(icon)
 	end

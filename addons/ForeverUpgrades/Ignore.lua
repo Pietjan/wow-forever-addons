@@ -1,4 +1,4 @@
--- UpgradeFinder: items that are never listed, whatever QuestieDB and the
+-- ForeverUpgrades: items that /upgrades never lists, whatever QuestieDB and the
 -- game say of them. One line per item: its ID and a note on what it is,
 -- which is only for whoever reads this file. Add a line, then /reload.
 
