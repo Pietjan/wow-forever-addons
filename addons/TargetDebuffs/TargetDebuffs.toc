@@ -3,7 +3,7 @@
 ## Notes: The debuffs you put on your target as a free-standing row of icons that the mouse passes through. /targetdebuffs to move it.
 ## Author: Pietjan
 ## OptionalDeps: ForeverSnap
-## Version: 1.0
+## Version: 1.1
 ## SavedVariables: TargetDebuffsDB
 
 TargetDebuffs.lua

@@ -3,7 +3,7 @@
 ## Notes: Puts the game's alert popups (loot you won, achievements and the like) where you want them. /toastanchor
 ## Author: Pietjan
 ## OptionalDeps: ForeverSnap
-## Version: 1.1
+## Version: 1.2
 ## SavedVariables: ToastAnchorDB
 
 ToastAnchor.lua

@@ -2,7 +2,7 @@
 ## Title: TrackSwap
 ## Notes: Alternates minimap tracking between Find Herbs and Find Minerals every few seconds, so both kinds of node show up. /ts
 ## Author: Pietjan
-## Version: 1.1
+## Version: 1.2
 ## SavedVariables: TrackSwapDB
 
 TrackSwap.lua
