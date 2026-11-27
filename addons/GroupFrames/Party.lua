@@ -472,23 +472,27 @@ local function CreateAuras(btn)
 	end
 
 	if class == "SHAMAN" then
-		-- Your totems: a dot per element at the bottom left, each in its own
-		-- place (a slot, not a flowing group) so a gap says which element
-		-- is missing. "PLAYER" for yours only; that a totem's aura counts as
-		-- cast by you is not yet seen in game.
+		-- Your totems: a dot per element at the bottom left, growing right
+		-- and packed (user, 2026-11-27: growing rather than a fixed place per
+		-- element), always in totem-bar order: the container lays groups out
+		-- by layoutIndex, else by the order they were added
+		-- (SortFlowLayoutDescriptions, Blizzard_CustomAuraContainer.lua).
+		-- "PLAYER" for yours only: a totem's aura counts as cast by you
+		-- (seen in game, 2026-11-26).
 		auras.totems = Container(btn.body, level)
+		auras.totems:SetFlowLayoutAnchorPoint("BOTTOMLEFT")
+		auras.totems:SetFlowLayoutGrowthDirection(AnchorUtil.FlowDirection.Right, AnchorUtil.FlowDirection.Up)
 		for i, element in ipairs(TOTEMS) do
-			local x = DOT_X + (i - 1) * (DOT + DOT_GAP)
-			local paint = Dot(COLOURS[element.key])
-			auras.totems:AddAuraSlot("Totem" .. element.key, "HELPFUL|PLAYER", {
-				initializeFrame = function(button)
-					paint(button)
-					button:ClearAllPoints()
-					button:SetPoint("BOTTOMLEFT", btn.bar, "BOTTOMLEFT", x, DOT_Y)
-				end,
+			local layout = DotLayout()
+			layout.layoutIndex = i
+			auras.totems:AddAuraGroup("Totem" .. element.key, "HELPFUL|PLAYER", {
+				maxFrameCount = 1,
+				initializeFrame = Dot(COLOURS[element.key]),
 				candidateFilters = { includeSpellIDs = Set(element.spells) },
+				layout = layout,
 			})
 		end
+		auras.totems:SetPoint("BOTTOMLEFT", btn.bar, "BOTTOMLEFT", DOT_X, DOT_Y)
 	end
 
 	-- The big defensive: one icon in the middle of the bar, on top of
@@ -1554,10 +1558,13 @@ function ns.PaintPreview(parent, data)
 		PaintedDot(frame, mark, DOT_X, DOT_Y, "BOTTOMLEFT")
 	end
 	if class == "SHAMAN" then
-		for i, element in ipairs(TOTEMS) do
+		-- Packed from the left in totem-bar order, as the container lays them out.
+		local n = 0
+		for _, element in ipairs(TOTEMS) do
 			for _, lit in ipairs(data.totems or {}) do
 				if lit == element.key then
-					PaintedDot(frame, COLOURS[lit], DOT_X + (i - 1) * (DOT + DOT_GAP), DOT_Y, "BOTTOMLEFT")
+					PaintedDot(frame, COLOURS[lit], DOT_X + n * (DOT + DOT_GAP), DOT_Y, "BOTTOMLEFT")
+					n = n + 1
 				end
 			end
 		end
