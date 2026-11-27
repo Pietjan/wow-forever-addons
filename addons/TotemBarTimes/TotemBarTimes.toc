@@ -1,0 +1,7 @@
+## Interface: 16001
+## Title: TotemBarTimes
+## Notes: Shows how long each totem has left on the totem bar's slots.
+## Author: Pietjan
+## Version: 1.0
+
+TotemBarTimes.lua
