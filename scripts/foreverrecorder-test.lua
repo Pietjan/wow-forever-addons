@@ -85,6 +85,8 @@ local units = {}
 function UnitGUID(u) return units[u] and units[u].guid end
 function UnitExists(u) return units[u] ~= nil end
 function UnitPlayerControlled(u) return units[u] and units[u].player or false end
+function UnitIsPlayer(u) return units[u] and units[u].isPlayer or false end
+function UnitIsDead(u) return units[u] and units[u].dead or false end
 function UnitLevel(u) return units[u] and units[u].level end
 function UnitName(u) return units[u] and units[u].name end
 function UnitClassification(u) return units[u] and units[u].class end
@@ -293,6 +295,84 @@ fire("LOOT_OPENED")
 fire("LOOT_CLOSED")
 inInstance = false
 check("in an instance, its map", db.spots.n639 and db.spots.n639.i36 == 1)
+
+-- In an instance whose map keeps the GUID secret: by name in the instance.
+inInstance = true
+units.target = { guid = SECRET, name = "Witherfang", level = 18, class = "elite", type = SECRET, reaction = 2 }
+fire("PLAYER_TARGET_CHANGED")
+units.target.level = 19
+fire("PLAYER_TARGET_CHANGED")
+local w = db.named.i36 and db.named.i36.Witherfang
+check("a secret GUID: by name in the instance, levels and rank", w and w.min == 18 and w.max == 19 and w.class == "elite" and w.h == "hostile" and w.type == nil and w.name == nil,
+	w and (tostring(w.min) .. "-" .. tostring(w.max)))
+check("its GUID counted as refused, no creature of it", db.secret.creature and db.secret.creature >= 1 and db.creatures[SECRET] == nil)
+units.target = { guid = SECRET, name = SECRET, level = 20 }
+fire("PLAYER_TARGET_CHANGED")
+local count = 0
+for _ in pairs(db.named.i36) do count = count + 1 end
+check("a secret name too: nothing", count == 1, count)
+units.target = { guid = SECRET, name = "Some Player", level = 20, isPlayer = true }
+fire("PLAYER_TARGET_CHANGED")
+check("a player is never filed by name", db.named.i36["Some Player"] == nil)
+units.target = { guid = SECRET, name = "Ragged Ghoul", level = 16 }
+fighting = true
+fire("PLAYER_TARGET_CHANGED")
+fighting = false
+check("not in a fight", db.named.i36["Ragged Ghoul"] == nil)
+inInstance = false
+fire("PLAYER_TARGET_CHANGED")
+check("not outside an instance", db.named.i0 == nil and db.named.i36["Ragged Ghoul"] == nil)
+units.target = nil
+
+-- A corpse's level as its loot window is read: the one creature the window
+-- is of, the dead unit targeted or pointed at.
+local function lootCorpses(...)
+	local sources = {}
+	for _, guid in ipairs({ ... }) do
+		sources[#sources + 1] = guid
+		sources[#sources + 1] = 1
+	end
+	loot = { { type = 1, link = item(2589), sources = sources } }
+	fire("LOOT_OPENED")
+	fire("LOOT_CLOSED")
+end
+inInstance = true
+units.target = { guid = SECRET, name = SECRET, dead = true, level = 14, class = "normal" }
+lootCorpses(creature(11318, "c1"))
+local rf = db.creatures[11318]
+check("in an instance: the targeted corpse's level, no name", rf and rf.min == 14 and rf.max == 14 and rf.class == "normal" and rf.name == nil,
+	rf and (tostring(rf.min) .. " " .. tostring(rf.name)))
+units.target.level = 15
+lootCorpses(creature(11318, "c2"))
+check("its levels grow with more corpses", rf and rf.min == 14 and rf.max == 15)
+check("corpses counted", rf and rf.corpses == 2, rf and tostring(rf.corpses))
+loot = { { type = 1, link = item(2589), sources = { creature(11318, "c9"), 1 } } }
+fire("LOOT_READY")
+fire("LOOT_OPENED")
+fire("LOOT_CLOSED")
+check("a window read twice is one corpse", rf and rf.corpses == 3, rf and tostring(rf.corpses))
+lootCorpses(creature(11319, "c3"), creature(11320, "c4"))
+check("a window of two corpses: neither", db.creatures[11319] == nil and db.creatures[11320] == nil)
+units.target = { guid = SECRET, dead = false, level = 30 }
+lootCorpses(creature(11321, "c5"))
+check("a target alive: no level", db.creatures[11321] == nil)
+units.target = { guid = creature(9999), dead = true, level = 40 }
+lootCorpses(creature(11322, "c6"))
+check("a dead target of another GUID: not this corpse's", db.creatures[11322] == nil)
+units.mouseover = { guid = SECRET, dead = true, level = 13 }
+lootCorpses(creature(11322, "c7"))
+check("then the dead unit pointed at", db.creatures[11322] and db.creatures[11322].min == 13)
+units.mouseover = nil
+units.target = { guid = creature(11323, "c8"), dead = true, level = 22, name = "Seen" }
+lootCorpses(creature(11323, "c8"))
+check("a dead target of this GUID", db.creatures[11323] and db.creatures[11323].min == 22 and db.creatures[11323].corpses == 1)
+units.target = { guid = SECRET, dead = true, level = 50 }
+loot = { { type = 1, link = item(2589), sources = { object(3000, "o1"), 1 } } }
+fire("LOOT_OPENED")
+fire("LOOT_CLOSED")
+check("a chest is no corpse", db.creatures[3000] == nil)
+units.target = nil
+inInstance = false
 
 check("no GUID saved", not hasGuid(db))
 check("/recorder reads", ns.Summary()[1]:find("1.60.1.71037", 1, true) ~= nil, ns.Summary()[1])

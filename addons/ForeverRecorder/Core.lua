@@ -28,7 +28,13 @@
 --            were { [item] = n } instead, with no order
 --            key "n<creature>" or "o<object>"
 --   creatures[creature] = { name, min, max (levels), class (classification), type, family,
---            a, h (reaction to Alliance, Horde: hostile/neutral/friendly) }
+--            a, h (reaction to Alliance, Horde: hostile/neutral/friendly) };
+--            from 0.4 also a corpse's level and class as its loot window is
+--            read, with no name when the game kept it secret (in an instance);
+--            corpses = how many corpses gave their level so
+--   named["i<instance map>"][name] = the same as creatures' entries (no name):
+--            a creature seen in an instance whose GUID was secret, by its
+--            name; wow-forever-data matches it to the instance's creature of that name
 --   spots[key] = { ["<uiMap>:<x>:<y>"] = times } in tenths of a percent;
 --            "i<instance map>" for inside an instance, where the map gives no position
 --   secret[what] = times a value was secret and left out
@@ -152,7 +158,7 @@ local function Load()
 	local db = type(ForeverRecorderDB) == "table" and ForeverRecorderDB or {}
 	ForeverRecorderDB = db
 	db.version = ns.FORMAT
-	for _, t in ipairs({ "loot", "vendors", "quests", "creatures", "spots", "secret" }) do
+	for _, t in ipairs({ "loot", "vendors", "quests", "creatures", "named", "spots", "secret" }) do
 		db[t] = type(db[t]) == "table" and db[t] or {}
 	end
 	local ok, version, build = pcall(GetBuildInfo)

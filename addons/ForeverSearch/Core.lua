@@ -1495,6 +1495,19 @@ function ns.ZoneLevels(id)
 	return nil
 end
 
+-- FinderLevel is the dungeon finder's level of a dungeon, raid or wing
+-- (FD.FinderLevel); nil for none.
+function ns.FinderLevel(id)
+	return FD.FinderLevel and FD.FinderLevel(id) or nil
+end
+
+-- InstanceOrder is the level instances are put in order by: the dungeon
+-- finder's, else the low end of what one fights there; and that low end.
+local function InstanceOrder(id)
+	local low = ns.ZoneLevels(id)
+	return ns.FinderLevel(id) or low, low
+end
+
 -- RangeText says a level range: "37-45", or "40" when it is one level.
 local function RangeText(low, high)
 	return low == high and tostring(low) or ("%d-%d"):format(low, high)
@@ -1612,18 +1625,27 @@ function ns.Results(typed, limit, options)
 		end
 	end
 	-- A list of dungeons, raids or battlegrounds asked for by filters alone
-	-- (is:dungeon): by their level, lowest first, as one picks the next one.
+	-- (is:dungeon): by their level, lowest first, as one picks the next one:
+	-- the dungeon finder's level, else the low end of their range.
 	local instancesOnly = text == "" and #out > 0
 	for _, row in ipairs(out) do
 		local z = row.kind == "zone" and FD.Zone(row.id)
 		instancesOnly = instancesOnly and z and z.instance ~= nil
 	end
 	if instancesOnly then
-		local low, high = {}, {}
+		local order, low, high = {}, {}, {}
 		for _, row in ipairs(out) do
+			order[row] = InstanceOrder(row.id)
 			low[row], high[row] = ns.ZoneLevels(row.id)
 		end
 		table.sort(out, function(a, b)
+			if (order[a] ~= nil) ~= (order[b] ~= nil) then
+				return order[a] ~= nil
+			end
+			if order[a] and order[a] ~= order[b] then
+				return order[a] < order[b]
+			end
+			-- At one level, those with a range first, by it.
 			if (low[a] ~= nil) ~= (low[b] ~= nil) then
 				return low[a] ~= nil
 			end
@@ -1727,6 +1749,8 @@ function ns.Subtitle(row)
 		end
 		if low then
 			parts[#parts + 1] = "level " .. RangeText(low, high)
+		elseif z and z.instance and ns.FinderLevel(row.id) then
+			parts[#parts + 1] = "from level " .. ns.FinderLevel(row.id)
 		end
 	end
 	if #row.ids > 1 then
@@ -2844,11 +2868,20 @@ local function ZoneLines(id, lines)
 		lines[#lines + 1] = ns.FindLink("npc: " .. Zone(id) .. " lvl:" .. range,
 			(low == high and "creatures level %s" or "creatures mostly level %s"):format(range))
 	end
+	local finder = ns.FinderLevel(id)
+	if finder then
+		lines[#lines + 1] = ("Dungeon finder: from level %d"):format(finder)
+	end
 
 	local wings = FD.Wings(id)
 	if #wings > 0 then
 		table.sort(wings, function(a, b)
-			local la, lb = ns.ZoneLevels(a) or 0, ns.ZoneLevels(b) or 0
+			local oa, la = InstanceOrder(a)
+			local ob, lb = InstanceOrder(b)
+			oa, ob, la, lb = oa or 0, ob or 0, la or 0, lb or 0
+			if oa ~= ob then
+				return oa < ob
+			end
 			if la ~= lb then
 				return la < lb
 			end
@@ -2858,7 +2891,8 @@ local function ZoneLines(id, lines)
 		lines[#lines + 1] = GOLD .. ("Wings (%d):|r"):format(#wings)
 		for _, wing in ipairs(wings) do
 			local from, to = ns.ZoneLevels(wing)
-			lines[#lines + 1] = { "  " .. ns.Link("zone", wing), from and RangeText(from, to) or "" }
+			local finder = ns.FinderLevel(wing)
+			lines[#lines + 1] = { "  " .. ns.Link("zone", wing), from and RangeText(from, to) or (finder and ("from " .. finder)) or "" }
 		end
 	end
 

@@ -2,7 +2,7 @@
 ## Title: ForeverRecorder
 ## Notes: Records what WoW Forever shows you, for an offline database: what each creature, node and chest gave when looted, what vendors sell, who gives and takes quests and what they reward, creatures' levels and kinds, and where these stand. Game facts only: no names of characters, no realm. /recorder for what it has.
 ## Author: Pietjan
-## Version: 0.3
+## Version: 0.4
 ## SavedVariables: ForeverRecorderDB
 
 Core.lua

@@ -104,6 +104,40 @@ local function Sources(slot)
 	return out
 end
 
+-- CorpseLevel files the level of the one creature a loot window is of
+-- (id, guid), read from the dead unit you target or point at. Inside an
+-- instance the game keeps which creature a unit is secret from addons,
+-- name and GUID alike, but the loot window still names it, and a unit's
+-- level and death are never secret. A unit whose GUID can be read must be
+-- that corpse; one whose GUID is secret is taken as it, the window being
+-- of that one corpse only.
+-- The corpses whose level was taken this session, by GUID, so a window
+-- read twice (LOOT_READY, LOOT_OPENED) counts once. In memory only.
+local levelled = {}
+local function CorpseLevel(id, guid)
+	for _, unit in ipairs({ "target", "mouseover" }) do
+		if ns.Read("dead", UnitIsDead, unit) == true then
+			local ok, unitGuid = pcall(UnitGUID, unit)
+			unitGuid = ok and ns.Plain(unitGuid) or nil
+			if unitGuid == nil or unitGuid == guid then
+				local level = ns.Read("level", UnitLevel, unit)
+				if level and level > 0 then
+					local c = ns.db.creatures[id] or {}
+					ns.db.creatures[id] = c
+					c.min = math.min(c.min or level, level)
+					c.max = math.max(c.max or level, level)
+					c.class = ns.Read("classification", UnitClassification, unit) or c.class
+					if not levelled[guid] then
+						levelled[guid] = true
+						c.corpses = (c.corpses or 0) + 1
+					end
+				end
+				return
+			end
+		end
+	end
+end
+
 -- Read records the loot window once per source and method.
 function ns.ReadLoot()
 	local slots = ns.Read("loot slots", GetNumLootItems) or 0
@@ -111,6 +145,7 @@ function ns.ReadLoot()
 	local fishKey = fishing and ns.Read("map", C_Map.GetBestMapForUnit, "player")
 	fishKey = fishKey and ("a" .. fishKey)
 	local opened = {} -- this window's sources: mark -> entry
+	local corpses, corpseCount = {}, 0 -- this window's creatures: GUID -> ID
 	local given = {} -- this window's items per source: mark .. item -> true
 	local function Open(key, kind, guid)
 		local method = fishing and "fishing" or Method(kind)
@@ -139,7 +174,12 @@ function ns.ReadLoot()
 			if fishing then
 				key, kind = fishKey, "area"
 			else
-				key, kind = ns.Key(src[1])
+				local id
+				key, kind, id = ns.Key(src[1])
+				if kind == "npc" and not corpses[src[1]] then
+					corpses[src[1]] = id
+					corpseCount = corpseCount + 1
+				end
 			end
 			local e, mark
 			if key then
@@ -162,6 +202,10 @@ function ns.ReadLoot()
 	end
 	for mark in pairs(opened) do
 		counted[mark] = true
+	end
+	if corpseCount == 1 then
+		local guid, id = next(corpses)
+		CorpseLevel(id, guid)
 	end
 end
 

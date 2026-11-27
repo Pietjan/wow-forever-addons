@@ -470,8 +470,17 @@ function FD.ZoneLevels(id)
 	if not s then
 		return nil, nil, true
 	end
-	local low, high = string.match(s, "^(%d+),(%d+)$")
+	local low, high = string.match(s, "^(%d*),(%d*)")
 	return tonumber(low), tonumber(high), true
+end
+
+-- The level the game's dungeon finder gives a dungeon, raid or wing: one
+-- level, a level or two below what one fights there (Wailing Caverns 17,
+-- its creatures 19-21), for ordering them; nil for none, or for data made
+-- before it was shipped.
+function FD.FinderLevel(id)
+	local s = ns.levels and ns.levels[id]
+	return s and tonumber(string.match(s, "^%d*,%d*,(%d+)$")) or nil
 end
 
 -- {id, name, parent, instance, map}: an area; parent nil for a zone or an

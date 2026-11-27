@@ -335,23 +335,32 @@ sets("is:dungeon wail", "is", nil, "wail")
 check("is:dungeon finds dungeons only", allOf(ns.Results("is:dungeon", 30), function(r)
 	return r.kind == "zone" and ForeverData.Zone(r.id).instance == "dungeon"
 end))
--- Dungeons by level, lowest first, each with its level range.
+-- Dungeons by level, lowest first, each with its level range: the dungeon
+-- finder's level, else the low end of the range.
 local dungeons = ns.Results("is:dungeon", 1000) -- as many as the window asks for
 check("dungeons: ordered by level", (function()
 	local last = 0
 	for _, r in ipairs(dungeons) do
-		local low = ns.ZoneLevels(r.id)
-		if low then
-			if low < last then return false end
-			last = low
+		local level = ns.FinderLevel(r.id) or ns.ZoneLevels(r.id)
+		if level then
+			if level < last then return false end
+			last = level
 		end
 	end
 	return #dungeons > 0
 end)(), (function()
 	local t = {}
-	for _, r in ipairs(dungeons) do t[#t + 1] = r.name .. " " .. tostring(ns.ZoneLevels(r.id)) end
+	for _, r in ipairs(dungeons) do t[#t + 1] = r.name .. " " .. tostring(ns.FinderLevel(r.id)) .. "/" .. tostring(ns.ZoneLevels(r.id)) end
 	return table.concat(t, ", ")
 end)())
+local at = {}
+for i, r in ipairs(dungeons) do at[r.name] = at[r.name] or i end
+check("dungeons: one of no range by its finder level, before the next one up",
+	at["Ruins of Lordaeron"] and at["The Deadmines"] and at["Ruins of Lordaeron"] < at["The Deadmines"],
+	tostring(at["Ruins of Lordaeron"]) .. " " .. tostring(at["The Deadmines"]))
+local ruins
+for _, r in ipairs(dungeons) do if r.name == "Ruins of Lordaeron" then ruins = r end end
+check("dungeons: no range, the finder level in the subtitle", ruins and ns.Subtitle(ruins) == "Dungeon · from level 15", ruins and ns.Subtitle(ruins))
 local rfc
 for _, r in ipairs(dungeons) do if r.name == "Ragefire Chasm" then rfc = r end end
 check("dungeons: the level range in the subtitle", rfc and ns.Subtitle(rfc):find("^Dungeon · level %d+%-%d+$"), rfc and ns.Subtitle(rfc))

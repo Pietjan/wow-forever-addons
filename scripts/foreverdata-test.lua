@@ -343,6 +343,13 @@ check("letters in order when nothing else: trtl", #ForeverData.Search("trtl", 5)
 -- generator as ForeverSearch did in game: The Deadmines 18-20.
 local low, high, shipped = ForeverData.ZoneLevels(1581)
 check("zone levels shipped", shipped == true and low == 18 and high == 20, tostring(low) .. "-" .. tostring(high))
+-- The dungeon finder's level beside them (Data/Levels.lua's third field).
+check("finder level of a dungeon with a range", ForeverData.FinderLevel(1581) == 16, tostring(ForeverData.FinderLevel(1581)))
+local rLow, rHigh, rShipped = ForeverData.ZoneLevels(16611)
+check("finder level only: no range", rLow == nil and rHigh == nil and rShipped == true and ForeverData.FinderLevel(16611) == 15,
+	tostring(rLow) .. " " .. tostring(ForeverData.FinderLevel(16611)))
+check("a whole the finder lists by its wings: its lowest wing's", ForeverData.FinderLevel(2557) == 54, tostring(ForeverData.FinderLevel(2557)))
+check("no finder level for a zone", ForeverData.FinderLevel(40) == nil)
 
 -- A word's 's aside, and a word not typed out yet: one typo off either.
 local function quests(q)
