@@ -136,7 +136,7 @@ local RING_REACH = { 6 * BIG_ICON / 30, 5 * BIG_ICON / 30 }
 local GLOW_SIZE = BIG_ICON * 52 / 40
 local DEFAULT_POINT = { "CENTER", 0, -180 }
 local PET_SCALE = 0.75 -- the pet row: the same frames, smaller
-local PET_GAP = 4 -- between the party row and the pet row
+local PET_GAP = 0 -- between the party row and the pet row (4 before; the user asked closer)
 local PET_COLOUR = { 0.3, 0.75, 0.3 } -- pets have no class colour of their own
 
 -- The LFG micro icons, gold ring (21 px art). Forever's bronze
