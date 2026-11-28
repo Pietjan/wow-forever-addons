@@ -1,11 +1,14 @@
 -- Quest enemies (/fplates quest): puts a quest icon next to the nameplate of every enemy that
 -- still counts towards one of your quest objectives.
 --
--- The icon goes left of the health bar, where Blizzard also puts the raid
--- mark (the unit frame's RaidTargetFrame, against the bar's left edge).
--- While a mark is set, the icon moves left of it: Blizzard shows and hides
--- that frame as marks come and go, and OnShow/OnHide are hooked on it
--- (HookScript, which only moves this file's icon).
+-- The icon goes left of whatever sits furthest left of the health bar.
+-- Blizzard puts the raid mark (the unit frame's RaidTargetFrame) against the
+-- bar's left edge and the buff list (AurasFrame.BuffListFrame, up to two
+-- icons growing leftwards) left of that. The icon follows the buff list
+-- while it holds icons, else the raid mark while one is set, else the bar.
+-- Nothing is measured: the mark is followed by OnShow/OnHide, the buff list
+-- by its child count after each Layout (released icons get SetParent(nil)).
+-- All hooks are HookScript/hooksecurefunc and only move this file's icon.
 
 local _, ns = ...
 local IsSecret = ns.IsSecret
@@ -17,7 +20,7 @@ local LineType = Enum.TooltipDataLineType
 
 local plateOfUnit = {} -- nameplate unit token -> nameplate frame, while shown
 local indicators = {} -- nameplate frame -> icon frame, created on first use
-local markHooked = setmetatable({}, { __mode = "k" }) -- raid mark frames hooked
+local hooked = setmetatable({}, { __mode = "k" }) -- Blizzard frames already hooked
 
 -- What the unit's tooltip says about my quests:
 --   true   it lists an objective I have not finished
@@ -64,6 +67,36 @@ local function IsQuestTarget(unit)
 	return ok and result
 end
 
+-- Shown and holding aura icons; false when that cannot be read.
+local function HasIcons(list)
+	local okShown, shown = pcall(list.IsShown, list)
+	local okCount, count = pcall(list.GetNumChildren, list)
+	return okShown and okCount and not IsSecret(shown) and not IsSecret(count)
+		and shown == true and type(count) == "number" and count > 0
+end
+
+local function IsShownSafe(frame)
+	local ok, shown = pcall(frame.IsShown, frame)
+	return ok and not IsSecret(shown) and shown == true
+end
+
+-- Hook a Blizzard frame once: scripts = { OnShow = fn, ... }, methods =
+-- { Layout = fn, ... }; each fn runs after Blizzard's own.
+-- Guarded: should Forever refuse a hook, the icon just stays where it was.
+local function Hook(frame, scripts, methods)
+	if hooked[frame] ~= nil then
+		return
+	end
+	hooked[frame] = pcall(function()
+		for script, fn in pairs(scripts) do
+			frame:HookScript(script, fn)
+		end
+		for method, fn in pairs(methods) do
+			hooksecurefunc(frame, method, fn)
+		end
+	end)
+end
+
 local function GetIndicator(plate)
 	local indicator = indicators[plate]
 	if not indicator then
@@ -80,11 +113,15 @@ local function GetIndicator(plate)
 	local unitFrame = plate.UnitFrame
 	local bar = unitFrame and unitFrame.HealthBarsContainer
 	local mark = unitFrame and unitFrame.RaidTargetFrame
+	local auras = unitFrame and unitFrame.AurasFrame
+	local buffs = auras and auras.BuffListFrame
 	-- The "!" is narrow in a square texture: the offsets pull its clear
-	-- edge in over the mark or the bar's border, so the mark itself sits close.
-	local function Anchor(marked)
+	-- edge in over the buffs, the mark or the bar's border.
+	local function Anchor()
 		indicator:ClearAllPoints()
-		if marked and mark then
+		if buffs and HasIcons(buffs) then
+			indicator:SetPoint("RIGHT", buffs, "LEFT", 4, 0)
+		elseif mark and indicator.marked then
 			indicator:SetPoint("RIGHT", mark, "LEFT", 6, 0)
 		elseif bar then
 			indicator:SetPoint("RIGHT", bar, "LEFT", 4, 0)
@@ -92,21 +129,30 @@ local function GetIndicator(plate)
 			indicator:SetPoint("RIGHT", plate, "LEFT", 0, 0)
 		end
 	end
-	local marked = false
-	if mark then
-		if not markHooked[mark] then
-			-- Guarded: should Forever refuse it, the icon stays by the bar.
-			local ok = pcall(function()
-				mark:HookScript("OnShow", function() local i = indicators[plate]; if i then i.Anchor(true) end end)
-				mark:HookScript("OnHide", function() local i = indicators[plate]; if i then i.Anchor(false) end end)
-			end)
-			markHooked[mark] = ok
+	local function Reanchor(marked)
+		local i = indicators[plate]
+		if i and i.Anchor then
+			if marked ~= nil then
+				i.marked = marked
+			end
+			i.Anchor()
 		end
-		local ok, shown = pcall(mark.IsShown, mark)
-		marked = ok and not IsSecret(shown) and shown == true
 	end
+	if mark then
+		-- The mark's state comes from the script that fired, not IsShown.
+		Hook(mark, {
+			OnShow = function() Reanchor(true) end,
+			OnHide = function() Reanchor(false) end,
+		}, {})
+	end
+	if buffs then
+		-- Layout runs after every refresh of the list's icons.
+		local function follow() Reanchor() end
+		Hook(buffs, { OnShow = follow, OnHide = follow }, { Layout = follow })
+	end
+	indicator.marked = mark ~= nil and IsShownSafe(mark)
 	indicator.Anchor = Anchor
-	Anchor(marked)
+	Anchor()
 	return indicator
 end
 
